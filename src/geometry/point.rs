@@ -20,7 +20,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::operations::{Abs, Pow, Sqrt};
+use crate::{
+    geometry::aabb::{Aabb, FromCoords},
+    operations::{Abs, Pow, Sqrt},
+};
 use std::ops::{Add, Div, Mul, Sub};
 
 use crate::geometry::Vector2;
@@ -126,5 +129,50 @@ where
             y: &self.y - &other.y,
             z: &self.z - &other.z,
         }
+    }
+}
+
+impl<T: Clone> FromCoords<T> for Point2<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn from_coords(min_coords: Vec<T>, max_coords: Vec<T>) -> Aabb<T, Self> {
+        // we know dimensions() == 2
+        let min = Point2 {
+            x: min_coords[0].clone(),
+            y: min_coords[1].clone(),
+        };
+        let max = Point2 {
+            x: max_coords[0].clone(),
+            y: max_coords[1].clone(),
+        };
+        Aabb::new(min, max)
+    }
+}
+
+impl<T: Clone> FromCoords<T> for Point3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn from_coords(min_coords: Vec<T>, max_coords: Vec<T>) -> Aabb<T, Self> {
+        let min = Point3 {
+            x: min_coords[0].clone(),
+            y: min_coords[1].clone(),
+            z: min_coords[2].clone(),
+        };
+        let max = Point3 {
+            x: max_coords[0].clone(),
+            y: max_coords[1].clone(),
+            z: max_coords[2].clone(),
+        };
+        Aabb::new(min, max)
     }
 }

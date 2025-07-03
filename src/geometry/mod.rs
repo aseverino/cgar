@@ -20,11 +20,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod aabb;
+pub mod aabb_tree;
 pub mod intersection;
 pub mod point;
 pub mod segment;
 pub mod vector;
 
+pub use aabb::{Aabb, FromCoords};
+pub use aabb_tree::AabbTree;
 pub use intersection::{
     SegmentIntersection2, SegmentIntersection3, segment_segment_intersection_2,
     segment_segment_intersection_3,
