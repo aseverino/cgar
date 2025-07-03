@@ -20,8 +20,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod geometry;
-pub mod kernel;
-pub mod mesh;
-pub mod numeric;
-pub mod operations;
+use crate::mesh::point_trait::PointTrait;
+use std::marker::PhantomData;
+
+#[derive(Clone, Debug)]
+pub struct Vertex<T, P: PointTrait<T>> {
+    pub position: P,
+    pub half_edge: Option<usize>,
+    _phantom: PhantomData<T>,
+}
+
+impl<T, P: PointTrait<T>> Vertex<T, P> {
+    pub fn new(position: P) -> Self {
+        Self {
+            position,
+            half_edge: None,
+            _phantom: PhantomData,
+        }
+    }
+}

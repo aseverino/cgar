@@ -20,8 +20,23 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod geometry;
-pub mod kernel;
-pub mod mesh;
-pub mod numeric;
-pub mod operations;
+#[derive(Clone, Debug)]
+pub struct HalfEdge {
+    pub vertex: usize,       // points to Vertex it ends at
+    pub face: Option<usize>, // optional, for boundary edges
+    pub next: usize,
+    pub prev: usize,
+    pub twin: usize,
+}
+
+impl HalfEdge {
+    pub fn new(vertex: usize) -> Self {
+        Self {
+            vertex,
+            face: None,
+            next: usize::MAX,
+            prev: usize::MAX,
+            twin: usize::MAX,
+        }
+    }
+}

@@ -20,8 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod geometry;
-pub mod kernel;
+pub mod face;
+pub mod half_edge;
 pub mod mesh;
-pub mod numeric;
-pub mod operations;
+pub mod point_trait;
+pub mod vertex;

@@ -20,8 +20,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod geometry;
-pub mod kernel;
-pub mod mesh;
-pub mod numeric;
-pub mod operations;
+#[derive(Clone, Debug)]
+pub struct Face {
+    pub half_edge: usize, // one of the edges bounding the face
+}
+
+impl Face {
+    pub fn new(half_edge: usize) -> Self {
+        Self { half_edge }
+    }
+}

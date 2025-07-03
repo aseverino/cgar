@@ -82,3 +82,9 @@ impl PartialOrd for CgarRational {
         self.0.partial_cmp(&other.0)
     }
 }
+
+impl From<i32> for CgarRational {
+    fn from(value: i32) -> Self {
+        CgarRational(Rational::from(value))
+    }
+}
