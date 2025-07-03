@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use super::{face::Face, half_edge::HalfEdge, point_trait::PointTrait, vertex::Vertex};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct Mesh<T, P: PointTrait<T>> {
@@ -90,5 +90,94 @@ impl<T, P: PointTrait<T>> Mesh<T, P> {
 
         self.faces.push(Face::new(edge_indices[0]));
         face_idx
+    }
+
+    pub fn build_boundary_loops(&mut self) {
+        let mut seen = HashSet::new();
+        let original_count = self.half_edges.len();
+
+        for start in 0..original_count {
+            if self.half_edges[start].twin != usize::MAX || seen.contains(&start) {
+                continue;
+            }
+
+            // 1) Gather the full hole cycle (may include interior edges)
+            let mut hole_cycle = Vec::new();
+            let mut he = start;
+            loop {
+                seen.insert(he);
+                hole_cycle.push(he);
+                let prev = self.half_edges[he].prev;
+                he = if self.half_edges[prev].twin != usize::MAX {
+                    self.half_edges[prev].twin
+                } else {
+                    prev
+                };
+                if he == start {
+                    break;
+                }
+            }
+
+            // 2) Filter to *just* the boundary edges
+            let boundary_cycle: Vec<usize> = hole_cycle
+                .into_iter()
+                .filter(|&bhe| bhe < original_count && self.half_edges[bhe].twin == usize::MAX)
+                .collect();
+
+            // 3) Spawn one ghost per boundary half-edge
+            let mut ghosts = Vec::with_capacity(boundary_cycle.len());
+            for &bhe in &boundary_cycle {
+                let origin = {
+                    let prev = self.half_edges[bhe].prev;
+                    self.half_edges[prev].vertex
+                };
+                let mut ghost = HalfEdge::new(origin);
+                ghost.face = None;
+                ghost.twin = bhe;
+                let g_idx = self.half_edges.len();
+                self.half_edges[bhe].twin = g_idx;
+                self.half_edges.push(ghost);
+                ghosts.push(g_idx);
+            }
+
+            // 4) Link the *ghosts* in cycle order
+            let n = ghosts.len();
+            for i in 0..n {
+                let g = ghosts[i];
+                let g_next = ghosts[(i + 1) % n];
+                let g_prev = ghosts[(i + n - 1) % n];
+                self.half_edges[g].next = g_next;
+                self.half_edges[g].prev = g_prev;
+            }
+        }
+    }
+
+    /// Enumerate all outgoing half-edges from `v` exactly once,
+    /// in CCW order.  Works even on meshes with open boundaries,
+    /// *provided* you’ve first called `build_boundary_loops()`.
+    pub fn outgoing_half_edges(&self, v: usize) -> Vec<usize> {
+        let start = self.vertices[v]
+            .half_edge
+            .expect("vertex has no incident edges");
+        let mut result = Vec::new();
+        let mut h = start;
+        loop {
+            result.push(h);
+            let t = self.half_edges[h].twin;
+            // Now that every edge has a twin (real or ghost), we never hit usize::MAX
+            h = self.half_edges[t].next;
+            if h == start {
+                break;
+            }
+        }
+        result
+    }
+
+    /// Returns the 1-ring neighboring vertex indices of vertex `v`.
+    pub fn one_ring_neighbors(&self, v: usize) -> Vec<usize> {
+        self.outgoing_half_edges(v)
+            .iter()
+            .map(|&he_idx| self.half_edges[he_idx].vertex)
+            .collect()
     }
 }

@@ -133,6 +133,8 @@ fn test_connected_two_triangles() {
     assert_eq!(mesh.faces.len(), 2);
     assert_eq!(mesh.half_edges.len(), 6); // 3 per triangle (no twin connection yet)
 
+    mesh.build_boundary_loops();
+
     // Let's check connectivity for f0 and f1
     let he0_idx = mesh.faces[f0].half_edge;
     let he1_idx = mesh.faces[f1].half_edge;
@@ -178,6 +180,11 @@ fn test_connected_two_triangles() {
         .filter(|he| he.vertex == v1 && mesh.half_edges[he.prev].vertex == v2)
         .count();
     assert_eq!(twin_edge_count, 1, "v2 → v1 should appear once");
+
+    let ring_v1 = mesh.one_ring_neighbors(v1);
+    assert_eq!(ring_v1.len(), 3);
+    assert!(ring_v1.contains(&v0));
+    assert!(ring_v1.contains(&v3));
 }
 
 #[test]
@@ -208,6 +215,8 @@ fn test_connected_two_triangles_rational() {
     assert_eq!(mesh.faces.len(), 2);
     assert_eq!(mesh.half_edges.len(), 6); // 3 per triangle (no twin connection yet)
 
+    mesh.build_boundary_loops();
+
     // Let's check connectivity for f0 and f1
     let he0_idx = mesh.faces[f0].half_edge;
     let he1_idx = mesh.faces[f1].half_edge;
@@ -253,4 +262,39 @@ fn test_connected_two_triangles_rational() {
         .filter(|he| he.vertex == v1 && mesh.half_edges[he.prev].vertex == v2)
         .count();
     assert_eq!(twin_edge_count, 1, "v2 → v1 should appear once");
+
+    let ring_v1 = mesh.one_ring_neighbors(v1);
+
+    assert_eq!(ring_v1.len(), 3);
+    assert!(ring_v1.contains(&v0));
+    assert!(ring_v1.contains(&v3));
+}
+
+#[test]
+fn test_build_boundary_loops() {
+    let mut mesh = Mesh::<f64, TestPoint2F64>::new();
+
+    let v0 = mesh.add_vertex(TestPoint2F64(0.0, 0.0));
+    let v1 = mesh.add_vertex(TestPoint2F64(1.0, 0.0));
+    let v2 = mesh.add_vertex(TestPoint2F64(0.0, 1.0));
+    let v3 = mesh.add_vertex(TestPoint2F64(1.0, 1.0));
+
+    let f0 = mesh.add_triangle(v0, v1, v2); // Lower-left triangle
+    let f1 = mesh.add_triangle(v1, v3, v2); // Upper-right triangle
+
+    // now build the holes
+    mesh.build_boundary_loops();
+
+    // we had 6 “real” half-edges, and 4 boundary edges → 4 ghosts
+    assert_eq!(mesh.half_edges.len(), 10);
+
+    // and outgoing_half_edges_strict(v1) no longer panics…
+    let ring = mesh.outgoing_half_edges(v1);
+    assert_eq!(ring.len(), 3);
+
+    let ring = mesh.outgoing_half_edges(v0);
+    assert_eq!(ring.len(), 2);
+
+    let ring = mesh.outgoing_half_edges(v3);
+    assert_eq!(ring.len(), 2);
 }
