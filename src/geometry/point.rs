@@ -21,16 +21,20 @@
 // SOFTWARE.
 
 use crate::{
-    geometry::aabb::{Aabb, FromCoords},
-    operations::{Abs, Pow, Sqrt},
+    geometry::{
+        aabb::{Aabb, FromCoords},
+        vector::{Vector2, Vector3, VectorOps},
+    },
+    operations::{Abs, Pow, Sqrt, Zero},
 };
 use std::ops::{Add, Div, Mul, Sub};
 
-use crate::geometry::Vector2;
+pub trait PointOps<T, C>: Sized {
+    type Vector: VectorOps<T, C>;
 
-pub trait PointOps<T>: Sized {
     fn distance_to(&self, other: &Self) -> T;
     fn sub(&self, other: &Self) -> Self;
+    fn as_vector(&self) -> Self::Vector;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,14 +63,16 @@ where
     }
 }
 
-impl<T> PointOps<T> for Point2<T>
+impl<T> PointOps<T, T> for Point2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
+    type Vector = Vector2<T>;
+
     fn distance_to(&self, other: &Self) -> T {
         (&(&self.x - &other.x).pow(2) + &(&self.y - &other.y).pow(2)).sqrt()
     }
@@ -75,6 +81,13 @@ where
         Self {
             x: &self.x - &other.x,
             y: &self.y - &other.y,
+        }
+    }
+
+    fn as_vector(&self) -> Vector2<T> {
+        Vector2 {
+            x: self.x.clone(),
+            y: self.y.clone(),
         }
     }
 }
@@ -95,7 +108,7 @@ where
 
 impl<T> Point3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -104,16 +117,25 @@ where
     pub fn new(x: T, y: T, z: T) -> Self {
         Self { x, y, z }
     }
+
+    pub fn zero() -> Self {
+        Point3 {
+            x: T::zero(),
+            y: T::zero(),
+            z: T::zero(),
+        }
+    }
 }
 
-impl<T> PointOps<T> for Point3<T>
+impl<T> PointOps<T, Vector3<T>> for Point3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
+    type Vector = Vector3<T>;
     fn distance_to(&self, other: &Self) -> T {
         let a = &(&self.x - &other.x).pow(2);
         let b = &(&self.y - &other.y).pow(2);
@@ -128,6 +150,14 @@ where
             x: &self.x - &other.x,
             y: &self.y - &other.y,
             z: &self.z - &other.z,
+        }
+    }
+
+    fn as_vector(&self) -> Vector3<T> {
+        Vector3 {
+            x: self.x.clone(),
+            y: self.y.clone(),
+            z: self.z.clone(),
         }
     }
 }

@@ -24,7 +24,7 @@ use cgar::geometry::{
     Point2, Segment2, Vector2,
     point::{Point3, PointOps},
     segment::{Segment3, SegmentOps},
-    vector::Vector3,
+    vector::{Vector3, VectorOps},
 };
 
 #[test]

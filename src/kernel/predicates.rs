@@ -24,9 +24,9 @@ use num_traits::ToPrimitive;
 
 use crate::geometry::point::Point3;
 use crate::geometry::segment::Segment3;
-use crate::geometry::vector::Vector3;
+use crate::geometry::vector::{Vector3, VectorOps};
 use crate::geometry::{Point2, Segment2};
-use crate::operations::{Abs, Pow, Sqrt};
+use crate::operations::{Abs, Pow, Sqrt, Zero};
 use std::f64::EPSILON;
 use std::ops::{Add, Div, Mul, Sub};
 
@@ -58,7 +58,7 @@ where
 /// Checks if point `p` lies on segment `seg`.
 pub fn is_point_on_segment_2<T>(p: &Point2<T>, seg: &Segment2<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -114,7 +114,7 @@ where
 /// Checks if three points are collinear using the area of the triangle formula.
 pub fn are_collinear_3<T>(a: &Point3<T>, b: &Point3<T>, c: &Point3<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -139,7 +139,7 @@ where
 /// Checks if point `p` lies on segment `seg`.
 pub fn is_point_on_segment_3<T>(p: &Point3<T>, seg: &Segment3<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>

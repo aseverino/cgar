@@ -20,12 +20,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::operations::{Abs, Pow, Sqrt};
+use crate::operations::{Abs, Pow, Sqrt, Zero};
 use std::ops::{Add, Div, Mul, Sub};
 
-pub trait VectorOps<T>: Sized {
-    fn dot(&self, other: Self) -> T;
-    fn cross(&self, other: Self) -> T;
+pub trait VectorOps<T, C>: Sized {
+    fn dot(&self, other: &Self) -> T;
+    fn cross(&self, other: &Self) -> C;
     fn norm(&self) -> T;
     fn normalized(&self) -> Self;
 }
@@ -54,20 +54,29 @@ where
     pub fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
+}
 
-    pub fn dot(&self, other: &Vector2<T>) -> T {
+impl<T> VectorOps<T, T> for Vector2<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn dot(&self, other: &Vector2<T>) -> T {
         &(&self.x * &other.x) + &(&self.y * &other.y)
     }
 
-    pub fn cross(&self, other: &Vector2<T>) -> T {
+    fn cross(&self, other: &Vector2<T>) -> T {
         &(&self.x * &other.y) - &(&self.y * &other.x)
     }
 
-    pub fn norm(&self) -> T {
+    fn norm(&self) -> T {
         (&(&self.x * &self.x) + &(&self.y * &self.y)).sqrt()
     }
 
-    pub fn normalized(&self) -> Vector2<T> {
+    fn normalized(&self) -> Vector2<T> {
         let n = self.norm();
         Vector2 {
             x: &self.x / &n,
@@ -79,7 +88,7 @@ where
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vector3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -92,7 +101,7 @@ where
 
 impl<T> Vector3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -102,11 +111,28 @@ where
         Self { x, y, z }
     }
 
-    pub fn dot(&self, other: &Vector3<T>) -> T {
+    pub fn zero() -> Self {
+        Vector3 {
+            x: T::zero(),
+            y: T::zero(),
+            z: T::zero(),
+        }
+    }
+}
+
+impl<T> VectorOps<T, Vector3<T>> for Vector3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn dot(&self, other: &Vector3<T>) -> T {
         &(&(&self.x * &other.x) + &(&self.y * &other.y)) + &(&self.z * &other.z)
     }
 
-    pub fn cross(&self, other: &Vector3<T>) -> Vector3<T> {
+    fn cross(&self, other: &Vector3<T>) -> Vector3<T> {
         Vector3 {
             x: &(&self.y * &other.z) - &(&self.z * &other.y),
             y: &(&self.z * &other.x) - &(&self.x * &other.z),
@@ -114,11 +140,11 @@ where
         }
     }
 
-    pub fn norm(&self) -> T {
+    fn norm(&self) -> T {
         (&(&(&self.x * &self.x) + &(&self.y * &self.y)) + &(&self.z * &self.z)).sqrt()
     }
 
-    pub fn normalized(&self) -> Vector3<T> {
+    fn normalized(&self) -> Vector3<T> {
         let n = self.norm();
         Vector3 {
             x: &self.x / &n,

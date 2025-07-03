@@ -25,6 +25,7 @@ pub mod aabb_tree;
 pub mod intersection;
 pub mod point;
 pub mod segment;
+pub mod tri_tri_intersect;
 pub mod vector;
 
 pub use aabb::{Aabb, FromCoords};

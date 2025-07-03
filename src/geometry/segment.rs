@@ -24,13 +24,16 @@ use num_traits::ToPrimitive;
 
 use super::Point2;
 use crate::{
-    geometry::point::{Point3, PointOps},
-    operations::{Abs, Pow, Sqrt},
+    geometry::{
+        point::{Point3, PointOps},
+        vector::Vector3,
+    },
+    operations::{Abs, Pow, Sqrt, Zero},
 };
 use std::ops::{Add, Div, Mul, Sub};
 
-pub trait SegmentOps<T>: Sized {
-    type Point: PointOps<T> + Clone;
+pub trait SegmentOps<T, C>: Sized {
+    type Point: PointOps<T, C> + Clone;
 
     fn a(&self) -> &Self::Point;
     fn b(&self) -> &Self::Point;
@@ -45,12 +48,12 @@ pub trait SegmentOps<T>: Sized {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
-    Point2<T>: PointOps<T>,
+    Point2<T>: PointOps<T, T>,
 {
     pub a: Point2<T>,
     pub b: Point2<T>,
@@ -58,7 +61,7 @@ where
 
 impl<T> Segment2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -72,14 +75,14 @@ where
     }
 }
 
-impl<T> SegmentOps<T> for Segment2<T>
+impl<T> SegmentOps<T, T> for Segment2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
-    Point2<T>: PointOps<T>,
+    Point2<T>: PointOps<T, T>,
 {
     type Point = Point2<T>;
 
@@ -103,12 +106,12 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
-    Point3<T>: PointOps<T>,
+    Point3<T>: PointOps<T, Vector3<T>>,
 {
     pub a: Point3<T>,
     pub b: Point3<T>,
@@ -116,7 +119,7 @@ where
 
 impl<T> Segment3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -130,14 +133,14 @@ where
     }
 }
 
-impl<T> SegmentOps<T> for Segment3<T>
+impl<T> SegmentOps<T, Vector3<T>> for Segment3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
-    Point3<T>: PointOps<T>,
+    Point3<T>: PointOps<T, Vector3<T>>,
 {
     type Point = Point3<T>;
 

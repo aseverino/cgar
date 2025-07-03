@@ -23,7 +23,11 @@
 use num_traits::ToPrimitive;
 
 use crate::{
-    geometry::{point::Point3, segment::Segment3, vector::Vector3},
+    geometry::{
+        point::Point3,
+        segment::Segment3,
+        vector::{Vector3, VectorOps},
+    },
     kernel::are_collinear_3,
     operations::{Abs, Pow, Sqrt, Zero},
 };
@@ -37,7 +41,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum SegmentIntersection2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -54,7 +58,7 @@ pub fn segment_segment_intersection_2<T>(
     eps: T,
 ) -> SegmentIntersection2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -119,7 +123,7 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub enum SegmentIntersection3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -136,7 +140,7 @@ pub fn segment_segment_intersection_3<T>(
     eps: T,
 ) -> SegmentIntersection3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + ToPrimitive + From<i32>,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + ToPrimitive + From<i32> + Zero,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
