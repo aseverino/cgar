@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use cgar::geometry::point::Point2;
 use cgar::mesh::{mesh::Mesh, point_trait::PointTrait};
 use cgar::numeric::cgar_rational::{self, CgarRational};
@@ -390,4 +392,74 @@ fn test_edge_flip() {
     let f1_vs = mesh.face_vertices(1);
     let set1: std::collections::HashSet<_> = f1_vs.into_iter().collect();
     assert_eq!(set1, [v0, v3, v1].into_iter().collect());
+}
+
+#[test]
+fn test_edge_collapse_rebuild() {
+    let mut mesh = Mesh::<f64, TestPoint2F64>::new();
+    let v0 = mesh.add_vertex(TestPoint2F64(0.0, 0.0));
+    let v1 = mesh.add_vertex(TestPoint2F64(1.0, 0.0));
+    let v2 = mesh.add_vertex(TestPoint2F64(0.0, 1.0));
+    let v3 = mesh.add_vertex(TestPoint2F64(1.0, 1.0));
+
+    // two triangles sharing edge v1→v2
+    mesh.add_triangle(v0, v1, v2);
+    mesh.add_triangle(v1, v3, v2);
+    mesh.build_boundary_loops();
+
+    // collapse that shared edge
+    let he_shared = *mesh.edge_map.get(&(v1, v2)).unwrap();
+    mesh.collapse_edge_rebuild(he_shared).unwrap();
+
+    // After collapsing v2 into v1, we expect:
+    // - one vertex removed => 3 vertices remain
+    assert_eq!(mesh.vertices.len(), 3);
+
+    // - one face removed => 1 face remains
+    assert_eq!(mesh.faces.len(), 1);
+
+    // That single face should connect [v0, v1, v3] (in some order)
+    let vs: std::collections::HashSet<_> = mesh.face_vertices(0).into_iter().collect();
+    assert_eq!(vs, [0, 1, 2].into_iter().collect());
+}
+
+#[test]
+fn test_edge_split_rebuild() {
+    let mut mesh = Mesh::<f64, TestPoint2F64>::new();
+
+    // Build two‐triangle “quad” as before
+    let v0 = mesh.add_vertex(TestPoint2F64(0.0, 0.0));
+    let v1 = mesh.add_vertex(TestPoint2F64(1.0, 0.0));
+    let v2 = mesh.add_vertex(TestPoint2F64(0.0, 1.0));
+    let v3 = mesh.add_vertex(TestPoint2F64(1.0, 1.0));
+
+    mesh.add_triangle(v0, v1, v2);
+    mesh.add_triangle(v1, v3, v2);
+    mesh.build_boundary_loops();
+
+    // Split the shared edge v1→v2 at its midpoint
+    let he_shared = *mesh.edge_map.get(&(v1, v2)).unwrap();
+    let new_v = mesh
+        .split_edge_rebuild(he_shared, TestPoint2F64(0.5, 0.5))
+        .unwrap();
+
+    // 1) collect actual as Vec<HashSet<usize>>
+    let mut actual: Vec<HashSet<usize>> = (0..mesh.faces.len())
+        .map(|f| {
+            mesh.face_vertices(f).into_iter().collect::<HashSet<_>>() // now we know it's HashSet<usize>
+        })
+        .collect();
+
+    // 2) build expected as Vec<HashSet<usize>>
+    let mut expected: Vec<HashSet<usize>> = vec![
+        [v0, v1, new_v].iter().cloned().collect::<HashSet<_>>(),
+        [v0, new_v, v2].iter().cloned().collect::<HashSet<_>>(),
+        [v1, v3, new_v].iter().cloned().collect::<HashSet<_>>(),
+        [new_v, v3, v2].iter().cloned().collect::<HashSet<_>>(),
+    ];
+
+    // Sort and compare as before…
+    actual.sort_by_key(|s| *s.iter().min().unwrap());
+    expected.sort_by_key(|s| *s.iter().min().unwrap());
+    assert_eq!(actual, expected);
 }

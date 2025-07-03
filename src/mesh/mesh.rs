@@ -298,4 +298,163 @@ impl<T, P: PointTrait<T>> Mesh<T, P> {
 
         Ok(())
     }
+
+    /// Collapse the interior edge `he` by merging its dest‐vertex into its origin‐vertex,
+    /// removing the two incident faces and any degenerate triangles that produce.
+    ///
+    /// This rebuilds the mesh from scratch, so all indices and edge_map are reconstructed.
+    pub fn collapse_edge_rebuild(&mut self, he: usize) -> Result<(), &'static str> {
+        // 1) Preconditions (same as before) …
+        let he_d = self.half_edges[he].twin;
+        if he_d == usize::MAX {
+            return Err("cannot collapse a boundary edge");
+        }
+        let f0 = self.half_edges[he].face.ok_or("he has no face")?;
+        let f1 = self.half_edges[he_d].face.ok_or("twin has no face")?;
+
+        // 2) Identify u→v and record the three hole corners c, u, d
+        let he_b = self.half_edges[he].next; // v → c
+        let he_c = self.half_edges[he].prev; // c → u
+        let he_e = self.half_edges[he_d].next; // u → d
+
+        let u = self.half_edges[he_c].vertex; // origin u
+        let c = self.half_edges[he_b].vertex; // one corner c
+        let d = self.half_edges[he_e].vertex; // the other corner d
+
+        // 3) Build old_to_new map & vertex list (same as before) …
+        let remove_v = self.half_edges[he].vertex; // v
+        let mut old_to_new = vec![None; self.vertices.len()];
+        let mut new_positions = Vec::with_capacity(self.vertices.len() - 1);
+        for (i, vert) in self.vertices.iter().enumerate() {
+            if i == remove_v {
+                continue;
+            }
+            let ni = new_positions.len();
+            old_to_new[i] = Some(ni);
+            new_positions.push(vert.position.clone());
+        }
+        // redirect the removed v → the kept u
+        old_to_new[remove_v] = old_to_new[u];
+
+        // 4) Collect surviving faces
+        let mut new_faces = Vec::new();
+        for (fi, _) in self.faces.iter().enumerate() {
+            if fi == f0 || fi == f1 {
+                continue;
+            }
+            let vs = self.face_vertices(fi);
+            let mapped: [usize; 3] = [
+                old_to_new[vs[0]].unwrap(),
+                old_to_new[vs[1]].unwrap(),
+                old_to_new[vs[2]].unwrap(),
+            ];
+            if mapped[0] != mapped[1] && mapped[1] != mapped[2] && mapped[2] != mapped[0] {
+                new_faces.push(mapped);
+            }
+        }
+
+        // 5) **If no faces survived**, triangulate the hole [c,u,d]
+        if new_faces.is_empty() {
+            let mc = old_to_new[c].unwrap();
+            let mu = old_to_new[u].unwrap();
+            let md = old_to_new[d].unwrap();
+            // One triangle filling the hole:
+            new_faces.push([mc, mu, md]);
+        }
+
+        // 6) Rebuild the mesh
+        let mut new_mesh = Mesh::new();
+        for pos in new_positions {
+            new_mesh.add_vertex(pos);
+        }
+        for tri in new_faces {
+            new_mesh.add_triangle(tri[0], tri[1], tri[2]);
+        }
+        new_mesh.build_boundary_loops();
+
+        *self = new_mesh;
+        Ok(())
+    }
+
+    /// Splits the interior edge `he` by inserting a new vertex at `pos`.
+    /// The two adjacent triangles are each subdivided into two, yielding
+    /// four faces in place of the original two.  Returns the new vertex index.
+    pub fn split_edge_rebuild(&mut self, he: usize, pos: P) -> Result<usize, &'static str> {
+        // 1) Pre-flight checks
+        let he_twin = self.half_edges[he].twin;
+        if he_twin == usize::MAX {
+            return Err("cannot split a boundary edge");
+        }
+        let f0 = self.half_edges[he].face.ok_or("he has no face")?;
+        let f1 = self.half_edges[he_twin].face.ok_or("twin has no face")?;
+
+        // 2) Gather old vertex positions
+        let mut old_positions: Vec<P> = self.vertices.iter().map(|v| v.position.clone()).collect();
+        // the new vertex gets the next index in that list
+        let new_old_idx = old_positions.len();
+        old_positions.push(pos.clone());
+
+        // 3) Identify u, v (edge endpoints)
+        let u = {
+            // the half-edge before `he` ends at u
+            let prev = self.half_edges[he].prev;
+            self.half_edges[prev].vertex
+        };
+        let v = self.half_edges[he].vertex;
+
+        // 4) Build the new face list
+        let mut new_face_tris: Vec<[usize; 3]> = Vec::with_capacity(self.faces.len() + 2);
+
+        for fid in 0..self.faces.len() {
+            if fid == f0 || fid == f1 {
+                // subdivide this face
+                let vs = self.face_vertices(fid); // CCW triple
+                // find whether the edge appears as u→v or v→u
+                let mut handled = false;
+                for i in 0..3 {
+                    let a = vs[i];
+                    let b = vs[(i + 1) % 3];
+                    let c = vs[(i + 2) % 3];
+                    if a == u && b == v {
+                        // orientation u→v→c
+                        new_face_tris.push([u, new_old_idx, c]);
+                        new_face_tris.push([new_old_idx, v, c]);
+                        handled = true;
+                        break;
+                    }
+                    if a == v && b == u {
+                        // orientation v→u→c
+                        new_face_tris.push([v, new_old_idx, c]);
+                        new_face_tris.push([new_old_idx, u, c]);
+                        handled = true;
+                        break;
+                    }
+                }
+                if !handled {
+                    return Err("split edge not found in one of its faces");
+                }
+            } else {
+                // keep an untouched face
+                let vs = self.face_vertices(fid);
+                new_face_tris.push([vs[0], vs[1], vs[2]]);
+            }
+        }
+
+        // 5) Rebuild the mesh from scratch
+        let mut new_mesh = Mesh::new();
+        // re-add all vertices
+        for p in old_positions {
+            new_mesh.add_vertex(p);
+        }
+        // re-add all faces
+        for tri in new_face_tris {
+            new_mesh.add_triangle(tri[0], tri[1], tri[2]);
+        }
+        // re-generate boundary & twin links
+        new_mesh.build_boundary_loops();
+
+        // 6) Replace self and return the new-vertex index
+        *self = new_mesh;
+        Ok(new_old_idx)
+    }
 }
