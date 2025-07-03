@@ -26,15 +26,11 @@ use std::ops::{Add, Div, Mul, Sub};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vector2<T>
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     pub x: T,
     pub y: T,
@@ -42,37 +38,33 @@ where
 
 impl<T> Vector2<T>
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     pub fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
 
     pub fn dot(&self, other: Vector2<T>) -> T {
-        self.x.clone() * other.x + self.y.clone() * other.y
+        &(&self.x * &other.x) + &(&self.y * &other.y)
     }
 
     pub fn cross(&self, other: Vector2<T>) -> T {
-        self.x.clone() * other.y - self.y.clone() * other.x
+        &(&self.x * &other.y) - &(&self.y * &other.x)
     }
 
     pub fn norm(&self) -> T {
-        (self.x.clone() * self.x.clone() + self.y.clone() * self.y.clone()).sqrt()
+        (&(&self.x * &self.x) + &(&self.y * &self.y)).sqrt()
     }
 
     pub fn normalized(&self) -> Vector2<T> {
         let n = self.norm();
         Vector2 {
-            x: self.x.clone() / n.clone(),
-            y: self.y.clone() / n.clone(),
+            x: &self.x / &n,
+            y: &self.y / &n,
         }
     }
 }

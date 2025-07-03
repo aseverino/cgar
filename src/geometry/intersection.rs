@@ -31,15 +31,11 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum SegmentIntersection<T>
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     None,
     Point(Point2<T>),
@@ -52,21 +48,16 @@ pub fn segment_segment_intersection<T>(
     eps: T,
 ) -> SegmentIntersection<T>
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Zero
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
-    let a = seg1.a.clone();
-    let b = seg1.b.clone();
-    let c = seg2.a.clone();
-    let d = seg2.b.clone();
+    let a = &seg1.a;
+    let b = &seg1.b;
+    let c = &seg2.a;
+    let d = &seg2.b;
 
     let o1 = orient2d(&a, &b, &c);
     let o2 = orient2d(&a, &b, &d);
@@ -75,31 +66,28 @@ where
 
     let zero = T::zero();
 
-    let intersecting = (o1.clone() * o2.clone()) <= zero && (o3.clone() * o4.clone()) <= zero;
+    let intersecting = (&o1 * &o2) <= zero && (&o3 * &o4) <= zero;
 
     if intersecting {
         if o1.abs() > eps || o2.abs() > eps || o3.abs() > eps || o4.abs() > eps {
             // Proper intersection — compute the intersection point
-            let (x1, y1) = (a.x, a.y).clone();
-            let (x2, y2) = (b.x, b.y).clone();
-            let (x3, y3) = (c.x, c.y).clone();
-            let (x4, y4) = (d.x, d.y).clone();
+            let (x1, y1) = (&a.x, &a.y);
+            let (x2, y2) = (&b.x, &b.y);
+            let (x3, y3) = (&c.x, &c.y);
+            let (x4, y4) = (&d.x, &d.y);
 
-            let denom = (x1.clone() - x2.clone()) * (y3.clone() - y4.clone())
-                - (y1.clone() - y2.clone()) * (x3.clone() - x4.clone());
+            let denom = &(&(x1 - x2) * &(y3 - y4)) - &(&(y1 - y2) * &(x3 - x4));
             if denom.abs() < eps {
                 return SegmentIntersection::None; // Parallel but not overlapping
             }
 
-            let px_num = (x1.clone() * y2.clone() - y1.clone() * x2.clone())
-                * (x3.clone() - x4.clone())
-                - (x1.clone() - x2.clone()) * (x3.clone() * y4.clone() - y3.clone() * x4.clone());
-            let py_num = (x1.clone() * y2.clone() - y1.clone() * x2.clone())
-                * (y3.clone() - y4.clone())
-                - (y1.clone() - y2.clone()) * (x3.clone() * y4.clone() - y3.clone() * x4.clone());
+            let px_num = &(&(&(x1 * y2) - &(y1 * x2)) * &(x3 - x4))
+                - &(&(x1 - x2) * &(&(x3 * y4) - &(y3 * x4)));
+            let py_num = &(&(&(x1 * y2) - &(y1 * x2)) * &(y3 - y4))
+                - &(&(y1 - y2) * &(&(x3 * y4) - &(y3 * x4)));
 
-            let px = px_num.clone() / denom.clone();
-            let py = py_num.clone() / denom.clone();
+            let px = &px_num / &denom;
+            let py = &py_num / &denom;
 
             return SegmentIntersection::Point(Point2::new(px, py));
         }

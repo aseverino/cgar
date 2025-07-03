@@ -20,14 +20,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::numeric::cgar_rational::CgarRational;
+
 pub trait Abs {
     fn abs(&self) -> Self;
 }
 
 impl Abs for f64 {
-    fn abs(&self) -> Self { f64::abs(*self) }
+    fn abs(&self) -> Self {
+        f64::abs(*self)
+    }
 }
 
-impl Abs for rug::Rational {
-    fn abs(&self) -> Self { self.abs() }
+impl Abs for CgarRational {
+    fn abs(&self) -> Self {
+        CgarRational(self.0.clone().abs())
+    }
 }

@@ -20,22 +20,4 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use rug::ops::Pow as RugPow;
-
-use crate::numeric::cgar_rational::CgarRational;
-
-pub trait Pow {
-    fn pow(&self, factor: i32) -> Self;
-}
-
-impl Pow for f64 {
-    fn pow(&self, factor: i32) -> Self {
-        f64::powi(*self, factor)
-    }
-}
-
-impl Pow for CgarRational {
-    fn pow(&self, factor: i32) -> Self {
-        CgarRational(self.0.clone().pow(factor))
-    }
-}
+pub mod cgar_rational;

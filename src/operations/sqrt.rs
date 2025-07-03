@@ -20,14 +20,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::numeric::cgar_rational::CgarRational;
+
 pub trait Sqrt {
     fn sqrt(&self) -> Self;
 }
 
 impl Sqrt for f64 {
-    fn sqrt(&self) -> Self { f64::sqrt(*self) }
+    fn sqrt(&self) -> Self {
+        f64::sqrt(*self)
+    }
 }
 
-impl Sqrt for rug::Rational {
-    fn sqrt(&self) -> Self { self.sqrt() }
+impl Sqrt for CgarRational {
+    fn sqrt(&self) -> Self {
+        self.sqrt()
+    }
 }

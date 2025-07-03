@@ -22,6 +22,8 @@
 
 use rug::Rational;
 
+use crate::numeric::cgar_rational::CgarRational;
+
 pub trait Zero {
     fn zero() -> Self;
 }
@@ -32,8 +34,8 @@ impl Zero for f64 {
     }
 }
 
-impl Zero for rug::Rational {
+impl Zero for CgarRational {
     fn zero() -> Self {
-        Rational::from(0)
+        CgarRational(Rational::from(0))
     }
 }

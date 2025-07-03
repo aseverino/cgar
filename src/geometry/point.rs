@@ -28,15 +28,11 @@ use crate::geometry::Vector2;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point2<T>
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     pub x: T,
     pub y: T,
@@ -44,29 +40,24 @@ where
 
 impl<T> Point2<T>
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     pub fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
 
     pub fn distance_to(&self, other: &Point2<T>) -> T {
-        ((self.x.clone() - other.x.clone()).pow(2) + (self.y.clone() - other.y.clone()).pow(2))
-            .sqrt()
+        (&(&self.x - &other.x).pow(2) + &(&self.y - &other.y).pow(2)).sqrt()
     }
 
     pub fn sub(&self, other: &Point2<T>) -> Vector2<T> {
         Vector2 {
-            x: self.x.clone() - other.x.clone(),
-            y: self.y.clone() - other.y.clone(),
+            x: &self.x - &other.x,
+            y: &self.y - &other.y,
         }
     }
 }

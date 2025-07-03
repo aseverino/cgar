@@ -22,6 +22,7 @@
 
 use cgar::geometry::{Point2, Segment2};
 use cgar::kernel::{BigRationalKernel, F64Kernel, Kernel};
+use cgar::numeric::cgar_rational::CgarRational;
 use rug::Rational;
 
 const EPS: f64 = 1e-9;
@@ -68,18 +69,27 @@ fn test_is_point_on_segment() {
     assert!(!F64Kernel::is_point_on_segment(&off, &seg, EPS));
 }
 
-fn eps() -> Rational {
-    Rational::from((1, 1_000_000_000)) // 1e-9
+fn eps() -> CgarRational {
+    CgarRational(Rational::from((1, 1_000_000_000))) // 1e-9
 }
 
 #[test]
 fn test_bigrational_orient2d() {
-    let a = Point2::new(Rational::from(0), Rational::from(0));
-    let b = Point2::new(Rational::from(1), Rational::from(0));
-    let c = Point2::new(Rational::from(0), Rational::from(1));
+    let a = Point2::new(
+        CgarRational(Rational::from(0)),
+        CgarRational(Rational::from(0)),
+    );
+    let b = Point2::new(
+        CgarRational(Rational::from(1)),
+        CgarRational(Rational::from(0)),
+    );
+    let c = Point2::new(
+        CgarRational(Rational::from(0)),
+        CgarRational(Rational::from(1)),
+    );
 
     let res = BigRationalKernel::orient2d(&a, &b, &c);
-    assert!(res > 0);
+    assert!(res.0 > 0);
 }
 
 // #[test]

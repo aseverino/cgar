@@ -27,15 +27,11 @@ use std::ops::{Add, Div, Mul, Sub};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment2<T>
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     pub a: Point2<T>,
     pub b: Point2<T>,
@@ -43,15 +39,11 @@ where
 
 impl<T> Segment2<T>
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     pub fn new(a: &Point2<T>, b: &Point2<T>) -> Self {
         Self {
@@ -68,8 +60,8 @@ where
         Point2 {
             //x: (self.a.x + self.b.x) / 2.0,
             //y: (self.a.y + self.b.y) / 2.0,
-            x: self.a.x.clone() + self.b.x.clone(),
-            y: self.a.y.clone() + self.b.y.clone(),
+            x: &self.a.x + &self.b.x,
+            y: &self.a.y + &self.b.y,
         }
     }
 }

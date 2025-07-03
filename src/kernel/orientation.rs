@@ -30,18 +30,13 @@ use std::ops::{Add, Div, Mul, Sub};
 /// - =0 if collinear
 pub fn orient2d<T>(a: &Point2<T>, b: &Point2<T>, c: &Point2<T>) -> T
 where
-    T: Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + Clone
-        + PartialOrd
-        + Abs
-        + Pow
-        + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
-    ((b.x.clone() - a.x.clone()) * (c.y.clone() - a.y.clone()))
-        - ((b.y.clone() - a.y.clone()) * (c.x.clone() - a.x.clone()))
+    &(&(&b.x - &a.x) * &(&c.y - &a.y)) - &(&(&b.y - &a.y) * &(&c.x - &a.x))
 }
 #[cfg(test)]
 mod tests {

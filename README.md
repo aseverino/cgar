@@ -1,1 +1,1 @@
-CGAR is a play at a Computational Geometry Algorithm Library (CGAL), but in Rust.
+CGAR is - at least for now - just a play at a Computational Geometry Algorithm Library (CGAL), but in Rust.

@@ -20,6 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod operations;
 pub mod geometry;
 pub mod kernel;
+pub mod numeric;
+pub mod operations;
