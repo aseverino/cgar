@@ -21,7 +21,9 @@
 // SOFTWARE.
 
 use cgar::geometry::{Point2, Segment2};
-use cgar::kernel::{BigRationalKernel, F64Kernel, Kernel};
+use cgar::kernel::{
+    BigRationalKernel, F64Kernel, are_collinear_2, are_equal_2, is_point_on_segment_2, orient2d,
+};
 use cgar::numeric::cgar_rational::CgarRational;
 use rug::Rational;
 
@@ -33,7 +35,7 @@ fn test_orient2d() {
     let b = Point2::new(1.0, 0.0);
     let c = Point2::new(0.0, 1.0);
 
-    let res = F64Kernel::orient2d(&a, &b, &c);
+    let res = orient2d(&a, &b, &c);
     assert!(res > 0.0);
 }
 
@@ -43,8 +45,8 @@ fn test_are_equal() {
     let b = Point2::new(1.0 + EPS / 2.0, 2.0);
     let c = Point2::new(1.0 + EPS * 10.0, 2.0);
 
-    assert!(F64Kernel::are_equal(&a, &b, EPS));
-    assert!(!F64Kernel::are_equal(&a, &c, EPS));
+    assert!(are_equal_2(&a, &b, &EPS));
+    assert!(!are_equal_2(&a, &c, &EPS));
 }
 
 #[test]
@@ -53,10 +55,10 @@ fn test_are_collinear() {
     let b = Point2::new(1.0, 1.0);
     let c = Point2::new(2.0, 2.0);
 
-    assert!(F64Kernel::are_collinear(&a, &b, &c, EPS));
+    assert!(are_collinear_2(&a, &b, &c, &EPS));
 
     let d = Point2::new(2.0, 2.000001);
-    assert!(!F64Kernel::are_collinear(&a, &b, &d, EPS));
+    assert!(!are_collinear_2(&a, &b, &d, &EPS));
 }
 
 #[test]
@@ -65,8 +67,8 @@ fn test_is_point_on_segment() {
     let on = Point2::new(1.0, 1.0);
     let off = Point2::new(3.0, 3.0);
 
-    assert!(F64Kernel::is_point_on_segment(&on, &seg, EPS));
-    assert!(!F64Kernel::is_point_on_segment(&off, &seg, EPS));
+    assert!(is_point_on_segment_2(&on, &seg, &EPS));
+    assert!(!is_point_on_segment_2(&off, &seg, &EPS));
 }
 
 fn eps() -> CgarRational {
@@ -88,7 +90,7 @@ fn test_bigrational_orient2d() {
         CgarRational(Rational::from(1)),
     );
 
-    let res = BigRationalKernel::orient2d(&a, &b, &c);
+    let res = orient2d(&a, &b, &c);
     assert!(res.0 > 0);
 }
 

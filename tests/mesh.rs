@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use cgar::geometry::point::Point2;
+use cgar::geometry::point::{Point2, Point3};
 use cgar::mesh::{mesh::Mesh, point_trait::PointTrait};
 use cgar::numeric::cgar_rational::{self, CgarRational};
 use rug::Rational;
@@ -462,4 +462,98 @@ fn test_edge_split_rebuild() {
     actual.sort_by_key(|s| *s.iter().min().unwrap());
     expected.sort_by_key(|s| *s.iter().min().unwrap());
     assert_eq!(actual, expected);
+}
+
+fn is_cycle_equal<T: PartialEq>(cycle: &[T], target: &[T]) -> bool {
+    cycle.len() == target.len()
+        && (0..cycle.len()).any(|i| {
+            cycle
+                .iter()
+                .cycle()
+                .skip(i)
+                .take(cycle.len())
+                .eq(target.iter())
+        })
+}
+
+#[test]
+fn add_triangle_3d_basics() {
+    let mut mesh: Mesh<f64, Point3<f64>> = Mesh::new();
+
+    // create a single triangle in the z=0 plane
+    let v0 = mesh.add_vertex(Point3::new(0.0, 0.0, 0.0));
+    let v1 = mesh.add_vertex(Point3::new(1.0, 0.0, 0.0));
+    let v2 = mesh.add_vertex(Point3::new(0.0, 1.0, 0.0));
+    let f0 = mesh.add_triangle(v0, v1, v2);
+
+    // face index should be 0, one face, three half‐edges
+    assert_eq!(f0, 0);
+    assert_eq!(mesh.faces.len(), 1);
+    assert_eq!(mesh.half_edges.len(), 3);
+
+    // half‐edge cycle may start at any corner → check rotation of [0,1,2]
+    let he_cycle = mesh.face_half_edges(0);
+    let expected_he = vec![0, 1, 2];
+    assert!(
+        is_cycle_equal(&he_cycle, &expected_he),
+        "half-edge cycle {:?} is not a rotation of {:?}",
+        he_cycle,
+        expected_he
+    );
+
+    // likewise for the vertex cycle
+    let v_cycle = mesh.face_vertices(0);
+    let expected_vs = vec![v0, v1, v2];
+    assert!(
+        is_cycle_equal(&v_cycle, &expected_vs),
+        "vertex cycle {:?} is not a rotation of {:?}",
+        v_cycle,
+        expected_vs
+    );
+}
+
+#[test]
+fn boundary_loops_3d() {
+    let mut mesh: Mesh<f64, Point3<f64>> = Mesh::new();
+
+    // same single triangle: open boundary
+    let v0 = mesh.add_vertex(Point3::new(0.0, 0.0, 0.0));
+    let v1 = mesh.add_vertex(Point3::new(1.0, 0.0, 0.0));
+    let v2 = mesh.add_vertex(Point3::new(0.0, 1.0, 0.0));
+    mesh.add_triangle(v0, v1, v2);
+
+    // build the ghost edges around the hole
+    mesh.build_boundary_loops();
+
+    // there should be exactly one boundary loop
+    let loops = mesh.boundary_loops();
+    assert_eq!(loops.len(), 1);
+
+    // that loop should visit exactly the 3 triangle vertices (order doesn’t matter here)
+    let mut vs = loops[0].clone();
+    vs.sort();
+    assert_eq!(vs, vec![v0, v1, v2]);
+}
+
+#[test]
+fn one_ring_neighbors_3d() {
+    let mut mesh: Mesh<f64, Point3<f64>> = Mesh::new();
+
+    // build two triangles sharing edge v0–v1, forming a quad
+    let v0 = mesh.add_vertex(Point3::new(0.0, 0.0, 0.0));
+    let v1 = mesh.add_vertex(Point3::new(1.0, 0.0, 0.0));
+    let v2 = mesh.add_vertex(Point3::new(1.0, 1.0, 0.0));
+    let v3 = mesh.add_vertex(Point3::new(0.0, 1.0, 0.0));
+
+    // triangles (v0,v1,v2) and (v0,v2,v3)
+    mesh.add_triangle(v0, v1, v2);
+    mesh.add_triangle(v0, v2, v3);
+
+    // build boundary loops so every half‐edge has a twin
+    mesh.build_boundary_loops();
+
+    // collect the 1-ring around v0: should be {v1, v2, v3}
+    let mut nbrs = mesh.one_ring_neighbors(v0);
+    nbrs.sort();
+    assert_eq!(nbrs, vec![v1, v2, v3]);
 }

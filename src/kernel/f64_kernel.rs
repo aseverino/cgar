@@ -21,29 +21,29 @@
 // SOFTWARE.
 
 use crate::geometry::{Point2, Segment2, Vector2};
-use crate::kernel::{Kernel, are_collinear, are_equal, is_point_on_segment, orient2d};
+use crate::kernel::kernel::Kernel2;
 
 pub struct F64Kernel;
 
-impl Kernel for F64Kernel {
+impl Kernel2 for F64Kernel {
     type FT = f64;
     type Point2 = Point2<f64>;
     type Segment2 = Segment2<f64>;
     type Vector2 = Vector2<f64>;
 
-    fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> f64 {
-        orient2d(a, b, c)
-    }
+    // fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> f64 {
+    //     orient2d(a, b, c)
+    // }
 
-    fn are_equal(a: &Self::Point2, b: &Self::Point2, eps: f64) -> bool {
-        are_equal(a, b, &eps)
-    }
+    // fn are_equal(a: &Self::Point2, b: &Self::Point2, eps: f64) -> bool {
+    //     are_equal(a, b, &eps)
+    // }
 
-    fn are_collinear(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2, eps: f64) -> bool {
-        are_collinear(a, b, c, &eps)
-    }
+    // fn are_collinear(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2, eps: f64) -> bool {
+    //     are_collinear(a, b, c, &eps)
+    // }
 
-    fn is_point_on_segment(p: &Self::Point2, s: &Self::Segment2, eps: f64) -> bool {
-        is_point_on_segment(p, s, &eps)
-    }
+    // fn is_point_on_segment(p: &Self::Point2, s: &Self::Segment2, eps: f64) -> bool {
+    //     is_point_on_segment(p, s, &eps)
+    // }
 }

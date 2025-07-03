@@ -25,6 +25,11 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use crate::geometry::Vector2;
 
+pub trait PointOps<T>: Sized {
+    fn distance_to(&self, other: &Self) -> T;
+    fn sub(&self, other: &Self) -> Self;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point2<T>
 where
@@ -49,15 +54,77 @@ where
     pub fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
+}
 
-    pub fn distance_to(&self, other: &Point2<T>) -> T {
+impl<T> PointOps<T> for Point2<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn distance_to(&self, other: &Self) -> T {
         (&(&self.x - &other.x).pow(2) + &(&self.y - &other.y).pow(2)).sqrt()
     }
 
-    pub fn sub(&self, other: &Point2<T>) -> Vector2<T> {
-        Vector2 {
+    fn sub(&self, other: &Self) -> Self {
+        Self {
             x: &self.x - &other.x,
             y: &self.y - &other.y,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Point3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    pub x: T,
+    pub y: T,
+    pub z: T,
+}
+
+impl<T> Point3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    pub fn new(x: T, y: T, z: T) -> Self {
+        Self { x, y, z }
+    }
+}
+
+impl<T> PointOps<T> for Point3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn distance_to(&self, other: &Self) -> T {
+        let a = &(&self.x - &other.x).pow(2);
+        let b = &(&self.y - &other.y).pow(2);
+        let c = &(&self.z - &other.z).pow(2);
+        let ab = a + b;
+
+        (&ab + c).sqrt()
+    }
+
+    fn sub(&self, other: &Self) -> Self {
+        Self {
+            x: &self.x - &other.x,
+            y: &self.y - &other.y,
+            z: &self.z - &other.z,
         }
     }
 }

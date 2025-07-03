@@ -25,14 +25,26 @@ use crate::{
     operations::{Abs, Pow, Sqrt},
 };
 
-pub trait Kernel {
+pub trait Kernel2 {
     type FT: Clone + PartialOrd + Abs + Pow + Sqrt;
     type Point2;
     type Segment2;
     type Vector2;
 
-    fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> Self::FT;
-    fn are_equal(a: &Self::Point2, b: &Self::Point2, eps: Self::FT) -> bool;
-    fn are_collinear(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2, eps: Self::FT) -> bool;
-    fn is_point_on_segment(p: &Self::Point2, s: &Self::Segment2, eps: Self::FT) -> bool;
+    // fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> Self::FT;
+    // fn are_equal(a: &Self::Point2, b: &Self::Point2, eps: Self::FT) -> bool;
+    // fn are_collinear(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2, eps: Self::FT) -> bool;
+    // fn is_point_on_segment(p: &Self::Point2, s: &Self::Segment2, eps: Self::FT) -> bool;
+}
+
+pub trait Kernel3 {
+    type FT: Clone + PartialOrd + Abs + Pow + Sqrt;
+    type Point3;
+    type Segment3;
+    type Vector3;
+
+    // fn orient3d(a: &Self::Point3, b: &Self::Point3, c: &Self::Point3) -> Self::FT;
+    // fn are_equal(a: &Self::Point3, b: &Self::Point3, eps: Self::FT) -> bool;
+    // fn are_collinear(a: &Self::Point3, b: &Self::Point3, c: &Self::Point3, eps: Self::FT) -> bool;
+    // fn is_point_on_segment(p: &Self::Point3, s: &Self::Segment3, eps: Self::FT) -> bool;
 }

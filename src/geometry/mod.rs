@@ -25,7 +25,10 @@ pub mod point;
 pub mod segment;
 pub mod vector;
 
-pub use intersection::{SegmentIntersection, segment_segment_intersection};
+pub use intersection::{
+    SegmentIntersection2, SegmentIntersection3, segment_segment_intersection_2,
+    segment_segment_intersection_3,
+};
 pub use point::Point2;
 pub use segment::Segment2;
 pub use vector::Vector2;

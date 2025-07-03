@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use cgar::geometry::{Point2, Segment2, Vector2};
+use cgar::geometry::{Point2, Segment2, Vector2, point::PointOps, segment::SegmentOps};
 
 #[test]
 fn test_distance() {
@@ -33,7 +33,7 @@ fn test_distance() {
 fn test_vector_cross() {
     let v1 = Vector2::new(1.0, 0.0);
     let v2 = Vector2::new(0.0, 1.0);
-    assert_eq!(v1.cross(v2), 1.0);
+    assert_eq!(v1.cross(&v2), 1.0);
 }
 
 #[test]

@@ -20,18 +20,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::operations::{Abs, Pow, Sqrt, Zero};
+use crate::{
+    geometry::{point::Point3, segment::Segment3, vector::Vector3},
+    kernel::are_collinear_3,
+    operations::{Abs, Pow, Sqrt, Zero},
+};
 use std::ops::{Add, Div, Mul, Sub};
 
 use crate::{
     geometry::{Point2, Segment2},
-    kernel::{are_collinear, orient2d},
+    kernel::{are_collinear_2, orient2d},
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum SegmentIntersection<T>
+pub enum SegmentIntersection2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + From<i32>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -42,13 +46,13 @@ where
     Overlapping(Segment2<T>),
 }
 
-pub fn segment_segment_intersection<T>(
+pub fn segment_segment_intersection_2<T>(
     seg1: &Segment2<T>,
     seg2: &Segment2<T>,
     eps: T,
-) -> SegmentIntersection<T>
+) -> SegmentIntersection2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + From<i32>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -78,7 +82,7 @@ where
 
             let denom = &(&(x1 - x2) * &(y3 - y4)) - &(&(y1 - y2) * &(x3 - x4));
             if denom.abs() < eps {
-                return SegmentIntersection::None; // Parallel but not overlapping
+                return SegmentIntersection2::None; // Parallel but not overlapping
             }
 
             let px_num = &(&(&(x1 * y2) - &(y1 * x2)) * &(x3 - x4))
@@ -89,11 +93,11 @@ where
             let px = &px_num / &denom;
             let py = &py_num / &denom;
 
-            return SegmentIntersection::Point(Point2::new(px, py));
+            return SegmentIntersection2::Point(Point2::new(px, py));
         }
 
         // Collinear case
-        if are_collinear(&a, &b, &c, &eps) {
+        if are_collinear_2(&a, &b, &c, &eps) {
             // Compute overlapping segment
             let mut pts = [a, b, c, d];
             pts.sort_by(|p1, p2| {
@@ -103,9 +107,135 @@ where
             });
 
             let s = Segment2::new(&pts[1], &pts[2]);
-            return SegmentIntersection::Overlapping(s);
+            return SegmentIntersection2::Overlapping(s);
         }
     }
 
-    SegmentIntersection::None
+    SegmentIntersection2::None
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SegmentIntersection3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + From<i32>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    None,
+    Point(Point3<T>),
+    Overlapping(Segment3<T>),
+}
+
+pub fn segment_segment_intersection_3<T>(
+    seg1: &Segment3<T>,
+    seg2: &Segment3<T>,
+    eps: T,
+) -> SegmentIntersection3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + From<i32>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    let p1 = &seg1.a;
+    let p2 = &seg1.b;
+    let q1 = &seg2.a;
+    let q2 = &seg2.b;
+
+    // Direction vectors
+    let d1 = Vector3 {
+        x: &p2.x - &p1.x,
+        y: &p2.y - &p1.y,
+        z: &p2.z - &p1.z,
+    };
+    let d2 = Vector3 {
+        x: &q2.x - &q1.x,
+        y: &q2.y - &q1.y,
+        z: &q2.z - &q1.z,
+    };
+
+    let r = Vector3 {
+        x: &p1.x - &q1.x,
+        y: &p1.y - &q1.y,
+        z: &p1.z - &q1.z,
+    };
+
+    // Dot products
+    let a = d1.dot(&d1); // squared length of d1
+    let b = d1.dot(&d2);
+    let c = d2.dot(&d2); // squared length of d2
+    let d = d1.dot(&r);
+    let e = d2.dot(&r);
+
+    let denom = &(&a * &c) - &(&b * &b);
+
+    let zero = T::zero();
+
+    let (s, t) = if denom.abs() > eps {
+        let s = &(&(&b * &e) - &(&c * &d)) / &denom;
+        let t = &(&(&a * &e) - &(&b * &d)) / &denom;
+        (s, t)
+    } else {
+        // Segments are parallel — handle collinear case
+        if are_collinear_3(p1, p2, q1, &eps) {
+            // Sort points by x (then y then z)
+            let mut pts = [p1, p2, q1, q2];
+            pts.sort_by(|p1, p2| {
+                p1.x.partial_cmp(&p2.x)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(p1.y.partial_cmp(&p2.y).unwrap_or(std::cmp::Ordering::Equal))
+                    .then(p1.z.partial_cmp(&p2.z).unwrap_or(std::cmp::Ordering::Equal))
+            });
+            return SegmentIntersection3::Overlapping(Segment3 {
+                a: pts[1].clone(),
+                b: pts[2].clone(),
+            });
+        }
+
+        return SegmentIntersection3::None;
+    };
+
+    // Compute closest points on each segment
+    let s_clamped = if s < zero {
+        zero.clone()
+    } else if s > T::from(1) {
+        T::from(1)
+    } else {
+        s
+    };
+
+    let t_clamped = if t < zero {
+        zero.clone()
+    } else if t > T::from(1) {
+        T::from(1)
+    } else {
+        t
+    };
+
+    let closest_p = Point3 {
+        x: &p1.x + &(&d1.x * &s_clamped),
+        y: &p1.y + &(&d1.y * &s_clamped),
+        z: &p1.z + &(&d1.z * &s_clamped),
+    };
+
+    let closest_q = Point3 {
+        x: &q1.x + &(&d2.x * &t_clamped),
+        y: &q1.y + &(&d2.y * &t_clamped),
+        z: &q1.z + &(&d2.z * &t_clamped),
+    };
+
+    let dx = &closest_p.x - &closest_q.x;
+    let dy = &closest_p.y - &closest_q.y;
+    let dz = &closest_p.z - &closest_q.z;
+
+    let dist_squared = &(&(&dx * &dx) + &(&dy * &dy)) + &(&dz * &dz);
+
+    if dist_squared < &eps * &eps {
+        SegmentIntersection3::Point(closest_p)
+    } else {
+        SegmentIntersection3::None
+    }
 }

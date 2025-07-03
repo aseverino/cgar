@@ -23,7 +23,7 @@
 use std::ops::{Add, Div, Mul, Sub};
 
 use crate::{
-    geometry::Point2,
+    geometry::{Point2, point::Point3},
     operations::{Abs, Pow, Sqrt},
 };
 
@@ -47,6 +47,27 @@ where
         match axis {
             0 => self.x.clone(),
             1 => self.y.clone(),
+            _ => panic!("Invalid axis"),
+        }
+    }
+}
+
+impl<T: Clone> PointTrait<T> for Point3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn dimensions() -> usize {
+        3
+    }
+    fn coord(&self, axis: usize) -> T {
+        match axis {
+            0 => self.x.clone(),
+            1 => self.y.clone(),
+            2 => self.z.clone(),
             _ => panic!("Invalid axis"),
         }
     }

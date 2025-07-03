@@ -21,8 +21,24 @@
 // SOFTWARE.
 
 use super::Point2;
-use crate::operations::{Abs, Pow, Sqrt};
+use crate::{
+    geometry::point::{Point3, PointOps},
+    operations::{Abs, Pow, Sqrt},
+};
 use std::ops::{Add, Div, Mul, Sub};
+
+pub trait SegmentOps<T>: Sized {
+    type Point: PointOps<T> + Clone;
+
+    fn a(&self) -> &Self::Point;
+    fn b(&self) -> &Self::Point;
+
+    fn length(&self) -> T {
+        self.a().distance_to(self.b())
+    }
+
+    fn midpoint(&self) -> Self::Point;
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment2<T>
@@ -32,6 +48,7 @@ where
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
+    Point2<T>: PointOps<T>,
 {
     pub a: Point2<T>,
     pub b: Point2<T>,
@@ -51,15 +68,90 @@ where
             b: b.clone(),
         }
     }
+}
 
-    pub fn length(&self) -> T {
-        self.a.distance_to(&self.b)
+impl<T> SegmentOps<T> for Segment2<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + From<i32>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+    Point2<T>: PointOps<T>,
+{
+    type Point = Point2<T>;
+
+    fn a(&self) -> &Self::Point {
+        &self.a
     }
 
-    pub fn midpoint(&self) -> Point2<T> {
+    fn b(&self) -> &Self::Point {
+        &self.b
+    }
+
+    fn midpoint(&self) -> Self::Point {
         Point2 {
             x: &(&self.a.x + &self.b.x) / &T::from(2),
             y: &(&self.a.y + &self.b.y) / &T::from(2),
+        }
+    }
+}
+
+/////////////
+#[derive(Debug, Clone, PartialEq)]
+pub struct Segment3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + From<i32>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+    Point3<T>: PointOps<T>,
+{
+    pub a: Point3<T>,
+    pub b: Point3<T>,
+}
+
+impl<T> Segment3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + From<i32>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    pub fn new(a: &Point3<T>, b: &Point3<T>) -> Self {
+        Self {
+            a: a.clone(),
+            b: b.clone(),
+        }
+    }
+}
+
+impl<T> SegmentOps<T> for Segment3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + From<i32>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+    Point3<T>: PointOps<T>,
+{
+    type Point = Point3<T>;
+
+    fn a(&self) -> &Self::Point {
+        &self.a
+    }
+
+    fn b(&self) -> &Self::Point {
+        &self.b
+    }
+
+    fn midpoint(&self) -> Self::Point {
+        Point3 {
+            x: &(&self.a.x + &self.b.x) / &T::from(2),
+            y: &(&self.a.y + &self.b.y) / &T::from(2),
+            z: &(&self.a.z + &self.b.z) / &T::from(2),
         }
     }
 }
