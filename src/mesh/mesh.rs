@@ -244,4 +244,58 @@ impl<T, P: PointTrait<T>> Mesh<T, P> {
         }
         loops
     }
+
+    /// Flip an interior edge given one of its half‐edges `he`.
+    /// Returns Err if `he` is on the boundary (i.e. twin or face is None).
+    pub fn flip_edge(&mut self, he_a: usize) -> Result<(), &'static str> {
+        // --- 1) validity checks ---
+        let he_d = self.half_edges[he_a].twin;
+        if he_d == usize::MAX {
+            return Err("cannot flip a boundary edge");
+        }
+        let f0 = self.half_edges[he_a].face.ok_or("no face on he")?;
+        let f1 = self.half_edges[he_d].face.ok_or("no face on twin")?;
+
+        // --- 2) collect the six half‐edges around that edge ---
+        let he_b = self.half_edges[he_a].next;
+        let he_c = self.half_edges[he_a].prev;
+        let he_e = self.half_edges[he_d].next;
+        let he_f = self.half_edges[he_d].prev;
+
+        // --- 3) pull off the four corner vertices ---
+        let u = self.half_edges[he_c].vertex; // c→u
+        let v = self.half_edges[he_a].vertex; // u→v
+        let c = self.half_edges[he_b].vertex; // v→c
+        let d = self.half_edges[he_e].vertex; // u→d
+
+        // --- 4) reassign the two halves of the diagonal to c→d and d→c ---
+        self.half_edges[he_a].vertex = d; // now u→d
+        self.half_edges[he_d].vertex = c; // now v→c
+
+        // --- 5) stitch up face f0 to be the triangle (c, d, u) ---
+        // We pick the cycle [he_c, he_a, he_b] so that dests are [u, d, c]:
+        self.half_edges[he_c].next = he_a;
+        self.half_edges[he_a].next = he_b;
+        self.half_edges[he_b].next = he_c;
+
+        self.half_edges[he_a].prev = he_c;
+        self.half_edges[he_b].prev = he_a;
+        self.half_edges[he_c].prev = he_b;
+
+        self.faces[f1].half_edge = he_c; // start anywhere in that cycle
+
+        // --- 6) stitch up face f1 to be the triangle (d, c, v) ---
+        // We pick the cycle [he_e, he_d, he_f] so that dests are [d, c, v]:
+        self.half_edges[he_e].next = he_d;
+        self.half_edges[he_d].next = he_f;
+        self.half_edges[he_f].next = he_e;
+
+        self.half_edges[he_d].prev = he_e;
+        self.half_edges[he_f].prev = he_d;
+        self.half_edges[he_e].prev = he_f;
+
+        self.faces[f0].half_edge = he_e;
+
+        Ok(())
+    }
 }

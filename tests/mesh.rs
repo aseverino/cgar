@@ -360,3 +360,34 @@ fn test_boundary_detection_and_loops() {
     let expected: std::collections::HashSet<_> = [v0, v1, v2, v3].into_iter().collect();
     assert_eq!(set, expected);
 }
+
+#[test]
+fn test_edge_flip() {
+    let mut mesh = Mesh::<f64, TestPoint2F64>::new();
+    let v0 = mesh.add_vertex(TestPoint2F64(0.0, 0.0));
+    let v1 = mesh.add_vertex(TestPoint2F64(1.0, 0.0));
+    let v2 = mesh.add_vertex(TestPoint2F64(0.0, 1.0));
+    let v3 = mesh.add_vertex(TestPoint2F64(1.0, 1.0));
+
+    // build two triangles sharing edge v1–v2
+    mesh.add_triangle(v0, v1, v2);
+    mesh.add_triangle(v1, v3, v2);
+    mesh.build_boundary_loops();
+
+    // find the half-edge for the shared edge (v1→v2)
+    let he_shared = *mesh.edge_map.get(&(v1, v2)).unwrap();
+
+    // flip it
+    mesh.flip_edge(he_shared).expect("flip must succeed");
+
+    // Now the shared diagonal should be v0–v3
+    // face f0 (was v0,v1,v2) becomes (v0,v2,v3)
+    let f0_vs = mesh.face_vertices(0);
+    let set0: std::collections::HashSet<_> = f0_vs.into_iter().collect();
+    assert_eq!(set0, [v0, v2, v3].into_iter().collect());
+
+    // face f1 (was v1,v3,v2) becomes (v0,v3,v1)
+    let f1_vs = mesh.face_vertices(1);
+    let set1: std::collections::HashSet<_> = f1_vs.into_iter().collect();
+    assert_eq!(set1, [v0, v3, v1].into_iter().collect());
+}
