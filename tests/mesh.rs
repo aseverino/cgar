@@ -867,3 +867,24 @@ fn one_ring_neighbors_3d() {
     nbrs.sort();
     assert_eq!(nbrs, vec![v1, v2, v3]);
 }
+
+#[test]
+fn test_face_area_and_centroid_2d() {
+    let mut mesh = Mesh::<f64, TestPoint2F64>::new();
+
+    // Build a single right‐triangle (v0=(0,0), v1=(1,0), v2=(0,1))
+    let v0 = mesh.add_vertex(TestPoint2F64(0.0, 0.0));
+    let v1 = mesh.add_vertex(TestPoint2F64(1.0, 0.0));
+    let v2 = mesh.add_vertex(TestPoint2F64(0.0, 1.0));
+    mesh.add_triangle(v0, v1, v2);
+
+    // Centroid: (1/3, 1/3)
+    let cent = mesh.face_centroid(0);
+    assert_eq!(cent.len(), 2);
+    assert!((cent[0] - (1.0 / 3.0)).abs() < 1e-12);
+    assert!((cent[1] - (1.0 / 3.0)).abs() < 1e-12);
+
+    // Area: 0.5
+    let area = mesh.face_area(0);
+    assert!((area - 0.5).abs() < 1e-12);
+}

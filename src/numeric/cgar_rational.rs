@@ -22,6 +22,7 @@
 
 use std::ops::{Add, Div, Mul, Sub};
 
+use num_traits::ToPrimitive;
 use rug::Rational;
 
 #[derive(Clone, Debug)]
@@ -86,5 +87,20 @@ impl PartialOrd for CgarRational {
 impl From<i32> for CgarRational {
     fn from(value: i32) -> Self {
         CgarRational(Rational::from(value))
+    }
+}
+
+impl ToPrimitive for CgarRational {
+    fn to_i64(&self) -> Option<i64> {
+        Some(self.0.to_f64() as i64)
+    }
+    fn to_u64(&self) -> Option<u64> {
+        Some(self.0.to_f64() as u64)
+    }
+    fn to_f32(&self) -> Option<f32> {
+        Some(self.0.to_f64() as f32)
+    }
+    fn to_f64(&self) -> Option<f64> {
+        Some(self.0.to_f64())
     }
 }

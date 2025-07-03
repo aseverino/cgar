@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use num_traits::ToPrimitive;
+
 use super::{face::Face, half_edge::HalfEdge, point_trait::PointTrait, vertex::Vertex};
 use std::collections::{HashMap, HashSet};
 
@@ -32,7 +34,10 @@ pub struct Mesh<T, P: PointTrait<T>> {
     pub edge_map: HashMap<(usize, usize), usize>,
 }
 
-impl<T, P: PointTrait<T>> Mesh<T, P> {
+impl<T, P: PointTrait<T>> Mesh<T, P>
+where
+    T: ToPrimitive + From<i32> + ToPrimitive + From<i32>,
+{
     pub fn new() -> Self {
         Self {
             vertices: Vec::new(),
@@ -90,6 +95,39 @@ impl<T, P: PointTrait<T>> Mesh<T, P> {
 
         self.faces.push(Face::new(edge_indices[0]));
         face_idx
+    }
+
+    /// Return the centroid of face `f` as a Vec<f64> of length = dimensions().
+    /// Currently works for any dimension, but returns a flat Vec.
+    pub fn face_centroid(&self, f: usize) -> Vec<f64> {
+        let he_idxs = &self.face_half_edges(f);
+        let dim = P::dimensions();
+        let mut sum = vec![0.0; dim];
+        for he in he_idxs {
+            let v_idx = self.half_edges[*he].vertex;
+            let p = &self.vertices[v_idx].position;
+            for i in 0..dim {
+                // use to_f64, which returns Option<f64>
+                sum[i] += p.coord(i).to_f64().expect("cannot convert to f64");
+            }
+        }
+        let n = he_idxs.len() as f64;
+        sum.iter().map(|c| c / n).collect()
+    }
+
+    pub fn face_area(&self, f: usize) -> f64 {
+        assert_eq!(P::dimensions(), 2);
+        let vs = self.face_vertices(f);
+        let p0 = &self.vertices[vs[0]].position;
+        let p1 = &self.vertices[vs[1]].position;
+        let p2 = &self.vertices[vs[2]].position;
+        let x0 = p0.coord(0).to_f64().unwrap();
+        let y0 = p0.coord(1).to_f64().unwrap();
+        let x1 = p1.coord(0).to_f64().unwrap();
+        let y1 = p1.coord(1).to_f64().unwrap();
+        let x2 = p2.coord(0).to_f64().unwrap();
+        let y2 = p2.coord(1).to_f64().unwrap();
+        ((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)).abs() * 0.5
     }
 
     pub fn build_boundary_loops(&mut self) {
