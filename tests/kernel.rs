@@ -20,9 +20,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use cgar::geometry::point::Point3;
+use cgar::geometry::segment::Segment3;
 use cgar::geometry::{Point2, Segment2};
 use cgar::kernel::{
-    BigRationalKernel, F64Kernel, are_collinear_2, are_equal_2, is_point_on_segment_2, orient2d,
+    BigRationalKernel, F64Kernel, are_collinear_2, are_collinear_3, are_equal_2, are_equal_3,
+    is_point_on_segment_2, is_point_on_segment_3, orient2d, orient3d,
 };
 use cgar::numeric::cgar_rational::CgarRational;
 use rug::Rational;
@@ -40,7 +43,7 @@ fn test_orient2d() {
 }
 
 #[test]
-fn test_are_equal() {
+fn test_are_equal_2() {
     let a = Point2::new(1.0, 2.0);
     let b = Point2::new(1.0 + EPS / 2.0, 2.0);
     let c = Point2::new(1.0 + EPS * 10.0, 2.0);
@@ -50,7 +53,7 @@ fn test_are_equal() {
 }
 
 #[test]
-fn test_are_collinear() {
+fn test_are_collinear_2() {
     let a = Point2::new(0.0, 0.0);
     let b = Point2::new(1.0, 1.0);
     let c = Point2::new(2.0, 2.0);
@@ -62,7 +65,7 @@ fn test_are_collinear() {
 }
 
 #[test]
-fn test_is_point_on_segment() {
+fn test_is_point_on_segment_2() {
     let seg = Segment2::new(&Point2::new(0.0, 0.0), &Point2::new(2.0, 2.0));
     let on = Point2::new(1.0, 1.0);
     let off = Point2::new(3.0, 3.0);
@@ -94,27 +97,76 @@ fn test_bigrational_orient2d() {
     assert!(res.0 > 0);
 }
 
-// #[test]
-// fn test_bigrational_equal_and_collinear() {
-//     let a = Point2::new(1.0, 1.0);
-//     let b = Point2::new(1.0000000001, 1.0);
-//     let eps = eps();
+#[test]
+fn test_orient3d() {
+    let a = Point3::new(0.0, 0.0, 0.0);
+    let b = Point3::new(1.0, 0.0, 0.0);
+    let c = Point3::new(0.0, 1.0, 0.0);
+    let d = Point3::new(0.0, 0.0, 1.0);
 
-//     assert!(BigRationalKernel::are_equal(&a, &b, eps.clone()));
-//     assert!(BigRationalKernel::are_collinear(
-//         &Point2::new(0.0, 0.0),
-//         &Point2::new(1.0, 1.0),
-//         &Point2::new(2.0, 2.0),
-//         eps.clone()
-//     ));
-// }
+    let res = orient3d(&a, &b, &c, &d);
+    assert!(res > 0.0);
+}
 
-// #[test]
-// fn test_bigrational_on_segment() {
-//     let seg = Segment2::new(&Point2::new(0.0, 0.0), &Point2::new(2.0, 2.0));
-//     let p_on = Point2::new(1.0, 1.0);
-//     let p_off = Point2::new(3.0, 3.0);
+#[test]
+fn test_are_equal_3() {
+    let p1 = Point3::new(1.0, 2.0, 3.0);
+    let p2 = Point3::new(1.0 + EPS / 2.0, 2.0, 3.0);
+    let p3 = Point3::new(1.0 + EPS * 10.0, 2.0, 3.0);
 
-//     assert!(BigRationalKernel::is_point_on_segment(&p_on, &seg, eps()));
-//     assert!(!BigRationalKernel::is_point_on_segment(&p_off, &seg, eps()));
-// }
+    assert!(are_equal_3(&p1, &p2, &EPS));
+    assert!(!are_equal_3(&p1, &p3, &EPS));
+}
+
+#[test]
+fn test_are_collinear_3() {
+    let a = Point3::new(0.0, 0.0, 0.0);
+    let b = Point3::new(1.0, 1.0, 1.0);
+    let c = Point3::new(2.0, 2.0, 2.0);
+    assert!(are_collinear_3(&a, &b, &c, &EPS));
+
+    let d = Point3::new(2.0, 2.0, 2.000001);
+    assert!(!are_collinear_3(&a, &b, &d, &EPS));
+}
+
+#[test]
+fn test_is_point_on_segment_3() {
+    let seg = Segment3::new(&Point3::new(0.0, 0.0, 0.0), &Point3::new(2.0, 2.0, 2.0));
+    let on = Point3::new(1.0, 1.0, 1.0);
+    let off = Point3::new(3.0, 3.0, 3.0);
+
+    assert!(is_point_on_segment_3(&on, &seg, &EPS));
+    assert!(!is_point_on_segment_3(&off, &seg, &EPS));
+}
+
+fn eps_rational() -> CgarRational {
+    CgarRational(Rational::from((1, 1_000_000_000))) // 1e-9
+}
+
+#[test]
+fn test_bigrational_orient3d() {
+    let a = Point3::new(
+        CgarRational(Rational::from(0)),
+        CgarRational(Rational::from(0)),
+        CgarRational(Rational::from(0)),
+    );
+    let b = Point3::new(
+        CgarRational(Rational::from(1)),
+        CgarRational(Rational::from(0)),
+        CgarRational(Rational::from(0)),
+    );
+    let c = Point3::new(
+        CgarRational(Rational::from(0)),
+        CgarRational(Rational::from(1)),
+        CgarRational(Rational::from(0)),
+    );
+    let d = Point3::new(
+        CgarRational(Rational::from(0)),
+        CgarRational(Rational::from(0)),
+        CgarRational(Rational::from(1)),
+    );
+
+    let res: CgarRational = orient3d(&a, &b, &c, &d);
+    // expect positive rational
+    assert!(res.0 > Rational::from((0, 1)));
+}

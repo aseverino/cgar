@@ -20,24 +20,54 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use cgar::geometry::{Point2, Segment2, Vector2, point::PointOps, segment::SegmentOps};
+use cgar::geometry::{
+    Point2, Segment2, Vector2,
+    point::{Point3, PointOps},
+    segment::{Segment3, SegmentOps},
+    vector::Vector3,
+};
 
 #[test]
-fn test_distance() {
+fn test_distance_2() {
     let p1 = Point2::new(0.0, 0.0);
     let p2 = Point2::new(3.0, 4.0);
     assert_eq!(p1.distance_to(&p2), 5.0);
 }
 
 #[test]
-fn test_vector_cross() {
+fn test_vector_cross_2() {
     let v1 = Vector2::new(1.0, 0.0);
     let v2 = Vector2::new(0.0, 1.0);
     assert_eq!(v1.cross(&v2), 1.0);
 }
 
 #[test]
-fn test_segment_length() {
+fn test_segment_length_2() {
     let s = Segment2::new(&Point2::new(0.0, 0.0), &Point2::new(0.0, 5.0));
+    assert_eq!(s.length(), 5.0);
+}
+
+#[test]
+fn test_distance_3() {
+    let p1 = Point3::new(0.0, 0.0, 0.0);
+    let p2 = Point3::new(1.0, 2.0, 2.0);
+    // √(1² + 2² + 2²) = √9 = 3
+    assert_eq!(p1.distance_to(&p2), 3.0);
+}
+
+#[test]
+fn test_vector_cross_3() {
+    let v1 = Vector3::new(1.0, 0.0, 0.0);
+    let v2 = Vector3::new(0.0, 1.0, 0.0);
+    // i × j = k
+    assert_eq!(v1.cross(&v2), Vector3::new(0.0, 0.0, 1.0));
+}
+
+#[test]
+fn test_segment_length_3() {
+    let a = Point3::new(0.0, 0.0, 0.0);
+    let b = Point3::new(0.0, 3.0, 4.0);
+    let s = Segment3::new(&a, &b);
+    // length is √(0² + 3² + 4²) = 5
     assert_eq!(s.length(), 5.0);
 }

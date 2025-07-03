@@ -20,11 +20,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use cgar::geometry::{Point2, Segment2};
+use cgar::geometry::point::Point3;
+use cgar::geometry::segment::Segment3;
+use cgar::geometry::{Point2, Segment2, SegmentIntersection3, segment_segment_intersection_3};
 use cgar::geometry::{SegmentIntersection2, segment_segment_intersection_2};
 
 #[test]
-fn test_simple_intersection() {
+fn test_simple_intersection_2() {
     let s1 = Segment2::new(&Point2::new(0.0, 0.0), &Point2::new(2.0, 2.0));
     let s2 = Segment2::new(&Point2::new(0.0, 2.0), &Point2::new(2.0, 0.0));
     let res = segment_segment_intersection_2(&s1, &s2, 1e-9);
@@ -32,7 +34,7 @@ fn test_simple_intersection() {
 }
 
 #[test]
-fn test_no_intersection() {
+fn test_no_intersection_2() {
     let s1 = Segment2::new(&Point2::new(0.0, 0.0), &Point2::new(1.0, 0.0));
     let s2 = Segment2::new(&Point2::new(0.0, 1.0), &Point2::new(1.0, 1.0));
     let res = segment_segment_intersection_2(&s1, &s2, 1e-9);
@@ -40,7 +42,7 @@ fn test_no_intersection() {
 }
 
 #[test]
-fn test_collinear_overlap() {
+fn test_collinear_overlap_2() {
     let s1 = Segment2::new(&Point2::new(0.0, 0.0), &Point2::new(2.0, 0.0));
     let s2 = Segment2::new(&Point2::new(1.0, 0.0), &Point2::new(3.0, 0.0));
     let res = segment_segment_intersection_2(&s1, &s2, 1e-9);
@@ -49,6 +51,36 @@ fn test_collinear_overlap() {
         SegmentIntersection2::Overlapping(Segment2::new(
             &Point2::new(1.0, 0.0),
             &Point2::new(2.0, 0.0),
+        ))
+    );
+}
+
+#[test]
+fn test_simple_intersection_3() {
+    let s1 = Segment3::new(&Point3::new(0.0, 0.0, 0.0), &Point3::new(2.0, 2.0, 0.0));
+    let s2 = Segment3::new(&Point3::new(0.0, 2.0, 0.0), &Point3::new(2.0, 0.0, 0.0));
+    let res = segment_segment_intersection_3(&s1, &s2, 1e-9);
+    assert_eq!(res, SegmentIntersection3::Point(Point3::new(1.0, 1.0, 0.0)));
+}
+
+#[test]
+fn test_no_intersection_3() {
+    let s1 = Segment3::new(&Point3::new(0.0, 0.0, 0.0), &Point3::new(1.0, 0.0, 0.0));
+    let s2 = Segment3::new(&Point3::new(0.0, 1.0, 1.0), &Point3::new(1.0, 1.0, 1.0));
+    let res = segment_segment_intersection_3(&s1, &s2, 1e-9);
+    assert_eq!(res, SegmentIntersection3::None);
+}
+
+#[test]
+fn test_collinear_overlap_3() {
+    let s1 = Segment3::new(&Point3::new(0.0, 0.0, 0.0), &Point3::new(2.0, 0.0, 0.0));
+    let s2 = Segment3::new(&Point3::new(1.0, 0.0, 0.0), &Point3::new(3.0, 0.0, 0.0));
+    let res = segment_segment_intersection_3(&s1, &s2, 1e-9);
+    assert_eq!(
+        res,
+        SegmentIntersection3::Overlapping(Segment3::new(
+            &Point3::new(1.0, 0.0, 0.0),
+            &Point3::new(2.0, 0.0, 0.0),
         ))
     );
 }
