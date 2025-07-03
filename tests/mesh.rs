@@ -145,6 +145,16 @@ fn test_connected_two_triangles() {
     assert_eq!(he1.vertex, v2);
     assert_eq!(he2.vertex, v0);
 
+    // Get the two half-edges between v1 and v2 in opposite directions
+    let forward = mesh.edge_map.get(&(v1, v2)).unwrap();
+    let backward = mesh.edge_map.get(&(v2, v1)).unwrap();
+
+    let he_fwd = &mesh.half_edges[*forward];
+    let he_bwd = &mesh.half_edges[*backward];
+
+    assert_eq!(he_fwd.twin, *backward);
+    assert_eq!(he_bwd.twin, *forward);
+
     let g0 = &mesh.half_edges[he0_idx];
     let g1 = &mesh.half_edges[he1_idx];
     let g2 = &mesh.half_edges[g1.next];
@@ -209,6 +219,16 @@ fn test_connected_two_triangles_rational() {
     assert_eq!(he0.vertex, v1);
     assert_eq!(he1.vertex, v2);
     assert_eq!(he2.vertex, v0);
+
+    // Get the two half-edges between v1 and v2 in opposite directions
+    let forward = mesh.edge_map.get(&(v1, v2)).unwrap();
+    let backward = mesh.edge_map.get(&(v2, v1)).unwrap();
+
+    let he_fwd = &mesh.half_edges[*forward];
+    let he_bwd = &mesh.half_edges[*backward];
+
+    assert_eq!(he_fwd.twin, *backward);
+    assert_eq!(he_bwd.twin, *forward);
 
     let g0 = &mesh.half_edges[he0_idx];
     let g1 = &mesh.half_edges[he1_idx];
