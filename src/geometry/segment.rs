@@ -27,7 +27,7 @@ use std::ops::{Add, Div, Mul, Sub};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + From<i32>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -39,7 +39,7 @@ where
 
 impl<T> Segment2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + From<i32>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -58,10 +58,8 @@ where
 
     pub fn midpoint(&self) -> Point2<T> {
         Point2 {
-            //x: (self.a.x + self.b.x) / 2.0,
-            //y: (self.a.y + self.b.y) / 2.0,
-            x: &self.a.x + &self.b.x,
-            y: &self.a.y + &self.b.y,
+            x: &(&self.a.x + &self.b.x) / &T::from(2),
+            y: &(&self.a.y + &self.b.y) / &T::from(2),
         }
     }
 }
