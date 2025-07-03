@@ -298,3 +298,65 @@ fn test_build_boundary_loops() {
     let ring = mesh.outgoing_half_edges(v3);
     assert_eq!(ring.len(), 2);
 }
+
+#[test]
+fn test_face_loop_traversal() {
+    let mut mesh = Mesh::<f64, TestPoint2F64>::new();
+
+    // Build the same two-triangle mesh:
+    let v0 = mesh.add_vertex(TestPoint2F64(0.0, 0.0));
+    let v1 = mesh.add_vertex(TestPoint2F64(1.0, 0.0));
+    let v2 = mesh.add_vertex(TestPoint2F64(0.0, 1.0));
+    let v3 = mesh.add_vertex(TestPoint2F64(1.0, 1.0));
+
+    let f0 = mesh.add_triangle(v0, v1, v2);
+    let f1 = mesh.add_triangle(v1, v3, v2);
+
+    // Before building boundary loops, traversal around faces is already valid:
+    let fe0 = mesh.face_half_edges(f0);
+    assert_eq!(fe0.len(), 3);
+    // The triangle f0 = (v0, v1, v2) in CCW order gives half-edges targeting (v1, v2, v0)
+    let fv0 = mesh.face_vertices(f0);
+    assert_eq!(fv0, vec![v1, v2, v0]);
+
+    let fe1 = mesh.face_half_edges(f1);
+    assert_eq!(fe1.len(), 3);
+    // f1 = (v1, v3, v2) → targets (v3, v2, v1)
+    let fv1 = mesh.face_vertices(f1);
+    assert_eq!(fv1, vec![v3, v2, v1]);
+}
+
+#[test]
+fn test_boundary_detection_and_loops() {
+    let mut mesh = Mesh::<f64, TestPoint2F64>::new();
+
+    // Build the two‐triangle quad as before:
+    let v0 = mesh.add_vertex(TestPoint2F64(0.0, 0.0));
+    let v1 = mesh.add_vertex(TestPoint2F64(1.0, 0.0));
+    let v2 = mesh.add_vertex(TestPoint2F64(0.0, 1.0));
+    let v3 = mesh.add_vertex(TestPoint2F64(1.0, 1.0));
+
+    mesh.add_triangle(v0, v1, v2);
+    mesh.add_triangle(v1, v3, v2);
+
+    // Build the boundary‐ghosts
+    mesh.build_boundary_loops();
+
+    // 1) Boundary vertices should be all four
+    let bverts = mesh.boundary_vertices();
+    assert_eq!(bverts.len(), 4);
+    for &v in &[v0, v1, v2, v3] {
+        assert!(bverts.contains(&v));
+    }
+
+    // 2) There should be exactly one boundary loop,
+    //    and it should visit each of the four vertices once.
+    let loops = mesh.boundary_loops();
+    assert_eq!(loops.len(), 1);
+
+    let loop_vs = &loops[0];
+    assert_eq!(loop_vs.len(), 4);
+    let set: std::collections::HashSet<_> = loop_vs.iter().cloned().collect();
+    let expected: std::collections::HashSet<_> = [v0, v1, v2, v3].into_iter().collect();
+    assert_eq!(set, expected);
+}

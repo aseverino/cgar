@@ -180,4 +180,68 @@ impl<T, P: PointTrait<T>> Mesh<T, P> {
             .map(|&he_idx| self.half_edges[he_idx].vertex)
             .collect()
     }
+
+    /// Returns the indices of the half-edges bounding face `f`,
+    /// in CCW order.
+    pub fn face_half_edges(&self, f: usize) -> Vec<usize> {
+        let mut result = Vec::new();
+        let start = self.faces[f].half_edge;
+        let mut h = start;
+        loop {
+            result.push(h);
+            h = self.half_edges[h].next;
+            if h == start {
+                break;
+            }
+        }
+        result
+    }
+
+    /// Returns the vertex indices around face `f`,
+    /// in CCW order.
+    pub fn face_vertices(&self, f: usize) -> Vec<usize> {
+        self.face_half_edges(f)
+            .into_iter()
+            .map(|he| self.half_edges[he].vertex)
+            .collect()
+    }
+
+    /// Returns true if vertex `v` has any outgoing ghost edge (face == None).
+    pub fn is_boundary_vertex(&self, v: usize) -> bool {
+        self.outgoing_half_edges(v)
+            .into_iter()
+            .any(|he| self.half_edges[he].face.is_none())
+    }
+
+    /// Returns all vertex indices that lie on at least one boundary loop.
+    pub fn boundary_vertices(&self) -> Vec<usize> {
+        (0..self.vertices.len())
+            .filter(|&v| self.is_boundary_vertex(v))
+            .collect()
+    }
+
+    /// Returns each boundary loop as a Vec of vertex indices, CCW around the hole.
+    pub fn boundary_loops(&self) -> Vec<Vec<usize>> {
+        let mut loops = Vec::new();
+        let mut seen = HashSet::new();
+
+        for (i, he) in self.half_edges.iter().enumerate() {
+            // only process ghost edges (face == None) once
+            if he.face.is_none() && !seen.contains(&i) {
+                let mut loop_vs = Vec::new();
+                let mut curr = i;
+                loop {
+                    seen.insert(curr);
+                    // each ghost.he.vertex is the “to”-vertex on the boundary
+                    loop_vs.push(self.half_edges[curr].vertex);
+                    curr = self.half_edges[curr].next;
+                    if curr == i {
+                        break;
+                    }
+                }
+                loops.push(loop_vs);
+            }
+        }
+        loops
+    }
 }
