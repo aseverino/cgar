@@ -23,7 +23,7 @@
 use std::ops::{Add, Div, Mul, Sub};
 
 use crate::{
-    geometry::{Point2, point::Point3},
+    geometry::{Point2, Point3},
     operations::{Abs, Pow, Sqrt},
 };
 

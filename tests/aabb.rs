@@ -20,10 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use cgar::geometry::FromCoords;
 use cgar::geometry::aabb::Aabb;
 use cgar::geometry::aabb_tree::AabbTree;
-use cgar::geometry::point::Point2;
+use cgar::geometry::{FromCoords, Point2};
 use cgar::mesh::point_trait::PointTrait;
 
 #[test]

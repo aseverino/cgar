@@ -20,9 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use cgar::geometry::point::Point3;
 use cgar::geometry::segment::Segment3;
-use cgar::geometry::{Point2, Segment2};
+use cgar::geometry::{Point2, Point3, Segment2};
 use cgar::kernel::{
     BigRationalKernel, F64Kernel, are_collinear_2, are_collinear_3, are_equal_2, are_equal_3,
     is_point_on_segment_2, is_point_on_segment_3, orient2d, orient3d,

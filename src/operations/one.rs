@@ -20,14 +20,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod abs;
-pub mod one;
-pub mod pow;
-pub mod sqrt;
-pub mod zero;
+use rug::Rational;
 
-pub use abs::Abs;
-pub use one::One;
-pub use pow::Pow;
-pub use sqrt::Sqrt;
-pub use zero::Zero;
+use crate::numeric::cgar_rational::CgarRational;
+
+pub trait One {
+    fn one() -> Self;
+}
+
+impl One for f64 {
+    fn one() -> Self {
+        1.0
+    }
+}
+
+impl One for CgarRational {
+    fn one() -> Self {
+        CgarRational(Rational::from(1))
+    }
+}

@@ -21,10 +21,10 @@
 // SOFTWARE.
 
 use cgar::geometry::{
-    Point2, Segment2, Vector2,
-    point::{Point3, PointOps},
+    Point2, Point3, Segment2, Vector2, Vector3,
+    point::PointOps,
     segment::{Segment3, SegmentOps},
-    vector::{Vector3, VectorOps},
+    vector::VectorOps,
 };
 
 #[test]

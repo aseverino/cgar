@@ -20,13 +20,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use cgar::geometry::point::Point3;
 use cgar::geometry::segment::Segment3;
-use cgar::geometry::{Point2, Segment2, SegmentIntersection3, segment_segment_intersection_3};
+use cgar::geometry::{
+    Point2, Point3, Segment2, SegmentIntersection3, segment_segment_intersection_3,
+};
 use cgar::geometry::{SegmentIntersection2, segment_segment_intersection_2};
 
 #[test]
-fn test_simple_intersection_2() {
+fn test_simple_intersection_2()
+where
+    Point2<f64>: PartialEq,
+    Segment2<f64>: PartialEq,
+    SegmentIntersection2<f64>: PartialEq,
+{
     let s1 = Segment2::new(&Point2::new(0.0, 0.0), &Point2::new(2.0, 2.0));
     let s2 = Segment2::new(&Point2::new(0.0, 2.0), &Point2::new(2.0, 0.0));
     let res = segment_segment_intersection_2(&s1, &s2, 1e-9);

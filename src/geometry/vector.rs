@@ -20,7 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::numeric::cgar_rational::CgarRational;
 use crate::operations::{Abs, Pow, Sqrt, Zero};
+use std::hash::{Hash, Hasher};
 use std::ops::{Add, Div, Mul, Sub};
 
 pub trait VectorOps<T, C>: Sized {
@@ -28,128 +30,5 @@ pub trait VectorOps<T, C>: Sized {
     fn cross(&self, other: &Self) -> C;
     fn norm(&self) -> T;
     fn normalized(&self) -> Self;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Vector2<T>
-where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    pub x: T,
-    pub y: T,
-}
-
-impl<T> Vector2<T>
-where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    pub fn new(x: T, y: T) -> Self {
-        Self { x, y }
-    }
-}
-
-impl<T> VectorOps<T, T> for Vector2<T>
-where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    fn dot(&self, other: &Vector2<T>) -> T {
-        &(&self.x * &other.x) + &(&self.y * &other.y)
-    }
-
-    fn cross(&self, other: &Vector2<T>) -> T {
-        &(&self.x * &other.y) - &(&self.y * &other.x)
-    }
-
-    fn norm(&self) -> T {
-        (&(&self.x * &self.x) + &(&self.y * &self.y)).sqrt()
-    }
-
-    fn normalized(&self) -> Vector2<T> {
-        let n = self.norm();
-        Vector2 {
-            x: &self.x / &n,
-            y: &self.y / &n,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Vector3<T>
-where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    pub x: T,
-    pub y: T,
-    pub z: T,
-}
-
-impl<T> Vector3<T>
-where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    pub fn new(x: T, y: T, z: T) -> Self {
-        Self { x, y, z }
-    }
-
-    pub fn zero() -> Self {
-        Vector3 {
-            x: T::zero(),
-            y: T::zero(),
-            z: T::zero(),
-        }
-    }
-}
-
-impl<T> VectorOps<T, Vector3<T>> for Vector3<T>
-where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    fn dot(&self, other: &Vector3<T>) -> T {
-        &(&(&self.x * &other.x) + &(&self.y * &other.y)) + &(&self.z * &other.z)
-    }
-
-    fn cross(&self, other: &Vector3<T>) -> Vector3<T> {
-        Vector3 {
-            x: &(&self.y * &other.z) - &(&self.z * &other.y),
-            y: &(&self.z * &other.x) - &(&self.x * &other.z),
-            z: &(&self.x * &other.y) - &(&self.y * &other.x),
-        }
-    }
-
-    fn norm(&self) -> T {
-        (&(&(&self.x * &self.x) + &(&self.y * &self.y)) + &(&self.z * &self.z)).sqrt()
-    }
-
-    fn normalized(&self) -> Vector3<T> {
-        let n = self.norm();
-        Vector3 {
-            x: &self.x / &n,
-            y: &self.y / &n,
-            z: &self.z / &n,
-        }
-    }
+    fn scale(&self, s: &T) -> Self;
 }

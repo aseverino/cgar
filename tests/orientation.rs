@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use cgar::geometry::Point2;
-use cgar::geometry::point::Point3;
+use cgar::geometry::Point3;
 use cgar::kernel::orientation::orient2d;
 use cgar::kernel::orientation::orient3d;
 

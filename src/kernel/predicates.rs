@@ -22,12 +22,10 @@
 
 use num_traits::ToPrimitive;
 
-use crate::geometry::point::Point3;
-use crate::geometry::segment::Segment3;
-use crate::geometry::vector::{Vector3, VectorOps};
-use crate::geometry::{Point2, Segment2};
+use crate::geometry::segment::{Segment2, Segment3};
+use crate::geometry::vector::VectorOps;
+use crate::geometry::{Point2, Point3, Vector3};
 use crate::operations::{Abs, Pow, Sqrt, Zero};
-use std::f64::EPSILON;
 use std::ops::{Add, Div, Mul, Sub};
 
 /// Determines whether two points are equal within a small tolerance.
@@ -59,6 +57,7 @@ where
 pub fn is_point_on_segment_2<T>(p: &Point2<T>, seg: &Segment2<T>, eps: &T) -> bool
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
+    Point2<T>: PartialEq,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -140,6 +139,7 @@ where
 pub fn is_point_on_segment_3<T>(p: &Point3<T>, seg: &Segment3<T>, eps: &T) -> bool
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
+    Point3<T>: PartialEq,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>

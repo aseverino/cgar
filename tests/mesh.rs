@@ -22,7 +22,8 @@
 
 use std::collections::HashSet;
 
-use cgar::geometry::point::{Point2, Point3};
+use cgar::geometry::Point3;
+use cgar::geometry::point::PointOps;
 use cgar::mesh::{mesh::Mesh, point_trait::PointTrait};
 use cgar::numeric::cgar_rational::{self, CgarRational};
 use rug::Rational;

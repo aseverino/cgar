@@ -21,27 +21,23 @@
 // SOFTWARE.
 
 use num_traits::ToPrimitive;
+use std::hash::Hash;
 
 use crate::{
-    geometry::{
-        point::Point3,
-        segment::Segment3,
-        vector::{Vector3, VectorOps},
-    },
+    geometry::{Point2, Point3, Segment2, Segment3, Vector3, point::PointOps, vector::VectorOps},
     kernel::are_collinear_3,
     operations::{Abs, Pow, Sqrt, Zero},
 };
 use std::ops::{Add, Div, Mul, Sub};
 
-use crate::{
-    geometry::{Point2, Segment2},
-    kernel::{are_collinear_2, orient2d},
-};
+use crate::kernel::{are_collinear_2, orient2d};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum SegmentIntersection2<T>
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
+    Point2<T>: PartialEq,
+    Segment2<T>: PartialEq,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -52,6 +48,28 @@ where
     Overlapping(Segment2<T>),
 }
 
+impl<T> PartialEq for SegmentIntersection2<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
+    Point2<T>: PartialEq,
+    Segment2<T>: PartialEq,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (SegmentIntersection2::None, SegmentIntersection2::None) => true,
+            (SegmentIntersection2::Point(p1), SegmentIntersection2::Point(p2)) => p1 == p2,
+            (SegmentIntersection2::Overlapping(s1), SegmentIntersection2::Overlapping(s2)) => {
+                s1 == s2
+            }
+            _ => false,
+        }
+    }
+}
+
 pub fn segment_segment_intersection_2<T>(
     seg1: &Segment2<T>,
     seg2: &Segment2<T>,
@@ -59,6 +77,9 @@ pub fn segment_segment_intersection_2<T>(
 ) -> SegmentIntersection2<T>
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + ToPrimitive + From<i32> + Zero,
+    Point2<T>: PointOps<T, T> + PartialEq,
+    Segment2<T>: PartialEq,
+    SegmentIntersection2<T>: PartialEq,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -120,10 +141,11 @@ where
     SegmentIntersection2::None
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum SegmentIntersection3<T>
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
+    Point3<T>: PointOps<T, Vector3<T>> + PartialEq,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -134,6 +156,28 @@ where
     Overlapping(Segment3<T>),
 }
 
+impl<T> PartialEq for SegmentIntersection3<T>
+where
+    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
+    Point3<T>: PartialEq,
+    Segment3<T>: PartialEq,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (SegmentIntersection3::None, SegmentIntersection3::None) => true,
+            (SegmentIntersection3::Point(p1), SegmentIntersection3::Point(p2)) => p1 == p2,
+            (SegmentIntersection3::Overlapping(s1), SegmentIntersection3::Overlapping(s2)) => {
+                s1 == s2
+            }
+            _ => false,
+        }
+    }
+}
+
 pub fn segment_segment_intersection_3<T>(
     seg1: &Segment3<T>,
     seg2: &Segment3<T>,
@@ -141,6 +185,7 @@ pub fn segment_segment_intersection_3<T>(
 ) -> SegmentIntersection3<T>
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + ToPrimitive + From<i32> + Zero,
+    Point3<T>: PointOps<T, Vector3<T>> + Eq + Hash,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>

@@ -20,9 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::geometry::Point2;
-use crate::geometry::point::Point3;
-use crate::geometry::vector::{Vector3, VectorOps};
+use crate::geometry::vector::VectorOps;
+use crate::geometry::{Point2, Point3, Vector3};
 use crate::operations::{Abs, Pow, Sqrt, Zero};
 use std::ops::{Add, Div, Mul, Sub};
 

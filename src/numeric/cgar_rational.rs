@@ -24,6 +24,7 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use num_traits::ToPrimitive;
 use rug::Rational;
+use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug)]
 pub struct CgarRational(pub Rational);
@@ -102,5 +103,19 @@ impl ToPrimitive for CgarRational {
     }
     fn to_f64(&self) -> Option<f64> {
         Some(self.0.to_f64())
+    }
+}
+
+impl Hash for CgarRational {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // get references to the internally reduced numerator & denominator
+        let num = self.0.numer();
+        let den = self.0.denom();
+        // serialize each to a decimal string (exact, no loss)
+        // you could also use `to_string_radix(16)` if you prefer hex.
+        num.to_string().hash(state);
+        // you might want a separator so that 12/3 and 1/23 don’t collide:
+        state.write_u8(b'/');
+        den.to_string().hash(state);
     }
 }
