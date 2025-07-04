@@ -91,6 +91,12 @@ impl From<i32> for CgarRational {
     }
 }
 
+impl From<f64> for CgarRational {
+    fn from(value: f64) -> Self {
+        CgarRational(Rational::from_f64(value).expect("Invalid f64 value"))
+    }
+}
+
 impl ToPrimitive for CgarRational {
     fn to_i64(&self) -> Option<i64> {
         Some(self.0.to_f64() as i64)

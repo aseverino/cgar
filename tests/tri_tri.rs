@@ -23,7 +23,7 @@
 use std::cmp::Ordering;
 
 use cgar::geometry::{
-    Point3,
+    Point3, Vector3,
     tri_tri_intersect::{tri_tri_intersection, tri_tri_overlap},
 };
 
@@ -61,7 +61,10 @@ fn sort_pair<T: PartialOrd + Clone>(mut a: T, mut b: T) -> (T, T) {
 }
 
 #[test]
-fn test_coplanar_overlap() {
+fn test_coplanar_overlap()
+//where
+//    Point3<f64>: From<Vector3<f64>>,
+{
     // Two right triangles in the z=0 plane sharing the diagonal from (0,1) to (1,0)
     let t1 = [
         Point3::new(0.0, 0.0, 0.0),

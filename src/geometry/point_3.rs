@@ -175,3 +175,14 @@ impl PartialEq for Point3<CgarRational> {
     }
 }
 impl Eq for Point3<CgarRational> {}
+
+impl From<Vector3<f64>> for Point3<f64> {
+    fn from(v: Vector3<f64>) -> Self {
+        Point3::new(v.x, v.y, v.z)
+    }
+}
+impl From<Vector3<CgarRational>> for Point3<CgarRational> {
+    fn from(v: Vector3<CgarRational>) -> Self {
+        Point3::new(v.x, v.y, v.z)
+    }
+}

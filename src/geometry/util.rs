@@ -20,9 +20,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod boolean;
-pub mod geometry;
-pub mod kernel;
-pub mod mesh;
-pub mod numeric;
-pub mod operations;
+use std::ops::{Add, Div, Mul, Sub};
+
+use crate::{
+    geometry::Point3,
+    mesh::point_trait::PointTrait,
+    operations::{Abs, Pow, Sqrt, Zero},
+};
+
+pub fn to_point3<T, P: PointTrait<T>>(p: &P) -> Point3<T>
+where
+    T: Clone + PartialEq + PartialOrd + Abs + Pow + Sqrt + Zero,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    Point3::new(p.coord(0).clone(), p.coord(1).clone(), p.coord(2).clone())
+}

@@ -21,8 +21,3 @@
 // SOFTWARE.
 
 pub mod boolean;
-pub mod geometry;
-pub mod kernel;
-pub mod mesh;
-pub mod numeric;
-pub mod operations;

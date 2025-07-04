@@ -20,8 +20,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::mesh::point_trait::PointTrait;
-use std::cmp::Ordering;
+use crate::{mesh::point_trait::PointTrait, operations::Abs};
+use std::{
+    cmp::Ordering,
+    ops::{Add, Mul, Sub},
+};
 
 /// An axis‐aligned bounding box in N dimensions.
 #[derive(Clone, Debug)]
@@ -95,29 +98,32 @@ where
     }
 
     /// Center coordinate along axis `i`.
-    pub fn center(&self, i: usize) -> f64
+    pub fn center(&self, i: usize) -> T
     where
-        T: Into<f64>,
+        T: From<f64>,
+        for<'a> &'a T: Add<&'a T, Output = T> + Mul<&'a T, Output = T>,
     {
-        let a: f64 = self.min.coord(i).clone().into();
-        let b: f64 = self.max.coord(i).clone().into();
-        (a + b) * 0.5
+        let a = self.min.coord(i).clone();
+        let b = self.max.coord(i).clone();
+        &(&a + &b) * &T::from(0.5)
     }
 
     /// Length along axis `i`.
-    fn extent(&self, i: usize) -> f64
+    fn extent(&self, i: usize) -> T
     where
-        T: Into<f64>,
+        T: Abs,
+        for<'a> &'a T: Sub<&'a T, Output = T>,
     {
-        let a: f64 = self.min.coord(i).clone().into();
-        let b: f64 = self.max.coord(i).clone().into();
-        (b - a).abs()
+        let a = self.min.coord(i).clone();
+        let b = self.max.coord(i).clone();
+        (&b - &a).abs()
     }
 
     /// Return the axis index with largest extent.
     pub fn longest_axis(&self) -> usize
     where
-        T: Into<f64>,
+        T: Abs,
+        for<'a> &'a T: Add<&'a T, Output = T> + Sub<&'a T, Output = T> + Mul<&'a T, Output = T>,
     {
         let dim = P::dimensions();
         (0..dim)

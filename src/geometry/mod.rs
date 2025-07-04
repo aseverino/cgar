@@ -28,6 +28,7 @@ pub mod point_2;
 pub mod point_3;
 pub mod segment;
 pub mod tri_tri_intersect;
+pub mod util;
 pub mod vector;
 pub mod vector_2;
 pub mod vector_3;

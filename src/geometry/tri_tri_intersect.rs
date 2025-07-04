@@ -290,17 +290,19 @@ where
     true
 }
 
-fn coplanar_tri_tri_intersection<T>(
-    p0: &Point3<T>,
-    p1: &Point3<T>,
-    p2: &Point3<T>,
-    q0: &Point3<T>,
-    q1: &Point3<T>,
-    q2: &Point3<T>,
+fn coplanar_tri_tri_intersection<T, P>(
+    p0: &P,
+    p1: &P,
+    p2: &P,
+    q0: &P,
+    q1: &P,
+    q2: &P,
     n: &Vector3<T>,
-) -> Option<(Point3<T>, Point3<T>)>
+) -> Option<(P, P)>
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + One + Neg<Output = T>,
+    P: PointOps<T, Vector3<T>> + PointTrait<T> + Eq + Hash + From<Point3<T>>,
+    P::Vector: VectorOps<T, Vector3<T>> + Into<Vector3<T>>,
     Point3<T>: Eq + Hash,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -317,12 +319,12 @@ where
         (0, 1)
     };
     // 2) build 2D points
-    let to2d = |p: &Point3<T>| (p.coord(i0), p.coord(i1));
+    let to2d = |p: &P| (p.coord(i0), p.coord(i1));
     let t1 = [to2d(p0), to2d(p1), to2d(p2)];
     let t2 = [to2d(q0), to2d(q1), to2d(q2)];
 
     // 3) collect vertices in each other
-    let mut pts = Vec::new();
+    let mut pts: Vec<Point3<T>> = Vec::new();
     for (x, y) in &t1 {
         if point_in_tri_2d((x.clone(), y.clone()), &t2) {
             // lift back to 3D by reinserting zero for dropped coord
@@ -381,9 +383,9 @@ where
         }
     }
     if uniq.len() == 2 {
-        Some((uniq[0].clone(), uniq[1].clone()))
+        Some((uniq[0].clone().into(), uniq[1].clone().into()))
     } else if uniq.len() == 1 {
-        Some((uniq[0].clone(), uniq[0].clone()))
+        Some((uniq[0].clone().into(), uniq[0].clone().into()))
     } else {
         None
     }
@@ -392,17 +394,12 @@ where
 /// Computes the segment where triangles T1=(p0,p1,p2) and T2=(q0,q1,q2) intersect.
 /// Returns `None` if they don’t intersect, or `Some((a,b))` where `a` and `b` are
 /// the two endpoints of the intersection segment (possibly `a==b` if they touch at a point).
-pub fn tri_tri_intersection<T>(
-    p0: &Point3<T>,
-    p1: &Point3<T>,
-    p2: &Point3<T>,
-    q0: &Point3<T>,
-    q1: &Point3<T>,
-    q2: &Point3<T>,
-) -> Option<(Point3<T>, Point3<T>)>
+pub fn tri_tri_intersection<T, P>(p0: &P, p1: &P, p2: &P, q0: &P, q1: &P, q2: &P) -> Option<(P, P)>
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + One + Neg<Output = T>,
-    Point3<T>: Eq + Hash,
+    P: PointOps<T, Vector3<T>> + PointTrait<T> + Eq + Hash + From<Point3<T>> + From<Vector3<T>>,
+    P::Vector: VectorOps<T, Vector3<T>> + Into<Vector3<T>>,
+    Point3<T>: Eq + Hash + From<Vector3<f64>>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -412,12 +409,12 @@ where
     let v01 = q1.sub(q0).as_vector();
     let v02 = q2.sub(q0).as_vector();
     let n2 = v01.cross(&v02);
-    let d2 = -n2.dot(&q0.as_vector());
+    let d2 = -n2.dot(&q0.as_vector().into());
 
     // signed distances of p-verts to T2’s plane
-    let d_p0 = &n2.dot(&p0.as_vector()) + &d2;
-    let d_p1 = &n2.dot(&p1.as_vector()) + &d2;
-    let d_p2 = &n2.dot(&p2.as_vector()) + &d2;
+    let d_p0 = &n2.dot(&p0.as_vector().into()) + &d2;
+    let d_p1 = &n2.dot(&p1.as_vector().into()) + &d2;
+    let d_p2 = &n2.dot(&p2.as_vector().into()) + &d2;
 
     //  → Fall back for strictly co-planar
     if d_p0 == T::zero() && d_p1 == T::zero() && d_p2 == T::zero() {
@@ -428,7 +425,7 @@ where
     // 2) Now do the regular non-coplanar plane‐edge clipping:
     let mut pts = Vec::new();
     for &(a, b) in &[(p0, p1), (p1, p2), (p2, p0)] {
-        if let Some(ip) = intersect_edge_plane(a, b, &n2, &d2) {
+        if let Some(ip) = intersect_edge_plane(a, b, &n2.clone().into(), &d2) {
             if point_in_tri(&ip, q0, q1, q2, &n2) {
                 pts.push(ip);
             }
@@ -439,11 +436,11 @@ where
     let u01 = p1.sub(p0).as_vector();
     let u02 = p2.sub(p0).as_vector();
     let n1 = u01.cross(&u02);
-    let d1 = -n1.dot(&p0.as_vector());
+    let d1 = -n1.dot(&p0.as_vector().into());
 
     // 4) Clip edges of T2 against T1’s plane:
     for &(a, b) in &[(q0, q1), (q1, q2), (q2, q0)] {
-        if let Some(ip) = intersect_edge_plane(a, b, &n1, &d1) {
+        if let Some(ip) = intersect_edge_plane(a, b, &n1.clone().into(), &d1) {
             if point_in_tri(&ip, p0, p1, p2, &n1) {
                 pts.push(ip);
             }
@@ -461,17 +458,19 @@ where
 
     // 6) Return as before
     match uniq.len() {
-        2 => Some((uniq[0].clone(), uniq[1].clone())),
-        1 => Some((uniq[0].clone(), uniq[0].clone())),
+        2 => Some((uniq[0].clone().into(), uniq[1].clone().into())),
+        1 => Some((uniq[0].clone().into(), uniq[0].clone().into())),
         _ => None,
     }
 }
 
 /// Intersect the segment [a,b] against plane (n·x + d = 0).
 /// Returns `Some(Point3)` if it crosses or touches, else `None`.
-fn intersect_edge_plane<T>(a: &Point3<T>, b: &Point3<T>, n: &Vector3<T>, d: &T) -> Option<Point3<T>>
+fn intersect_edge_plane<T, P>(a: &P, b: &P, n: &P, d: &T) -> Option<P>
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + One + Neg<Output = T>,
+    P: PointOps<T, Vector3<T>> + PointTrait<T> + Eq + Hash + From<Point3<T>>,
+    P::Vector: VectorOps<T, Vector3<T>> + Into<Vector3<T>>,
     Point3<T>: Eq + Hash,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -479,8 +478,8 @@ where
         + Div<&'a T, Output = T>,
 {
     // signed distances:
-    let da = &n.dot(&a.as_vector()) + &d;
-    let db = &n.dot(&b.as_vector()) + &d;
+    let da = &n.as_vector().dot(&a.as_vector()) + &d;
+    let db = &n.as_vector().dot(&b.as_vector()) + &d;
 
     // if both on same side (and nonzero), no cross
     if &da * &db > T::zero() {
@@ -498,15 +497,12 @@ where
 
 /// Returns true if `p` lies inside triangle `(a,b,c)` on the plane with normal `n`.
 /// We use barycentric coordinates in 3D.
-fn point_in_tri<T>(
-    p: &Point3<T>,
-    a: &Point3<T>,
-    b: &Point3<T>,
-    c: &Point3<T>,
-    n: &Vector3<T>,
-) -> bool
+fn point_in_tri<T, P>(p: &P, a: &P, b: &P, c: &P, n: &Vector3<T>) -> bool
 where
     T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + One + Neg<Output = T>,
+    P: PointOps<T, Vector3<T>> + PointTrait<T> + Eq + Hash + From<Point3<T>>,
+    P::Vector: VectorOps<T, Vector3<T>> + Into<Vector3<T>>,
+    Point3<T>: Eq + Hash,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>

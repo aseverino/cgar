@@ -20,8 +20,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::geometry::aabb::Aabb;
-use std::{cmp::Ordering, sync::Arc};
+use crate::{geometry::aabb::Aabb, operations::Abs};
+use std::{
+    cmp::Ordering,
+    ops::{Add, Div, Mul, Sub},
+    sync::Arc,
+};
 
 /// A simple (unbalanced) AABB‐tree of generic data `D`.
 pub enum AabbTree<T, P, D>
@@ -41,14 +45,22 @@ where
 
 impl<T, P, D> AabbTree<T, P, D>
 where
-    T: PartialOrd + Clone + Into<f64>,
+    T: PartialOrd + Clone + Abs + From<f64>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
     P: crate::mesh::point_trait::PointTrait<T> + crate::geometry::aabb::FromCoords<T>,
 {
     /// Build an AABB‐tree over `(aabb, data)` pairs via recursive median split.
     pub fn build(mut items: Vec<(Aabb<T, P>, D)>) -> Self {
         fn recurse<T, P, D>(mut items: Vec<(Aabb<T, P>, D)>) -> AabbTree<T, P, D>
         where
-            T: PartialOrd + Clone + Into<f64>,
+            T: PartialOrd + Clone + Abs + From<f64>,
+            for<'a> &'a T: Add<&'a T, Output = T>
+                + Sub<&'a T, Output = T>
+                + Mul<&'a T, Output = T>
+                + Div<&'a T, Output = T>,
             P: crate::mesh::point_trait::PointTrait<T> + crate::geometry::aabb::FromCoords<T>,
         {
             // compute bounding box of all items
