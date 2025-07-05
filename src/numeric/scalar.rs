@@ -20,20 +20,39 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::numeric::cgar_rational::CgarRational;
+use num_traits::ToPrimitive;
 
-pub trait Abs {
-    fn abs(&self) -> Self;
+use crate::{
+    numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational},
+    operations::*,
+};
+
+use std::{
+    hash::{Hash, Hasher},
+    ops::{Add, Div, Mul, Neg, Sub},
+};
+
+pub trait Scalar:
+    Clone
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + Div<Output = Self>
+    + Abs
+    + Pow
+    + Sqrt
+    + Zero
+    + One
+    + Neg<Output = Self>
+    + Eq
+    + PartialEq
+    + ToPrimitive
+    + Hash
+    + PartialOrd
+    + From<i32>
+    + From<f64>
+    + From<rug::Rational>
+    + From<CgarF64>
+    + From<CgarRational>
+{
 }
-
-// impl Abs for f64 {
-//     fn abs(&self) -> Self {
-//         f64::abs(*self)
-//     }
-// }
-
-// impl Abs for CgarRational {
-//     fn abs(&self) -> Self {
-//         CgarRational(self.0.clone().abs())
-//     }
-// }

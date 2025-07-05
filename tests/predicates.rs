@@ -22,29 +22,30 @@
 
 use cgar::geometry::{Point2, Segment2};
 use cgar::kernel::{are_collinear_2, are_equal_2, is_point_on_segment_2};
+use cgar::numeric::cgar_f64::CgarF64;
 
 #[test]
 fn test_are_equal() {
-    let p1 = Point2::new(1.0000001, 2.0);
+    let p1 = Point2::<CgarF64>::new(1.0000001, 2.0);
     let p2 = Point2::new(1.0000002, 2.0);
-    assert!(are_equal_2(&p1, &p2, &1e-6));
-    assert!(!are_equal_2(&p1, &p2, &1e-10));
+    assert!(are_equal_2(&p1, &p2, &1e-6.into()));
+    assert!(!are_equal_2(&p1, &p2, &1e-10.into()));
 }
 
 #[test]
 fn test_are_collinear() {
-    let a = Point2::new(0.0, 0.0);
+    let a = Point2::<CgarF64>::new(0.0, 0.0);
     let b = Point2::new(1.0, 1.0);
     let c = Point2::new(2.0, 2.0);
-    assert!(are_collinear_2(&a, &b, &c, &1e-9));
+    assert!(are_collinear_2(&a, &b, &c, &1e-9.into()));
 }
 
 #[test]
 fn test_point_on_segment() {
-    let seg = Segment2::new(&Point2::new(0.0, 0.0), &Point2::new(2.0, 2.0));
+    let seg = Segment2::<CgarF64>::new(&Point2::new(0.0, 0.0), &Point2::new(2.0, 2.0));
     let p_on = Point2::new(1.0, 1.0);
     let p_off = Point2::new(3.0, 3.0);
 
-    assert!(is_point_on_segment_2(&p_on, &seg, &1e-9));
-    assert!(!is_point_on_segment_2(&p_off, &seg, &1e-9));
+    assert!(is_point_on_segment_2(&p_on, &seg, &1e-9.into()));
+    assert!(!is_point_on_segment_2(&p_off, &seg, &1e-9.into()));
 }

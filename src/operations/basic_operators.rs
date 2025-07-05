@@ -20,20 +20,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::numeric::cgar_rational::CgarRational;
-
-pub trait Abs {
-    fn abs(&self) -> Self;
+pub trait Add<T> {
+    fn add_into(&mut self, other: &T);
+    fn add(&self, other: &T) -> Self;
 }
 
-// impl Abs for f64 {
-//     fn abs(&self) -> Self {
-//         f64::abs(*self)
-//     }
-// }
+pub trait Sub<T> {
+    fn sub_into(&mut self, other: &T);
+    fn sub(&self, other: &T) -> Self;
+}
 
-// impl Abs for CgarRational {
-//     fn abs(&self) -> Self {
-//         CgarRational(self.0.clone().abs())
-//     }
-// }
+pub trait Mul<T> {
+    fn mul_into(&mut self, other: &T);
+    fn mul(&self, other: &T) -> Self;
+}
+
+pub trait Div<T> {
+    fn div_into(&mut self, other: &T);
+    fn div(&self, other: &T) -> Self;
+}

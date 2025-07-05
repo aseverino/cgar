@@ -20,7 +20,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{mesh::point_trait::PointTrait, operations::Abs};
+use crate::{
+    mesh::point_trait::PointTrait,
+    numeric::{cgar_rational::CgarRational, scalar::Scalar},
+    operations::Abs,
+};
 use std::{
     cmp::Ordering,
     ops::{Add, Mul, Sub},
@@ -36,7 +40,7 @@ pub struct Aabb<T, P: PointTrait<T>> {
 
 impl<T, P> Aabb<T, P>
 where
-    T: PartialOrd + Clone,
+    T: Scalar,
     P: PointTrait<T> + FromCoords<T>,
 {
     pub fn new(min: P, max: P) -> Self {
@@ -100,7 +104,7 @@ where
     /// Center coordinate along axis `i`.
     pub fn center(&self, i: usize) -> T
     where
-        T: From<f64>,
+        T: From<f64> + From<CgarRational>,
         for<'a> &'a T: Add<&'a T, Output = T> + Mul<&'a T, Output = T>,
     {
         let a = self.min.coord(i).clone();

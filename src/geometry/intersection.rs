@@ -20,13 +20,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use num_traits::ToPrimitive;
-use std::hash::Hash;
-
 use crate::{
-    geometry::{Point2, Point3, Segment2, Segment3, Vector3, point::PointOps, vector::VectorOps},
+    geometry::{
+        Point2, Point3, Segment2, Segment3, Vector3, spatial_element::SpatialElement,
+        vector::VectorOps,
+    },
     kernel::are_collinear_3,
-    operations::{Abs, Pow, Sqrt, Zero},
+    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    operations::{Abs, Zero},
 };
 use std::ops::{Add, Div, Mul, Sub};
 
@@ -35,9 +36,7 @@ use crate::kernel::{are_collinear_2, orient2d};
 #[derive(Debug, Clone)]
 pub enum SegmentIntersection2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
-    Point2<T>: PartialEq,
-    Segment2<T>: PartialEq,
+    T: Scalar,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -50,9 +49,7 @@ where
 
 impl<T> PartialEq for SegmentIntersection2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
-    Point2<T>: PartialEq,
-    Segment2<T>: PartialEq,
+    T: Scalar,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -76,10 +73,8 @@ pub fn segment_segment_intersection_2<T>(
     eps: T,
 ) -> SegmentIntersection2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + ToPrimitive + From<i32> + Zero,
-    Point2<T>: PointOps<T, T> + PartialEq,
-    Segment2<T>: PartialEq,
-    SegmentIntersection2<T>: PartialEq,
+    T: Scalar,
+    //SegmentIntersection2<T>: SpatialElement<T>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -120,7 +115,7 @@ where
             let px = &px_num / &denom;
             let py = &py_num / &denom;
 
-            return SegmentIntersection2::Point(Point2::new(px, py));
+            return SegmentIntersection2::Point(Point2::<T>::new(px, py));
         }
 
         // Collinear case
@@ -144,12 +139,7 @@ where
 #[derive(Debug, Clone)]
 pub enum SegmentIntersection3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
-    Point3<T>: PointOps<T, Vector3<T>> + PartialEq,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
     None,
     Point(Point3<T>),
@@ -158,13 +148,7 @@ where
 
 impl<T> PartialEq for SegmentIntersection3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
-    Point3<T>: PartialEq,
-    Segment3<T>: PartialEq,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -184,8 +168,7 @@ pub fn segment_segment_intersection_3<T>(
     eps: T,
 ) -> SegmentIntersection3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero + ToPrimitive + From<i32> + Zero,
-    Point3<T>: PointOps<T, Vector3<T>> + Eq + Hash,
+    T: Scalar,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>

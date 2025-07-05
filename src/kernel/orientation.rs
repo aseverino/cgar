@@ -22,7 +22,7 @@
 
 use crate::geometry::vector::VectorOps;
 use crate::geometry::{Point2, Point3, Vector3};
-use crate::operations::{Abs, Pow, Sqrt, Zero};
+use crate::numeric::scalar::Scalar;
 use std::ops::{Add, Div, Mul, Sub};
 
 /// Returns:
@@ -31,7 +31,7 @@ use std::ops::{Add, Div, Mul, Sub};
 /// - =0 if collinear
 pub fn orient2d<T>(a: &Point2<T>, b: &Point2<T>, c: &Point2<T>) -> T
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
+    T: Scalar,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -42,11 +42,9 @@ where
 
 pub fn orient3d<T>(a: &Point3<T>, b: &Point3<T>, c: &Point3<T>, d: &Point3<T>) -> T
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
+    Vector3<T>: VectorOps<T, Vector3<T>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>,
 {
     let ab = Vector3 {
         x: &b.x - &a.x,

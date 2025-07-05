@@ -28,14 +28,14 @@ pub trait Zero {
     fn zero() -> Self;
 }
 
-impl Zero for f64 {
-    fn zero() -> Self {
-        0.0
-    }
-}
+// impl Zero for f64 {
+//     fn zero() -> Self {
+//         0.0
+//     }
+// }
 
-impl Zero for CgarRational {
-    fn zero() -> Self {
-        CgarRational(Rational::from(0))
-    }
-}
+// impl Zero for CgarRational {
+//     fn zero() -> Self {
+//         CgarRational(Rational::from(0))
+//     }
+// }

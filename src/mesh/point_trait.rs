@@ -24,51 +24,11 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use crate::{
     geometry::{Point2, Point3},
+    numeric::scalar::Scalar,
     operations::{Abs, Pow, Sqrt},
 };
 
 pub trait PointTrait<T>: Clone {
     fn dimensions() -> usize;
     fn coord(&self, axis: usize) -> T;
-}
-
-impl<T: Clone> PointTrait<T> for Point2<T>
-where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    fn dimensions() -> usize {
-        2
-    }
-    fn coord(&self, axis: usize) -> T {
-        match axis {
-            0 => self.x.clone(),
-            1 => self.y.clone(),
-            _ => panic!("Invalid axis"),
-        }
-    }
-}
-
-impl<T: Clone> PointTrait<T> for Point3<T>
-where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    fn dimensions() -> usize {
-        3
-    }
-    fn coord(&self, axis: usize) -> T {
-        match axis {
-            0 => self.x.clone(),
-            1 => self.y.clone(),
-            2 => self.z.clone(),
-            _ => panic!("Invalid axis"),
-        }
-    }
 }

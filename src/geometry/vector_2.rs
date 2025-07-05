@@ -20,20 +20,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::vector::VectorOps;
+use crate::numeric::cgar_f64::CgarF64;
 use crate::numeric::cgar_rational::CgarRational;
-use crate::operations::{Abs, Pow, Sqrt, Zero};
+use crate::numeric::scalar::Scalar;
+use crate::operations::{Sqrt, Zero};
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Div, Mul, Sub};
 
 #[derive(Debug, Clone)]
 pub struct Vector2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
     pub x: T,
     pub y: T,
@@ -41,55 +40,142 @@ where
 
 impl<T> Vector2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
-    pub fn new(x: T, y: T) -> Self {
-        Self { x, y }
+    pub fn new<X, Y>(x: X, y: Y) -> Self
+    where
+        X: Into<T>,
+        Y: Into<T>,
+    {
+        Self {
+            x: x.into(),
+            y: y.into(),
+        }
     }
 }
 
-impl Hash for Vector2<f64> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Convert each f64 to its raw u64 bits and feed that to the hasher
-        state.write_u64(self.x.to_bits());
-        state.write_u64(self.y.to_bits());
+impl<'a, 'b> Add<&'b Vector2<CgarF64>> for &'a Vector2<CgarF64> {
+    type Output = Vector2<CgarF64>;
+    fn add(self, rhs: &'b Vector2<CgarF64>) -> Vector2<CgarF64> {
+        Vector2 {
+            x: &self.x + &rhs.x,
+            y: &self.y + &rhs.y,
+        }
     }
 }
 
-impl PartialEq for Vector2<f64> {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare the raw bit patterns, so NaNs of the *same* bit‐pattern
-        // match, and +0.0 vs -0.0 are distinguished if you care.
-        self.x.to_bits() == other.x.to_bits() && self.y.to_bits() == other.y.to_bits()
+impl Add for Vector2<CgarRational> {
+    type Output = Vector2<CgarRational>;
+    fn add(self, rhs: Vector2<CgarRational>) -> Vector2<CgarRational> {
+        &self + &rhs
     }
 }
-impl Eq for Vector2<f64> {}
 
-impl Hash for Vector2<CgarRational> {
+impl<'a, 'b> Add<&'b Vector2<CgarRational>> for &'a Vector2<CgarRational> {
+    type Output = Vector2<CgarRational>;
+    fn add(self, rhs: &'b Vector2<CgarRational>) -> Vector2<CgarRational> {
+        Vector2 {
+            x: &self.x + &rhs.x,
+            y: &self.y + &rhs.y,
+        }
+    }
+}
+
+impl Add for Vector2<CgarF64> {
+    type Output = Vector2<CgarF64>;
+    fn add(self, rhs: Vector2<CgarF64>) -> Vector2<CgarF64> {
+        &self + &rhs
+    }
+}
+
+impl<'a, 'b> Sub<&'b Vector2<CgarF64>> for &'a Vector2<CgarF64> {
+    type Output = Vector2<CgarF64>;
+    fn sub(self, rhs: &'b Vector2<CgarF64>) -> Vector2<CgarF64> {
+        Vector2 {
+            x: &self.x - &rhs.x,
+            y: &self.y - &rhs.y,
+        }
+    }
+}
+
+impl<'a, 'b> Sub<&'b Vector2<CgarRational>> for &'a Vector2<CgarRational> {
+    type Output = Vector2<CgarRational>;
+    fn sub(self, rhs: &'b Vector2<CgarRational>) -> Vector2<CgarRational> {
+        Vector2 {
+            x: &self.x - &rhs.x,
+            y: &self.y - &rhs.y,
+        }
+    }
+}
+
+impl Sub for Vector2<CgarF64> {
+    type Output = Vector2<CgarF64>;
+    fn sub(self, rhs: Vector2<CgarF64>) -> Vector2<CgarF64> {
+        &self - &rhs
+    }
+}
+
+impl Sub for Vector2<CgarRational> {
+    type Output = Vector2<CgarRational>;
+    fn sub(self, rhs: Vector2<CgarRational>) -> Vector2<CgarRational> {
+        &self - &rhs
+    }
+}
+
+impl<T> Zero for Vector2<T>
+where
+    T: Scalar,
+{
+    fn zero() -> Self {
+        Vector2 {
+            x: T::zero(),
+            y: T::zero(),
+        }
+    }
+}
+
+impl<T> Hash for Vector2<T>
+where
+    T: Scalar,
+{
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.x.hash(state);
-        state.write_u8(b',');
         self.y.hash(state);
     }
 }
-impl PartialEq for Vector2<CgarRational> {
+
+impl<T> PartialOrd for Vector2<T>
+where
+    T: Scalar,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.x.partial_cmp(&other.x).and_then(|ord_x| {
+            if ord_x == std::cmp::Ordering::Equal {
+                self.y.partial_cmp(&other.y)
+            } else {
+                Some(ord_x)
+            }
+        })
+    }
+}
+
+impl<T> PartialEq for Vector2<T>
+where
+    T: Scalar,
+{
     fn eq(&self, other: &Self) -> bool {
         self.x == other.x && self.y == other.y
     }
 }
-impl Eq for Vector2<CgarRational> {}
+impl<T> Eq for Vector2<T> where T: Scalar {}
 
 impl<T> VectorOps<T, T> for Vector2<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
+    for<'c> &'c T: Add<&'c T, Output = T>
+        + Sub<&'c T, Output = T>
+        + Mul<&'c T, Output = T>
+        + Div<&'c T, Output = T>,
 {
     fn dot(&self, other: &Vector2<T>) -> T {
         &(&self.x * &other.x) + &(&self.y * &other.y)
@@ -113,11 +199,7 @@ where
 
     fn scale(&self, s: &T) -> Self
     where
-        T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-        for<'a> &'a T: Add<&'a T, Output = T>
-            + Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
+        T: Scalar,
     {
         Vector2 {
             x: &self.x * &s,
@@ -125,3 +207,15 @@ where
         }
     }
 }
+
+impl<T> From<(T, T, T)> for Vector2<T>
+where
+    T: Scalar,
+{
+    fn from(_coords: (T, T, T)) -> Self {
+        panic!("Vector2 only supports 2D coordinates, received 3D coordinates");
+    }
+}
+
+impl SpatialElement<CgarF64> for Vector2<CgarF64> {}
+impl SpatialElement<CgarRational> for Vector2<CgarRational> {}

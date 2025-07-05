@@ -20,20 +20,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::geometry::Point3;
 use crate::geometry::vector::VectorOps;
+use crate::numeric::cgar_f64::CgarF64;
 use crate::numeric::cgar_rational::CgarRational;
-use crate::operations::{Abs, Pow, Sqrt, Zero};
+use crate::numeric::scalar::Scalar;
+use crate::operations::{Sqrt, Zero};
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Div, Mul, Sub};
 
 #[derive(Debug, Clone)]
 pub struct Vector3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
     pub x: T,
     pub y: T,
@@ -42,17 +41,99 @@ where
 
 impl<T> Vector3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
-    pub fn new(x: T, y: T, z: T) -> Self {
-        Self { x, y, z }
+    pub fn new<X, Y, Z>(x: X, y: Y, z: Z) -> Self
+    where
+        X: Into<T>,
+        Y: Into<T>,
+        Z: Into<T>,
+    {
+        Self {
+            x: x.into(),
+            y: y.into(),
+            z: z.into(),
+        }
     }
+}
 
-    pub fn zero() -> Self {
+impl<'a, 'b> Add<&'b Vector3<CgarF64>> for &'a Vector3<CgarF64> {
+    type Output = Vector3<CgarF64>;
+    fn add(self, rhs: &'b Vector3<CgarF64>) -> Vector3<CgarF64> {
+        Vector3 {
+            x: &self.x + &rhs.x,
+            y: &self.y + &rhs.y,
+            z: &self.z + &rhs.z,
+        }
+    }
+}
+
+impl Add for Vector3<CgarRational> {
+    type Output = Vector3<CgarRational>;
+    fn add(self, rhs: Vector3<CgarRational>) -> Vector3<CgarRational> {
+        &self + &rhs
+    }
+}
+
+impl<'a, 'b> Add<&'b Vector3<CgarRational>> for &'a Vector3<CgarRational> {
+    type Output = Vector3<CgarRational>;
+    fn add(self, rhs: &'b Vector3<CgarRational>) -> Vector3<CgarRational> {
+        Vector3 {
+            x: &self.x + &rhs.x,
+            y: &self.y + &rhs.y,
+            z: &self.z + &rhs.z,
+        }
+    }
+}
+
+impl Add for Vector3<CgarF64> {
+    type Output = Vector3<CgarF64>;
+    fn add(self, rhs: Vector3<CgarF64>) -> Vector3<CgarF64> {
+        &self + &rhs
+    }
+}
+
+impl<'a, 'b> Sub<&'b Vector3<CgarF64>> for &'a Vector3<CgarF64> {
+    type Output = Vector3<CgarF64>;
+    fn sub(self, rhs: &'b Vector3<CgarF64>) -> Vector3<CgarF64> {
+        Vector3 {
+            x: &self.x - &rhs.x,
+            y: &self.y - &rhs.y,
+            z: &self.z - &rhs.z,
+        }
+    }
+}
+
+impl<'a, 'b> Sub<&'b Vector3<CgarRational>> for &'a Vector3<CgarRational> {
+    type Output = Vector3<CgarRational>;
+    fn sub(self, rhs: &'b Vector3<CgarRational>) -> Vector3<CgarRational> {
+        Vector3 {
+            x: &self.x - &rhs.x,
+            y: &self.y - &rhs.y,
+            z: &self.z - &rhs.z,
+        }
+    }
+}
+
+impl Sub for Vector3<CgarF64> {
+    type Output = Vector3<CgarF64>;
+    fn sub(self, rhs: Vector3<CgarF64>) -> Vector3<CgarF64> {
+        &self - &rhs
+    }
+}
+
+impl Sub for Vector3<CgarRational> {
+    type Output = Vector3<CgarRational>;
+    fn sub(self, rhs: Vector3<CgarRational>) -> Vector3<CgarRational> {
+        &self - &rhs
+    }
+}
+
+impl<T> Zero for Vector3<T>
+where
+    T: Scalar,
+{
+    fn zero() -> Self {
         Vector3 {
             x: T::zero(),
             y: T::zero(),
@@ -61,15 +142,72 @@ where
     }
 }
 
+impl<T> Hash for Vector3<T>
+where
+    T: Scalar,
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.x.hash(state);
+        self.y.hash(state);
+        self.z.hash(state);
+    }
+}
+
+impl<T> PartialOrd for Vector3<T>
+where
+    T: Scalar,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let x_cmp = self.x.partial_cmp(&other.x);
+        if x_cmp.is_none() {
+            return None;
+        }
+        let y_cmp = self.y.partial_cmp(&other.y);
+        if y_cmp.is_none() {
+            return None;
+        }
+        let z_cmp = self.z.partial_cmp(&other.z);
+        if z_cmp.is_none() {
+            return None;
+        }
+
+        match (x_cmp, y_cmp, z_cmp) {
+            (Some(x), Some(y), Some(z)) => {
+                if x == std::cmp::Ordering::Equal && y == std::cmp::Ordering::Equal {
+                    Some(z)
+                } else if x == std::cmp::Ordering::Equal {
+                    Some(y)
+                } else {
+                    Some(x)
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+impl<T> PartialEq for Vector3<T>
+where
+    T: Scalar,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y && self.z == other.z
+    }
+}
+impl<T> Eq for Vector3<T> where T: Scalar {}
+
 impl<T> VectorOps<T, Vector3<T>> for Vector3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
+    for<'c> &'c T: Add<&'c T, Output = T>
+        + Sub<&'c T, Output = T>
+        + Mul<&'c T, Output = T>
+        + Div<&'c T, Output = T>,
 {
     fn dot(&self, other: &Vector3<T>) -> T {
+        let a = &(&self.x * &other.x);
+        let b = &(&self.y * &other.y);
+        let c = &(&self.z * &other.z);
         &(&(&self.x * &other.x) + &(&self.y * &other.y)) + &(&self.z * &other.z)
     }
 
@@ -96,11 +234,7 @@ where
 
     fn scale(&self, s: &T) -> Self
     where
-        T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-        for<'a> &'a T: Add<&'a T, Output = T>
-            + Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
+        T: Scalar,
     {
         Vector3 {
             x: &self.x * &s,
@@ -110,38 +244,24 @@ where
     }
 }
 
-impl Hash for Vector3<f64> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Convert each f64 to its raw u64 bits and feed that to the hasher
-        state.write_u64(self.x.to_bits());
-        state.write_u64(self.y.to_bits());
-        state.write_u64(self.z.to_bits());
+impl<T> From<Point3<T>> for Vector3<T>
+where
+    T: Scalar,
+{
+    fn from(point: Point3<T>) -> Self {
+        Vector3 {
+            x: point.x,
+            y: point.y,
+            z: point.z,
+        }
     }
 }
 
-impl PartialEq for Vector3<f64> {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare the raw bit patterns, so NaNs of the *same* bit‐pattern
-        // match, and +0.0 vs -0.0 are distinguished if you care.
-        self.x.to_bits() == other.x.to_bits()
-            && self.y.to_bits() == other.y.to_bits()
-            && self.z.to_bits() == other.z.to_bits()
+impl<T> From<(T, T, T)> for Vector3<T>
+where
+    T: Scalar,
+{
+    fn from(coords: (T, T, T)) -> Self {
+        Vector3::new(coords.0, coords.1, coords.2)
     }
 }
-impl Eq for Vector3<f64> {}
-
-impl Hash for Vector3<CgarRational> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.x.hash(state);
-        state.write_u8(b',');
-        self.y.hash(state);
-        state.write_u8(b',');
-        self.z.hash(state);
-    }
-}
-impl PartialEq for Vector3<CgarRational> {
-    fn eq(&self, other: &Self) -> bool {
-        self.x == other.x && self.y == other.y && self.z == other.z
-    }
-}
-impl Eq for Vector3<CgarRational> {}

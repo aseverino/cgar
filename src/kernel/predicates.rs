@@ -25,17 +25,15 @@ use num_traits::ToPrimitive;
 use crate::geometry::segment::{Segment2, Segment3};
 use crate::geometry::vector::VectorOps;
 use crate::geometry::{Point2, Point3, Vector3};
+use crate::numeric::scalar::Scalar;
 use crate::operations::{Abs, Pow, Sqrt, Zero};
 use std::ops::{Add, Div, Mul, Sub};
 
 /// Determines whether two points are equal within a small tolerance.
 pub fn are_equal_2<T>(p1: &Point2<T>, p2: &Point2<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
+    for<'a> &'a T: Sub<&'a T, Output = T> + Mul<&'a T, Output = T>,
 {
     (&p1.x - &p2.x).abs() < *eps && (&p1.y - &p2.y).abs() < *eps
 }
@@ -43,7 +41,7 @@ where
 /// Checks if three points are collinear using the area of the triangle formula.
 pub fn are_collinear_2<T>(a: &Point2<T>, b: &Point2<T>, c: &Point2<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
+    T: Scalar,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -56,8 +54,7 @@ where
 /// Checks if point `p` lies on segment `seg`.
 pub fn is_point_on_segment_2<T>(p: &Point2<T>, seg: &Segment2<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
-    Point2<T>: PartialEq,
+    T: Scalar,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -101,11 +98,8 @@ where
 /// Determines whether two points are equal within a small tolerance.
 pub fn are_equal_3<T>(p1: &Point3<T>, p2: &Point3<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32>,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
+    for<'a> &'a T: Sub<&'a T, Output = T>,
 {
     (&p1.x - &p2.x).abs() < *eps && (&p1.y - &p2.y).abs() < *eps && (&p1.z - &p2.z).abs() < *eps
 }
@@ -113,11 +107,9 @@ where
 /// Checks if three points are collinear using the area of the triangle formula.
 pub fn are_collinear_3<T>(a: &Point3<T>, b: &Point3<T>, c: &Point3<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
+    Vector3<T>: VectorOps<T, Vector3<T>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>,
 {
     let ab = Vector3 {
         x: &b.x - &a.x,
@@ -138,7 +130,7 @@ where
 /// Checks if point `p` lies on segment `seg`.
 pub fn is_point_on_segment_3<T>(p: &Point3<T>, seg: &Segment3<T>, eps: &T) -> bool
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + ToPrimitive + From<i32> + Zero,
+    T: Scalar,
     Point3<T>: PartialEq,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>

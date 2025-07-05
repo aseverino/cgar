@@ -22,15 +22,18 @@
 
 use std::cmp::Ordering;
 
-use cgar::geometry::{
-    Point3, Vector3,
-    tri_tri_intersect::{tri_tri_intersection, tri_tri_overlap},
+use cgar::{
+    geometry::{
+        Point3, Vector3,
+        tri_tri_intersect::{tri_tri_intersection, tri_tri_overlap},
+    },
+    numeric::cgar_f64::CgarF64,
 };
 
 #[test]
 fn test_triangles_overlap() {
     let t1 = [
-        Point3::new(0.0, 0.0, 0.0),
+        Point3::<CgarF64>::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(0.0, 1.0, 0.0),
     ];
@@ -67,7 +70,7 @@ fn test_coplanar_overlap()
 {
     // Two right triangles in the z=0 plane sharing the diagonal from (0,1) to (1,0)
     let t1 = [
-        Point3::new(0.0, 0.0, 0.0),
+        Point3::<CgarF64>::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(0.0, 1.0, 0.0),
     ];
@@ -83,7 +86,10 @@ fn test_coplanar_overlap()
     // We expect the endpoints (0,1,0) and (1,0,0), in either order.
     let (a, b) = seg;
     let (a, b) = ((a.x, a.y, a.z), (b.x, b.y, b.z));
-    let wanted = [(0.0, 1.0, 0.0), (1.0, 0.0, 0.0)];
+    let wanted = [
+        (CgarF64(0.0), CgarF64(1.0), CgarF64(0.0)),
+        (1.0.into(), 0.0.into(), 0.0.into()),
+    ];
     let mut actual = [a, b];
     actual.sort_by(|p, q| p.partial_cmp(q).unwrap_or(Ordering::Equal));
     let mut expected = wanted;
@@ -95,7 +101,7 @@ fn test_coplanar_overlap()
 fn test_coplanar_disjoint() {
     // Two triangles in the z=0 plane that do not touch
     let t1 = [
-        Point3::new(0.0, 0.0, 0.0),
+        Point3::<CgarF64>::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(0.0, 1.0, 0.0),
     ];
@@ -116,7 +122,7 @@ fn test_coplanar_disjoint() {
 fn test_non_coplanar_slice() {
     // A horizontal triangle in z=0
     let t1 = [
-        Point3::new(0.0, 0.0, 0.0),
+        Point3::<CgarF64>::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(0.0, 1.0, 0.0),
     ];
@@ -134,6 +140,6 @@ fn test_non_coplanar_slice() {
     let (a, b) = seg;
     let (a2, b2) = ((a.x, a.y), (b.x, b.y));
     let pts = [a2, b2];
-    assert!(pts.contains(&(0.2, 0.2)));
-    assert!(pts.contains(&(0.5, 0.5)));
+    assert!(pts.contains(&(0.2.into(), 0.2.into())));
+    assert!(pts.contains(&(0.5.into(), 0.5.into())));
 }

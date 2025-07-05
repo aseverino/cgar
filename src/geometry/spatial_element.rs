@@ -20,20 +20,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::numeric::cgar_rational::CgarRational;
+use crate::operations::Zero;
+use std::hash::Hash;
+use std::ops::{Add, Sub};
 
-pub trait Abs {
-    fn abs(&self) -> Self;
+pub trait SpatialElement<T>:
+    Clone
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Zero
+    + Eq
+    + PartialEq
+    + Hash
+    + PartialOrd
+    + From<(T, T, T)>
+{
 }
-
-// impl Abs for f64 {
-//     fn abs(&self) -> Self {
-//         f64::abs(*self)
-//     }
-// }
-
-// impl Abs for CgarRational {
-//     fn abs(&self) -> Self {
-//         CgarRational(self.0.clone().abs())
-//     }
-// }

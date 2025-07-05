@@ -20,12 +20,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::numeric::cgar_rational::CgarRational;
-use crate::operations::{Abs, Pow, Sqrt, Zero};
-use std::hash::{Hash, Hasher};
-use std::ops::{Add, Div, Mul, Sub};
+use crate::numeric::scalar::Scalar;
 
-pub trait VectorOps<T, C>: Sized {
+pub trait VectorOps<T, C>: Sized
+where
+    T: Scalar,
+{
     fn dot(&self, other: &Self) -> T;
     fn cross(&self, other: &Self) -> C;
     fn norm(&self) -> T;

@@ -25,21 +25,22 @@ use crate::{
         Vector3,
         aabb::{Aabb, FromCoords},
         point::PointOps,
+        spatial_element::SpatialElement,
     },
-    numeric::cgar_rational::CgarRational,
-    operations::{Abs, Pow, Sqrt, Zero},
+    mesh::point_trait::PointTrait,
+    numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational, scalar::Scalar},
+    operations::{Pow, Sqrt, Zero},
 };
-use std::hash::{Hash, Hasher};
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Div, Mul, Sub};
+use std::{
+    hash::{Hash, Hasher},
+    ops::Add,
+};
 
 #[derive(Debug, Clone)]
 pub struct Point3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
     pub x: T,
     pub y: T,
@@ -48,17 +49,99 @@ where
 
 impl<T> Point3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
-    pub fn new(x: T, y: T, z: T) -> Self {
-        Self { x, y, z }
+    pub fn new<X, Y, Z>(x: X, y: Y, z: Z) -> Self
+    where
+        X: Into<T>,
+        Y: Into<T>,
+        Z: Into<T>,
+    {
+        Self {
+            x: x.into(),
+            y: y.into(),
+            z: z.into(),
+        }
     }
+}
 
-    pub fn zero() -> Self {
+impl<'a, 'b> Add<&'b Point3<CgarF64>> for &'a Point3<CgarF64> {
+    type Output = Point3<CgarF64>;
+    fn add(self, rhs: &'b Point3<CgarF64>) -> Point3<CgarF64> {
+        Point3 {
+            x: &self.x + &rhs.x,
+            y: &self.y + &rhs.y,
+            z: &self.z + &rhs.z,
+        }
+    }
+}
+
+impl Add for Point3<CgarRational> {
+    type Output = Point3<CgarRational>;
+    fn add(self, rhs: Point3<CgarRational>) -> Point3<CgarRational> {
+        &self + &rhs
+    }
+}
+
+impl<'a, 'b> Add<&'b Point3<CgarRational>> for &'a Point3<CgarRational> {
+    type Output = Point3<CgarRational>;
+    fn add(self, rhs: &'b Point3<CgarRational>) -> Point3<CgarRational> {
+        Point3 {
+            x: &self.x + &rhs.x,
+            y: &self.y + &rhs.y,
+            z: &self.z + &rhs.z,
+        }
+    }
+}
+
+impl Add for Point3<CgarF64> {
+    type Output = Point3<CgarF64>;
+    fn add(self, rhs: Point3<CgarF64>) -> Point3<CgarF64> {
+        &self + &rhs
+    }
+}
+
+impl<'a, 'b> Sub<&'b Point3<CgarF64>> for &'a Point3<CgarF64> {
+    type Output = Point3<CgarF64>;
+    fn sub(self, rhs: &'b Point3<CgarF64>) -> Point3<CgarF64> {
+        Point3 {
+            x: &self.x - &rhs.x,
+            y: &self.y - &rhs.y,
+            z: &self.z - &rhs.z,
+        }
+    }
+}
+
+impl<'a, 'b> Sub<&'b Point3<CgarRational>> for &'a Point3<CgarRational> {
+    type Output = Point3<CgarRational>;
+    fn sub(self, rhs: &'b Point3<CgarRational>) -> Point3<CgarRational> {
+        Point3 {
+            x: &self.x - &rhs.x,
+            y: &self.y - &rhs.y,
+            z: &self.z - &rhs.z,
+        }
+    }
+}
+
+impl Sub for Point3<CgarF64> {
+    type Output = Point3<CgarF64>;
+    fn sub(self, rhs: Point3<CgarF64>) -> Point3<CgarF64> {
+        &self - &rhs
+    }
+}
+
+impl Sub for Point3<CgarRational> {
+    type Output = Point3<CgarRational>;
+    fn sub(self, rhs: Point3<CgarRational>) -> Point3<CgarRational> {
+        &self - &rhs
+    }
+}
+
+impl<T> Zero for Point3<T>
+where
+    T: Scalar,
+{
+    fn zero() -> Self {
         Point3 {
             x: T::zero(),
             y: T::zero(),
@@ -67,30 +150,47 @@ where
     }
 }
 
+impl<T: Clone> PointTrait<T> for Point3<T>
+where
+    T: Scalar,
+{
+    fn dimensions() -> usize {
+        3
+    }
+    fn coord(&self, axis: usize) -> T {
+        match axis {
+            0 => self.x.clone(),
+            1 => self.y.clone(),
+            2 => self.z.clone(),
+            _ => panic!("Invalid axis"),
+        }
+    }
+}
+
 impl<T> PointOps<T, Vector3<T>> for Point3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-    for<'a> &'a T: Sub<&'a T, Output = T>
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
     type Vector = Vector3<T>;
+
     fn distance_to(&self, other: &Self) -> T {
-        let a = &(&self.x - &other.x).pow(2);
-        let b = &(&self.y - &other.y).pow(2);
-        let c = &(&self.z - &other.z).pow(2);
+        let a = (&self.x - &other.x).pow(2);
+        let b = (&self.y - &other.y).pow(2);
+        let c = (&self.z - &other.z).pow(2);
         let ab = a + b;
 
-        (&ab + c).sqrt()
+        (ab + c).sqrt()
     }
 
     fn sub(&self, other: &Self) -> Self {
-        Self {
-            x: &self.x - &other.x,
-            y: &self.y - &other.y,
-            z: &self.z - &other.z,
-        }
+        let x = &self.x - &other.x;
+        let y = &self.y - &other.y;
+        let z = &self.z - &other.z;
+        Self { x, y, z }
     }
 
     fn as_vector(&self) -> Vector3<T> {
@@ -103,11 +203,7 @@ where
 
     fn add_vector(&self, v: &Vector3<T>) -> Self
     where
-        T: Clone + PartialOrd + Abs + Pow + Sqrt + Zero,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
+        T: Scalar,
     {
         Point3 {
             x: &self.x + &v.x,
@@ -119,11 +215,7 @@ where
 
 impl<T: Clone> FromCoords<T> for Point3<T>
 where
-    T: Clone + PartialOrd + Abs + Pow + Sqrt,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar,
 {
     fn from_coords(min_coords: Vec<T>, max_coords: Vec<T>) -> Aabb<T, Self> {
         let min = Point3 {
@@ -140,49 +232,80 @@ where
     }
 }
 
-impl Hash for Point3<f64> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Convert each f64 to its raw u64 bits and feed that to the hasher
-        state.write_u64(self.x.to_bits());
-        state.write_u64(self.y.to_bits());
-        state.write_u64(self.z.to_bits());
-    }
-}
-
-impl PartialEq for Point3<f64> {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare the raw bit patterns, so NaNs of the *same* bit‐pattern
-        // match, and +0.0 vs -0.0 are distinguished if you care.
-        self.x.to_bits() == other.x.to_bits()
-            && self.y.to_bits() == other.y.to_bits()
-            && self.z.to_bits() == other.z.to_bits()
-    }
-}
-impl Eq for Point3<f64> {}
-
-impl Hash for Point3<CgarRational> {
+impl<T> Hash for Point3<T>
+where
+    T: Scalar,
+{
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.x.hash(state);
-        state.write_u8(b',');
         self.y.hash(state);
-        state.write_u8(b',');
         self.z.hash(state);
     }
 }
-impl PartialEq for Point3<CgarRational> {
+
+impl<T> PartialEq for Point3<T>
+where
+    T: Scalar,
+{
     fn eq(&self, other: &Self) -> bool {
         self.x == other.x && self.y == other.y && self.z == other.z
     }
 }
-impl Eq for Point3<CgarRational> {}
 
-impl From<Vector3<f64>> for Point3<f64> {
-    fn from(v: Vector3<f64>) -> Self {
-        Point3::new(v.x, v.y, v.z)
+impl<T> PartialOrd for Point3<T>
+where
+    T: Scalar,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let x_cmp = self.x.partial_cmp(&other.x);
+        if x_cmp.is_none() {
+            return None;
+        }
+        let y_cmp = self.y.partial_cmp(&other.y);
+        if y_cmp.is_none() {
+            return None;
+        }
+        let z_cmp = self.z.partial_cmp(&other.z);
+        if z_cmp.is_none() {
+            return None;
+        }
+
+        match (x_cmp, y_cmp, z_cmp) {
+            (Some(x), Some(y), Some(z)) => {
+                if x == std::cmp::Ordering::Equal && y == std::cmp::Ordering::Equal {
+                    Some(z)
+                } else if x == std::cmp::Ordering::Equal {
+                    Some(y)
+                } else {
+                    Some(x)
+                }
+            }
+            _ => None,
+        }
     }
 }
-impl From<Vector3<CgarRational>> for Point3<CgarRational> {
-    fn from(v: Vector3<CgarRational>) -> Self {
-        Point3::new(v.x, v.y, v.z)
+
+impl<T> Eq for Point3<T> where T: Scalar {}
+
+impl<T> From<(T, T, T)> for Point3<T>
+where
+    T: Scalar,
+{
+    fn from(coords: (T, T, T)) -> Self {
+        Point3::new(coords.0, coords.1, coords.2)
     }
 }
+
+// impl From<Vector3<CgarF64>> for Point3<CgarF64> {
+//     fn from(v: &Vector3<CgarF64>) -> Self {
+//         Point3::new(v.x, v.y, v.z)
+//     }
+// }
+// impl From<Vector3<CgarRational>> for Point3<CgarRational> {
+//     fn from(v: Vector3<CgarRational>) -> Self {
+//         Point3::new(v.x, v.y, v.z)
+//     }
+// }
+
+impl SpatialElement<CgarF64> for Point3<CgarF64> {}
+impl SpatialElement<CgarRational> for Point3<CgarRational> {}

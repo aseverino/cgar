@@ -20,9 +20,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::geometry::vector::VectorOps;
+use crate::{geometry::vector::VectorOps, numeric::scalar::Scalar};
 
-pub trait PointOps<T, C>: Sized {
+pub trait PointOps<T, C>: Sized
+where
+    T: Scalar,
+{
     type Vector: VectorOps<T, C>;
 
     fn distance_to(&self, other: &Self) -> T;

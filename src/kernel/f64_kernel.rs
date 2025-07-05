@@ -22,14 +22,15 @@
 
 use crate::geometry::{Point2, Segment2, Vector2};
 use crate::kernel::kernel::Kernel2;
+use crate::numeric::cgar_f64::CgarF64;
 
 pub struct F64Kernel;
 
 impl Kernel2 for F64Kernel {
-    type FT = f64;
-    type Point2 = Point2<f64>;
-    type Segment2 = Segment2<f64>;
-    type Vector2 = Vector2<f64>;
+    type FT = CgarF64;
+    type Point2 = Point2<CgarF64>;
+    type Segment2 = Segment2<CgarF64>;
+    type Vector2 = Vector2<CgarF64>;
 
     // fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> f64 {
     //     orient2d(a, b, c)

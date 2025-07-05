@@ -20,11 +20,24 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::ops::{Add, Div, Mul, Sub};
-
 use num_traits::ToPrimitive;
-use rug::Rational;
-use std::hash::{Hash, Hasher};
+use rug::{Rational, ops::Pow};
+
+use crate::{
+    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    operations::{Abs, Sqrt},
+};
+
+use std::{
+    hash::{Hash, Hasher},
+    ops::{Add, Div, Mul, Neg, Sub},
+};
+
+// use std::ops::{Add, Div, Mul, Sub};
+
+// use num_traits::ToPrimitive;
+// use rug::Rational;
+// use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug)]
 pub struct CgarRational(pub Rational);
@@ -40,6 +53,13 @@ impl<'a, 'b> Add<&'b CgarRational> for &'a CgarRational {
     }
 }
 
+impl Add for CgarRational {
+    type Output = CgarRational;
+    fn add(self, rhs: CgarRational) -> CgarRational {
+        &self + &rhs // just borrow both and reuse the existing logic
+    }
+}
+
 impl<'a, 'b> Sub<&'b CgarRational> for &'a CgarRational {
     type Output = CgarRational;
 
@@ -48,6 +68,13 @@ impl<'a, 'b> Sub<&'b CgarRational> for &'a CgarRational {
         let mut result = self.0.clone();
         result -= &rhs.0;
         CgarRational(result)
+    }
+}
+
+impl Sub for CgarRational {
+    type Output = CgarRational;
+    fn sub(self, rhs: CgarRational) -> CgarRational {
+        &self - &rhs // just borrow both and reuse the existing logic
     }
 }
 
@@ -62,6 +89,13 @@ impl<'a, 'b> Mul<&'b CgarRational> for &'a CgarRational {
     }
 }
 
+impl Mul for CgarRational {
+    type Output = CgarRational;
+    fn mul(self, rhs: CgarRational) -> CgarRational {
+        &self * &rhs // just borrow both and reuse the existing logic
+    }
+}
+
 impl<'a, 'b> Div<&'b CgarRational> for &'a CgarRational {
     type Output = CgarRational;
 
@@ -73,15 +107,10 @@ impl<'a, 'b> Div<&'b CgarRational> for &'a CgarRational {
     }
 }
 
-impl PartialEq for CgarRational {
-    fn eq(&self, other: &CgarRational) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl PartialOrd for CgarRational {
-    fn partial_cmp(&self, other: &CgarRational) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+impl Div for CgarRational {
+    type Output = CgarRational;
+    fn div(self, rhs: CgarRational) -> CgarRational {
+        &self / &rhs // just borrow both and reuse the existing logic
     }
 }
 
@@ -94,6 +123,18 @@ impl From<i32> for CgarRational {
 impl From<f64> for CgarRational {
     fn from(value: f64) -> Self {
         CgarRational(Rational::from_f64(value).expect("Invalid f64 value"))
+    }
+}
+
+impl From<CgarF64> for CgarRational {
+    fn from(value: CgarF64) -> Self {
+        CgarRational(Rational::from_f64(value.0).expect("Invalid f64 value"))
+    }
+}
+
+impl From<rug::Rational> for CgarRational {
+    fn from(value: rug::Rational) -> Self {
+        CgarRational(value)
     }
 }
 
@@ -112,6 +153,18 @@ impl ToPrimitive for CgarRational {
     }
 }
 
+impl PartialEq for CgarRational {
+    fn eq(&self, other: &CgarRational) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl PartialOrd for CgarRational {
+    fn partial_cmp(&self, other: &CgarRational) -> Option<std::cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
 impl Hash for CgarRational {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // get references to the internally reduced numerator & denominator
@@ -125,3 +178,46 @@ impl Hash for CgarRational {
         den.to_string().hash(state);
     }
 }
+
+impl Eq for CgarRational {}
+
+impl crate::operations::Zero for CgarRational {
+    fn zero() -> Self {
+        CgarRational(Rational::from(0))
+    }
+}
+
+impl crate::operations::One for CgarRational {
+    fn one() -> Self {
+        CgarRational(Rational::from(1))
+    }
+}
+
+impl Sqrt for CgarRational {
+    fn sqrt(&self) -> Self {
+        let sqrt_val = self.0.to_f64().sqrt();
+        CgarRational::from(sqrt_val)
+    }
+}
+
+impl crate::operations::Pow for CgarRational {
+    fn pow(&self, exp: i32) -> Self {
+        CgarRational(self.0.clone().pow(exp))
+    }
+}
+
+impl Abs for CgarRational {
+    fn abs(&self) -> Self {
+        CgarRational(self.0.clone().abs())
+    }
+}
+
+impl Neg for CgarRational {
+    type Output = CgarRational;
+
+    fn neg(self) -> CgarRational {
+        CgarRational(-self.0)
+    }
+}
+
+impl Scalar for CgarRational {}
