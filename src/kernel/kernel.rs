@@ -20,10 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{
-    geometry::{Point2, Segment2, Vector2},
-    operations::{Abs, Pow, Sqrt},
-};
+use crate::operations::{Abs, Pow, Sqrt};
 
 pub trait Kernel2 {
     type FT: Clone + PartialOrd + Abs + Pow + Sqrt;

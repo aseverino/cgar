@@ -20,14 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::ops::{Add, Div, Mul, Sub};
-
-use crate::{
-    geometry::Point3,
-    mesh::point_trait::PointTrait,
-    operations::{Abs, Pow, Sqrt, Zero},
-};
-
 // pub fn to_point3<T, P: PointTrait<T>>(p: &P) -> Point3<T>
 // where
 //     T: Clone + PartialEq + PartialOrd + Abs + Pow + Sqrt + Zero,

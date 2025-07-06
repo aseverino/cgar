@@ -28,7 +28,7 @@ use crate::{
 };
 
 use std::{
-    hash::{Hash, Hasher},
+    hash::Hash,
     ops::{Add, Div, Mul, Neg, Sub},
 };
 

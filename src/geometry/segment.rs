@@ -20,18 +20,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::Point2;
 use crate::{
     geometry::{
-        Point3, Vector2, Vector3,
         point::{Point, PointOps},
         spatial_element::SpatialElement,
     },
     numeric::scalar::Scalar,
-    operations::{Abs, Pow, Sqrt, Zero},
 };
-use num_traits::ToPrimitive;
-use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Sub};
 
 pub trait SegmentOps<T: Scalar, const N: usize>: Sized {

@@ -22,7 +22,6 @@
 
 use crate::{
     geometry::spatial_element::SpatialElement,
-    mesh::point_trait::PointTrait,
     numeric::{cgar_rational::CgarRational, scalar::Scalar},
     operations::Abs,
 };

@@ -20,13 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use num_traits::ToPrimitive;
-
-use crate::geometry::Point2;
 use crate::geometry::point::Point;
 use crate::geometry::segment::Segment;
 use crate::numeric::scalar::Scalar;
-use crate::operations::{Abs, Pow, Sqrt, Zero};
 use std::ops::{Add, Div, Mul, Sub};
 
 pub fn are_equal<T: Scalar, const N: usize>(p1: &Point<T, N>, p2: &Point<T, N>, eps: &T) -> bool

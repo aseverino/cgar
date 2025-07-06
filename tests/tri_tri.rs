@@ -20,15 +20,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{arch::x86_64::_MM_ROUND_TOWARD_ZERO, cmp::Ordering};
+use std::cmp::Ordering;
 
 use cgar::{
     geometry::{
-        Point3, Vector3,
+        Point3,
         spatial_element::SpatialElement,
         tri_tri_intersect::{tri_tri_intersection, tri_tri_overlap},
     },
-    numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational},
+    numeric::cgar_f64::CgarF64,
 };
 
 #[test]
@@ -57,7 +57,7 @@ fn test_triangles_overlap() {
     ));
 }
 
-fn sort_pair<T: PartialOrd + Clone>(mut a: T, mut b: T) -> (T, T) {
+fn _sort_pair<T: PartialOrd + Clone>(mut a: T, mut b: T) -> (T, T) {
     if a > b {
         std::mem::swap(&mut a, &mut b);
     }

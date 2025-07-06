@@ -23,7 +23,7 @@
 use crate::numeric::scalar::Scalar;
 use crate::operations::Zero;
 use std::hash::Hash;
-use std::ops::{Add, Index, IndexMut, Sub};
+use std::ops::{Index, IndexMut};
 
 pub trait SpatialElement<T: Scalar, const N: usize>:
     Clone

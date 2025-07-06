@@ -20,14 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::ops::{Add, Div, Mul, Sub};
-
-use crate::{
-    geometry::{Point2, Point3},
-    numeric::scalar::Scalar,
-    operations::{Abs, Pow, Sqrt},
-};
-
 pub trait PointTrait<T, const N: usize>: Clone {
     fn dimensions() -> usize;
     fn coord(&self, axis: usize) -> T;

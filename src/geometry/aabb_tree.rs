@@ -23,7 +23,6 @@
 use crate::{
     geometry::{aabb::Aabb, spatial_element::SpatialElement},
     numeric::{cgar_rational::CgarRational, scalar::Scalar},
-    operations::Abs,
 };
 use std::{
     cmp::Ordering,
@@ -52,7 +51,7 @@ where
         + Div<&'a T, Output = T>,
 {
     /// Build an AABB‐tree over `(aabb, data)` pairs via recursive median split.
-    pub fn build(mut items: Vec<(Aabb<T, N, P>, D)>) -> Self
+    pub fn build(items: Vec<(Aabb<T, N, P>, D)>) -> Self
     where
         T: Scalar + From<CgarRational>,
     {

@@ -20,10 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use rug::Rational;
-
-use crate::numeric::cgar_rational::CgarRational;
-
 pub trait Zero {
     fn zero() -> Self;
 }

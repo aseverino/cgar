@@ -26,14 +26,10 @@ use std::{
 };
 
 use crate::{
-    geometry::{
-        Point3, Vector3, point::PointOps, spatial_element::SpatialElement, vector::VectorOps,
-    },
-    mesh::point_trait::PointTrait,
+    geometry::{Point3, Vector3, point::PointOps, vector::VectorOps},
     numeric::scalar::Scalar,
-    operations::{Abs, Zero},
+    operations::Zero,
 };
-use num_traits::Float;
 
 /// Fast 3D triangle–triangle overlap test (Möller 1997).
 /// Returns true if T1=(p0,p1,p2) and T2=(q0,q1,q2) intersect.
@@ -327,7 +323,7 @@ where
     }
     for (x, y) in &t2 {
         if point_in_tri_2d((x.clone(), y.clone()), &t1) {
-            let mut coords = [x.clone(), y.clone(), T::zero()];
+            let coords = [x.clone(), y.clone(), T::zero()];
             pts.push([coords[0].clone(), coords[1].clone(), coords[2].clone()].into());
         }
     }
@@ -347,7 +343,7 @@ where
         for (c, d) in &edges2 {
             if let Some((ix, iy)) = segment_intersect_2d(a.clone(), b.clone(), c.clone(), d.clone())
             {
-                let mut coords = [ix, iy, T::zero()];
+                let coords = [ix, iy, T::zero()];
                 pts.push([coords[0].clone(), coords[1].clone(), coords[2].clone()].into());
             }
         }

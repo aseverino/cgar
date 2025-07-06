@@ -22,13 +22,11 @@
 
 use std::collections::HashSet;
 
-use cgar::geometry::point::PointOps;
 use cgar::geometry::spatial_element::SpatialElement;
 use cgar::geometry::{Point2, Point3};
-use cgar::mesh::{mesh::Mesh, point_trait::PointTrait};
+use cgar::mesh::mesh::Mesh;
 use cgar::numeric::cgar_f64::CgarF64;
-use cgar::numeric::cgar_rational::{self, CgarRational};
-use rug::Rational;
+use cgar::numeric::cgar_rational::CgarRational;
 
 #[test]
 fn test_add_vertices_and_triangle_2() {
@@ -207,7 +205,7 @@ fn test_connected_two_triangles_2() {
     assert_eq!(he_fwd.twin, *backward);
     assert_eq!(he_bwd.twin, *forward);
 
-    let g0 = &mesh.half_edges[he0_idx];
+    let _g0 = &mesh.half_edges[he0_idx];
     let g1 = &mesh.half_edges[he1_idx];
     let g2 = &mesh.half_edges[g1.next];
     let g3 = &mesh.half_edges[g2.next];
@@ -277,7 +275,7 @@ fn test_connected_two_triangles_3() {
     assert_eq!(he_fwd.twin, *backward);
     assert_eq!(he_bwd.twin, *forward);
 
-    let g0 = &mesh.half_edges[he0_idx];
+    let _g0 = &mesh.half_edges[he0_idx];
     let g1 = &mesh.half_edges[he1_idx];
     let g2 = &mesh.half_edges[g1.next];
     let g3 = &mesh.half_edges[g2.next];
@@ -347,7 +345,7 @@ fn test_connected_two_triangles_2_rational() {
     assert_eq!(he_fwd.twin, *backward);
     assert_eq!(he_bwd.twin, *forward);
 
-    let g0 = &mesh.half_edges[he0_idx];
+    let _g0 = &mesh.half_edges[he0_idx];
     let g1 = &mesh.half_edges[he1_idx];
     let g2 = &mesh.half_edges[g1.next];
     let g3 = &mesh.half_edges[g2.next];
@@ -418,7 +416,7 @@ fn test_connected_two_triangles_3_rational() {
     assert_eq!(he_fwd.twin, *backward);
     assert_eq!(he_bwd.twin, *forward);
 
-    let g0 = &mesh.half_edges[he0_idx];
+    let _g0 = &mesh.half_edges[he0_idx];
     let g1 = &mesh.half_edges[he1_idx];
     let g2 = &mesh.half_edges[g1.next];
     let g3 = &mesh.half_edges[g2.next];
@@ -458,8 +456,8 @@ fn test_build_boundary_loops() {
     let v2 = mesh.add_vertex(Point2::from_vals([0.0, 1.0]));
     let v3 = mesh.add_vertex(Point2::from_vals([1.0, 1.0]));
 
-    let f0 = mesh.add_triangle(v0, v1, v2); // Lower-left triangle
-    let f1 = mesh.add_triangle(v1, v3, v2); // Upper-right triangle
+    let _f0 = mesh.add_triangle(v0, v1, v2); // Lower-left triangle
+    let _f1 = mesh.add_triangle(v1, v3, v2); // Upper-right triangle
 
     // now build the holes
     mesh.build_boundary_loops();

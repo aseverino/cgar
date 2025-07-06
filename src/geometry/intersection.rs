@@ -27,7 +27,6 @@ use crate::{
     },
     kernel::{are_collinear, orient},
     numeric::scalar::Scalar,
-    operations::{Abs, Zero},
 };
 use std::ops::{Add, Div, Mul, Sub};
 

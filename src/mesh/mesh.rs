@@ -20,23 +20,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use num_traits::ToPrimitive;
-use std::hash::Hash;
-
 use crate::{
-    geometry::{
-        Aabb, AabbTree, FromCoords, Point3, Vector3, point::PointOps,
-        spatial_element::SpatialElement, tri_tri_intersect::tri_tri_intersection,
-        vector::VectorOps,
-    },
-    numeric::{cgar_rational::CgarRational, scalar::Scalar},
-    operations::{Abs, One, Pow, Sqrt, Zero},
+    geometry::{Aabb, FromCoords, spatial_element::SpatialElement},
+    numeric::scalar::Scalar,
 };
 
-use super::{face::Face, half_edge::HalfEdge, point_trait::PointTrait, vertex::Vertex};
+use super::{face::Face, half_edge::HalfEdge, vertex::Vertex};
 use std::{
     collections::{HashMap, HashSet},
-    ops::{Add, Div, Mul, Neg, Sub},
+    ops::{Add, Div, Mul, Sub},
 };
 
 pub enum BooleanOp {
@@ -74,7 +66,7 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Mesh<T, N, P> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        let he = self.faces[f].half_edge;
+        let _he = self.faces[f].half_edge;
         let vs = self.face_half_edges(f);
         let p0 = &self.vertices[self.half_edges[vs[0]].vertex].position;
         let p1 = &self.vertices[self.half_edges[vs[1]].vertex].position;
@@ -336,8 +328,8 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Mesh<T, N, P> {
         let he_f = self.half_edges[he_d].prev;
 
         // --- 3) pull off the four corner vertices ---
-        let u = self.half_edges[he_c].vertex; // c→u
-        let v = self.half_edges[he_a].vertex; // u→v
+        let _u = self.half_edges[he_c].vertex; // c→u
+        let _v = self.half_edges[he_a].vertex; // u→v
         let c = self.half_edges[he_b].vertex; // v→c
         let d = self.half_edges[he_e].vertex; // u→d
 

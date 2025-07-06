@@ -20,10 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{
-    geometry::spatial_element::SpatialElement, mesh::point_trait::PointTrait,
-    numeric::scalar::Scalar,
-};
+use crate::{geometry::spatial_element::SpatialElement, numeric::scalar::Scalar};
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]

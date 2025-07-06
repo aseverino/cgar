@@ -23,8 +23,6 @@
 use crate::geometry::{Point2, Segment2, Vector2};
 use crate::kernel::kernel::Kernel2;
 use crate::numeric::cgar_rational::CgarRational;
-use crate::operations::Abs;
-use std::ops::{Mul, Sub};
 
 /// Kernel using rug::Rational (arbitrary-precision rationals backed by GMP)
 pub struct BigRationalKernel;

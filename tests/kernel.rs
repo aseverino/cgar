@@ -75,7 +75,7 @@ fn test_is_point_on_segment_2() {
     assert!(!is_point_on_segment(&off, &seg, &CgarF64(EPS)));
 }
 
-fn eps() -> CgarRational {
+fn _eps() -> CgarRational {
     CgarRational(Rational::from((1, 1_000_000_000))) // 1e-9
 }
 
@@ -134,7 +134,7 @@ fn test_is_point_on_segment_3() {
     assert!(!is_point_on_segment(&off, &seg, &CgarF64(EPS)));
 }
 
-fn eps_rational() -> CgarRational {
+fn _eps_rational() -> CgarRational {
     CgarRational(Rational::from((1, 1_000_000_000))) // 1e-9
 }
 
