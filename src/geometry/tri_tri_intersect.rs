@@ -409,7 +409,7 @@ where
     let mut pts = Vec::new();
     for &(a, b) in &[(p0, p1), (p1, p2), (p2, p0)] {
         if let Some(ip) = intersect_edge_plane(a, b, &n2.clone().into(), &d2) {
-            if point_in_tri(&ip, q0, q1, q2, &n2) {
+            if point_in_tri(&ip, q0, q1, q2) {
                 pts.push(ip);
             }
         }
@@ -424,7 +424,7 @@ where
     // 4) Clip edges of T2 against T1’s plane:
     for &(a, b) in &[(q0, q1), (q1, q2), (q2, q0)] {
         if let Some(ip) = intersect_edge_plane(a, b, &n1.clone().into(), &d1) {
-            if point_in_tri(&ip, p0, p1, p2, &n1) {
+            if point_in_tri(&ip, p0, p1, p2) {
                 pts.push(ip);
             }
         }
@@ -477,13 +477,7 @@ where
 
 /// Returns true if `p` lies inside triangle `(a,b,c)` on the plane with normal `n`.
 /// We use barycentric coordinates in 3D.
-fn point_in_tri<T>(
-    p: &Point3<T>,
-    a: &Point3<T>,
-    b: &Point3<T>,
-    c: &Point3<T>,
-    n: &Vector3<T>,
-) -> bool
+fn point_in_tri<T>(p: &Point3<T>, a: &Point3<T>, b: &Point3<T>, c: &Point3<T>) -> bool
 where
     T: Scalar,
     for<'a> &'a T: Sub<&'a T, Output = T>
