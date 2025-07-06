@@ -22,157 +22,93 @@
 
 use num_traits::ToPrimitive;
 
-use crate::geometry::segment::{Segment2, Segment3};
-use crate::geometry::vector::VectorOps;
-use crate::geometry::{Point2, Point3, Vector3};
+use crate::geometry::Point2;
+use crate::geometry::point::Point;
+use crate::geometry::segment::Segment;
 use crate::numeric::scalar::Scalar;
 use crate::operations::{Abs, Pow, Sqrt, Zero};
 use std::ops::{Add, Div, Mul, Sub};
 
-/// Determines whether two points are equal within a small tolerance.
-pub fn are_equal_2<T>(p1: &Point2<T>, p2: &Point2<T>, eps: &T) -> bool
+pub fn are_equal<T: Scalar, const N: usize>(p1: &Point<T, N>, p2: &Point<T, N>, eps: &T) -> bool
 where
-    T: Scalar,
     for<'a> &'a T: Sub<&'a T, Output = T> + Mul<&'a T, Output = T>,
 {
-    (&p1.x - &p2.x).abs() < *eps && (&p1.y - &p2.y).abs() < *eps
+    for i in 0..N {
+        if (&p1.coords[i] - &p2.coords[i]).abs() >= *eps {
+            return false;
+        }
+    }
+
+    return true;
 }
 
-/// Checks if three points are collinear using the area of the triangle formula.
-pub fn are_collinear_2<T>(a: &Point2<T>, b: &Point2<T>, c: &Point2<T>, eps: &T) -> bool
+pub fn are_collinear<T, const N: usize>(
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    c: &Point<T, N>,
+    eps: &T,
+) -> bool
 where
     T: Scalar,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Add<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    let area = &(&(&b.x - &a.x) * &(&c.y - &a.y)) - &(&(&b.y - &a.y) * &(&c.x - &a.x));
-    area.abs() < *eps
+    for i in 0..N {
+        let ui = &b.coords[i] - &a.coords[i];
+        let vi = &c.coords[i] - &a.coords[i];
+
+        if ui.abs() > *eps {
+            // first non-zero component gives the candidate scale factor
+            let r = &vi / &ui;
+
+            // every remaining coordinate must satisfy vj = r * uj
+            for j in (i + 1)..N {
+                let uj = &b.coords[j] - &a.coords[j];
+                let vj = &c.coords[j] - &a.coords[j];
+                if (&vj - &(&uj * &r)).abs() > *eps {
+                    return false; // breaks proportionality
+                }
+            }
+            return true; // all coordinates match
+        } else if vi.abs() > *eps {
+            return false; // ui ≈ 0 but vi isn’t ⇒ not collinear
+        }
+    }
+    // all ui ≈ 0  ⇒  A and B coincide; collinear iff C coincides too
+    true
 }
 
-/// Checks if point `p` lies on segment `seg`.
-pub fn is_point_on_segment_2<T>(p: &Point2<T>, seg: &Segment2<T>, eps: &T) -> bool
+pub fn is_point_on_segment<T, const N: usize>(p: &Point<T, N>, seg: &Segment<T, N>, eps: &T) -> bool
 where
     T: Scalar,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Add<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
+    T: PartialOrd, // needed for comparisons inside the loop
 {
-    if !are_collinear_2(&seg.a, &seg.b, &p, &eps) {
+    // 1.  If P, A, B are not collinear, P cannot lie on AB
+    if !are_collinear(p, &seg.a, &seg.b, eps) {
         return false;
     }
 
-    let min_x = if &seg.a.x < &seg.b.x {
-        &seg.a.x
-    } else {
-        &seg.b.x
-    } - eps;
+    // 2.  For every coordinate axis, P must lie between A and B
+    for i in 0..N {
+        let ai = &seg.a.coords[i];
+        let bi = &seg.b.coords[i];
 
-    let max_x = if &seg.a.x > &seg.b.x {
-        &seg.a.x
-    } else {
-        &seg.b.x
-    } + eps;
+        // min_i, max_i with ±eps tolerance
+        let (min_i, max_i) = if ai < bi { (ai, bi) } else { (bi, ai) };
+        let lo = min_i - eps;
+        let hi = max_i + eps;
 
-    let min_y = if &seg.a.y < &seg.b.y {
-        &seg.a.y
-    } else {
-        &seg.b.y
-    } - eps;
-
-    let max_y = if &seg.a.y > &seg.b.y {
-        &seg.a.y
-    } else {
-        &seg.b.y
-    } + eps;
-
-    //let max_x = seg.a.x.max(seg.b.x) + eps;
-    //let min_y = seg.a.y.min(seg.b.y) - eps;
-    //let max_y = seg.a.y.max(seg.b.y) + eps;
-
-    p.x >= min_x && p.x <= max_x && p.y >= min_y && p.y <= max_y
-}
-
-/// Determines whether two points are equal within a small tolerance.
-pub fn are_equal_3<T>(p1: &Point3<T>, p2: &Point3<T>, eps: &T) -> bool
-where
-    T: Scalar,
-    for<'a> &'a T: Sub<&'a T, Output = T>,
-{
-    (&p1.x - &p2.x).abs() < *eps && (&p1.y - &p2.y).abs() < *eps && (&p1.z - &p2.z).abs() < *eps
-}
-
-/// Checks if three points are collinear using the area of the triangle formula.
-pub fn are_collinear_3<T>(a: &Point3<T>, b: &Point3<T>, c: &Point3<T>, eps: &T) -> bool
-where
-    T: Scalar,
-    Vector3<T>: VectorOps<T, Vector3<T>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>,
-{
-    let ab = Vector3 {
-        x: &b.x - &a.x,
-        y: &b.y - &a.y,
-        z: &b.z - &a.z,
-    };
-
-    let ac = Vector3 {
-        x: &c.x - &a.x,
-        y: &c.y - &a.y,
-        z: &c.z - &a.z,
-    };
-
-    let cross = ab.cross(&ac);
-    cross.norm().abs() < *eps
-}
-
-/// Checks if point `p` lies on segment `seg`.
-pub fn is_point_on_segment_3<T>(p: &Point3<T>, seg: &Segment3<T>, eps: &T) -> bool
-where
-    T: Scalar,
-    Point3<T>: PartialEq,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    if !are_collinear_3(&seg.a, &seg.b, p, eps) {
-        return false;
+        let pi = &p.coords[i];
+        if pi < &lo || pi > &hi {
+            return false; // outside on some axis ⇒ not on segment
+        }
     }
 
-    let min_x = if &seg.a.x < &seg.b.x {
-        &seg.a.x
-    } else {
-        &seg.b.x
-    } - eps;
-    let max_x = if &seg.a.x > &seg.b.x {
-        &seg.a.x
-    } else {
-        &seg.b.x
-    } + eps;
-
-    let min_y = if &seg.a.y < &seg.b.y {
-        &seg.a.y
-    } else {
-        &seg.b.y
-    } - eps;
-    let max_y = if &seg.a.y > &seg.b.y {
-        &seg.a.y
-    } else {
-        &seg.b.y
-    } + eps;
-
-    let min_z = if &seg.a.z < &seg.b.z {
-        &seg.a.z
-    } else {
-        &seg.b.z
-    } - eps;
-    let max_z = if &seg.a.z > &seg.b.z {
-        &seg.a.z
-    } else {
-        &seg.b.z
-    } + eps;
-
-    p.x >= min_x && p.x <= max_x && p.y >= min_y && p.y <= max_y && p.z >= min_z && p.z <= max_z
+    true
 }

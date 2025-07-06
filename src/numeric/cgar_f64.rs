@@ -154,7 +154,7 @@ impl ToPrimitive for CgarF64 {
 
 impl PartialEq for CgarF64 {
     fn eq(&self, other: &CgarF64) -> bool {
-        self.0 == other.0
+        (self.0 - other.0).abs() < 1e-9
     }
 }
 

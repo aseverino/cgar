@@ -29,5 +29,5 @@ pub mod predicates;
 pub use bigrational_kernel::BigRationalKernel;
 pub use f64_kernel::F64Kernel;
 pub use kernel::{Kernel2, Kernel3};
-pub use orientation::{orient2d, orient3d};
+pub use orientation::orient;
 pub use predicates::*;

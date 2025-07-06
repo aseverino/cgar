@@ -20,16 +20,268 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{geometry::vector::VectorOps, numeric::scalar::Scalar};
+use std::{
+    array,
+    hash::{Hash, Hasher},
+    ops::{Add, AddAssign, Div, Index, IndexMut, Mul, Sub, SubAssign},
+};
 
-pub trait PointOps<T, C>: Sized
-where
-    T: Scalar,
-{
-    type Vector: VectorOps<T, C>;
+use crate::{
+    geometry::{
+        Aabb, FromCoords,
+        spatial_element::SpatialElement,
+        vector::{Vector, VectorOps},
+    },
+    numeric::scalar::Scalar,
+    operations::Zero,
+};
+
+pub trait PointOps<T: Scalar, const N: usize>: Sized {
+    type Vector: VectorOps<T, N>;
 
     fn distance_to(&self, other: &Self) -> T;
     fn sub(&self, other: &Self) -> Self;
     fn as_vector(&self) -> Self::Vector;
     fn add_vector(&self, v: &Self::Vector) -> Self;
 }
+
+#[derive(Clone, Debug)]
+pub struct Point<T: Scalar, const N: usize> {
+    pub coords: [T; N],
+}
+
+impl<T: Scalar, const N: usize> SpatialElement<T, N> for Point<T, N> {
+    fn new(coords: [T; N]) -> Point<T, N> {
+        Point { coords }
+    }
+
+    fn from_vals<V>(vals: [V; N]) -> Point<T, N>
+    where
+        V: Into<T>,
+    {
+        Point {
+            coords: vals.map(|v| v.into()),
+        }
+    }
+}
+
+impl<T: Scalar, const N: usize> Index<usize> for Point<T, N> {
+    type Output = T;
+    fn index(&self, i: usize) -> &Self::Output {
+        &self.coords[i]
+    }
+}
+impl<T: Scalar, const N: usize> IndexMut<usize> for Point<T, N> {
+    fn index_mut(&mut self, i: usize) -> &mut Self::Output {
+        &mut self.coords[i]
+    }
+}
+
+impl<'a, 'b, T, const N: usize> Add<&'b Point<T, N>> for &'a Point<T, N>
+where
+    T: Scalar + for<'c> AddAssign<&'c T>,
+{
+    type Output = Point<T, N>;
+    fn add(self, rhs: &'b Point<T, N>) -> Self::Output {
+        let mut out = self.clone();
+        for i in 0..N {
+            out.coords[i] += &rhs.coords[i];
+        }
+        out
+    }
+}
+
+impl<T, const N: usize> Add for Point<T, N>
+where
+    T: Scalar,
+    for<'a, 'b> &'a Point<T, N>: Add<&'b Point<T, N>, Output = Point<T, N>>,
+{
+    type Output = Point<T, N>;
+    fn add(self, rhs: Point<T, N>) -> Self::Output {
+        // call the ref-impl explicitly
+        <&Point<T, N> as Add<&Point<T, N>>>::add(&self, &rhs)
+    }
+}
+
+impl<'a, 'b, T, const N: usize> Sub<&'b Point<T, N>> for &'a Point<T, N>
+where
+    T: Scalar + for<'c> SubAssign<&'c T>,
+{
+    type Output = Point<T, N>;
+    fn sub(self, rhs: &'b Point<T, N>) -> Self::Output {
+        let mut out = self.clone();
+        for i in 0..N {
+            out.coords[i] -= &rhs.coords[i];
+        }
+        out
+    }
+}
+
+impl<T, const N: usize> Sub for Point<T, N>
+where
+    T: Scalar,
+    for<'a, 'b> &'a Point<T, N>: Sub<&'b Point<T, N>, Output = Point<T, N>>,
+{
+    type Output = Point<T, N>;
+    fn sub(self, rhs: Point<T, N>) -> Self::Output {
+        // call the ref-impl explicitly
+        <&Point<T, N> as Sub<&Point<T, N>>>::sub(&self, &rhs)
+    }
+}
+
+impl<T, const N: usize> Zero for Point<T, N>
+where
+    T: Scalar,
+{
+    fn zero() -> Self {
+        Point {
+            coords: array::from_fn(|_| T::zero()),
+        }
+    }
+}
+
+impl<T> PointOps<T, 2> for Point<T, 2>
+where
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    type Vector = Vector<T, 2>;
+
+    fn distance_to(&self, other: &Self) -> T {
+        let a = (&self[0] - &other[0]).pow(2);
+        let b = (&self[1] - &other[1]).pow(2);
+
+        (a + b).sqrt()
+    }
+
+    fn sub(&self, other: &Self) -> Self {
+        let x = &self[0] - &other[0];
+        let y = &self[1] - &other[1];
+        Self { coords: [x, y] }
+    }
+
+    fn as_vector(&self) -> Self::Vector {
+        Vector(Point::from_vals([self[0].clone(), self[1].clone()]))
+    }
+
+    fn add_vector(&self, v: &Self::Vector) -> Self
+    where
+        T: Scalar,
+    {
+        Point {
+            coords: [&self[0] + &v[0], &self[1] + &v[1]],
+        }
+    }
+}
+
+impl<T> PointOps<T, 3> for Point<T, 3>
+where
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    type Vector = Vector<T, 3>;
+
+    fn distance_to(&self, other: &Self) -> T {
+        let a = (&self[0] - &other[0]).pow(2);
+        let b = (&self[1] - &other[1]).pow(2);
+        let c = (&self[2] - &other[2]).pow(2);
+        let ab = a + b;
+
+        (ab + c).sqrt()
+    }
+
+    fn sub(&self, other: &Self) -> Self {
+        let x = &self[0] - &other[0];
+        let y = &self[1] - &other[1];
+        let z = &self[2] - &other[2];
+        Self { coords: [x, y, z] }
+    }
+
+    fn as_vector(&self) -> Self::Vector {
+        Vector(Point::from_vals([
+            self[0].clone(),
+            self[1].clone(),
+            self[2].clone(),
+        ]))
+    }
+
+    fn add_vector(&self, v: &Self::Vector) -> Self
+    where
+        T: Scalar,
+    {
+        Point {
+            coords: [&self[0] + &v[0], &self[1] + &v[1], &self[2] + &v[2]],
+        }
+    }
+}
+
+impl<T: Scalar, const N: usize> From<[T; N]> for Point<T, N> {
+    fn from(coords: [T; N]) -> Self {
+        Point { coords }
+    }
+}
+
+impl<T: Scalar, const N: usize> Hash for Point<T, N> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for coord in &self.coords {
+            coord.hash(state);
+        }
+    }
+}
+
+impl<T: Scalar, const N: usize> PartialEq for Point<T, N> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.coords.len() != other.coords.len() {
+            return false;
+        }
+        // Compare each coordinate for equality
+        for i in 0..N {
+            if self.coords[i] != other.coords[i] {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<T: Scalar, const N: usize> PartialOrd for Point<T, N> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.coords.len() != other.coords.len() {
+            return None;
+        }
+        for i in 0..N {
+            match self.coords[i].partial_cmp(&other.coords[i]) {
+                Some(std::cmp::Ordering::Equal) => continue,
+                Some(ordering) => return Some(ordering),
+                None => return None,
+            }
+        }
+        Some(std::cmp::Ordering::Equal)
+    }
+}
+
+impl<T: Scalar, const N: usize> FromCoords<T, N> for Point<T, N> {
+    fn from_coords(min_coords: Vec<T>, max_coords: Vec<T>) -> Aabb<T, N, Self> {
+        assert_eq!(min_coords.len(), N);
+        assert_eq!(max_coords.len(), N);
+        // Create the min and max points from the provided coordinates
+        let min = Point {
+            coords: array::from_fn(|i| min_coords[i].clone()),
+        };
+        let max = Point {
+            coords: array::from_fn(|i| max_coords[i].clone()),
+        };
+        Aabb::new(min, max)
+    }
+}
+
+impl<T: Scalar, const N: usize> Eq for Point<T, N> {}
+
+pub type Point2<T> = Point<T, 2>;
+pub type Point3<T> = Point<T, 3>;

@@ -32,12 +32,15 @@ use std::{
     ops::{Add, Div, Mul, Neg, Sub},
 };
 
+use std::fmt::Debug;
+
 pub trait Scalar:
     Clone
     + Add<Output = Self>
     + Sub<Output = Self>
     + Mul<Output = Self>
     + Div<Output = Self>
+    + Debug
     + Abs
     + Pow
     + Sqrt

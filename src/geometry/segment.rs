@@ -22,7 +22,11 @@
 
 use super::Point2;
 use crate::{
-    geometry::{Point3, Vector2, Vector3, point::PointOps, spatial_element::SpatialElement},
+    geometry::{
+        Point3, Vector2, Vector3,
+        point::{Point, PointOps},
+        spatial_element::SpatialElement,
+    },
     numeric::scalar::Scalar,
     operations::{Abs, Pow, Sqrt, Zero},
 };
@@ -30,8 +34,8 @@ use num_traits::ToPrimitive;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Sub};
 
-pub trait SegmentOps<T: Scalar, C>: Sized {
-    type Point: SpatialElement<T> + PointOps<T, C>;
+pub trait SegmentOps<T: Scalar, const N: usize>: Sized {
+    type Point: SpatialElement<T, N> + PointOps<T, N>;
 
     fn a(&self) -> &Self::Point;
     fn b(&self) -> &Self::Point;
@@ -44,19 +48,13 @@ pub trait SegmentOps<T: Scalar, C>: Sized {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Segment2<T>
-where
-    T: Scalar,
-{
-    pub a: Point2<T>,
-    pub b: Point2<T>,
+pub struct Segment<T: Scalar, const N: usize> {
+    pub a: Point<T, N>,
+    pub b: Point<T, N>,
 }
 
-impl<T> Segment2<T>
-where
-    T: Scalar,
-{
-    pub fn new(a: &Point2<T>, b: &Point2<T>) -> Self {
+impl<T: Scalar, const N: usize> Segment<T, N> {
+    pub fn new(a: &Point<T, N>, b: &Point<T, N>) -> Self {
         Self {
             a: a.clone(),
             b: b.clone(),
@@ -64,16 +62,16 @@ where
     }
 }
 
-impl<T> SegmentOps<T, T> for Segment2<T>
+impl<T: Scalar, const N: usize> SegmentOps<T, N> for Segment<T, N>
 where
     T: Scalar,
-    Point2<T>: SpatialElement<T> + PointOps<T, T>,
+    Point<T, N>: PointOps<T, N>,
     for<'c> &'c T: Add<&'c T, Output = T>
         + Sub<&'c T, Output = T>
         + Mul<&'c T, Output = T>
         + Div<&'c T, Output = T>,
 {
-    type Point = Point2<T>;
+    type Point = Point<T, N>;
 
     fn a(&self) -> &Self::Point {
         &self.a
@@ -84,59 +82,24 @@ where
     }
 
     fn midpoint(&self) -> Self::Point {
-        Point2 {
-            x: &(&self.a.x + &self.b.x) / &T::from(2),
-            y: &(&self.a.y + &self.b.y) / &T::from(2),
-        }
+        // Calculate the midpoint by averaging the coordinates of points a and b
+        let coords = (0..N)
+            .map(|i| {
+                let a_coord = &self.a[i];
+                let b_coord = &self.b[i];
+                (a_coord + b_coord) / T::from(2)
+            })
+            .collect::<Vec<_>>();
+        // Create a new Point with the calculated coordinates
+        let a: [T; N] = coords.try_into().expect("Invalid length for Point");
+        Point::from_vals(a)
+
+        // Point::from_vals([
+        //     &(&self.a[0] + &self.b[0]) / &T::from(2),
+        //     &(&self.a[1] + &self.b[1]) / &T::from(2),
+        // ])
     }
 }
 
-/////////////
-#[derive(Debug, Clone, PartialEq)]
-pub struct Segment3<T>
-where
-    T: Scalar,
-{
-    pub a: Point3<T>,
-    pub b: Point3<T>,
-}
-
-impl<T> Segment3<T>
-where
-    T: Scalar,
-{
-    pub fn new(a: &Point3<T>, b: &Point3<T>) -> Self {
-        Self {
-            a: a.clone(),
-            b: b.clone(),
-        }
-    }
-}
-
-impl<T> SegmentOps<T, Vector3<T>> for Segment3<T>
-where
-    T: Scalar,
-    Point3<T>: SpatialElement<T> + PointOps<T, Vector3<T>>,
-    for<'c> &'c T: Add<&'c T, Output = T>
-        + Sub<&'c T, Output = T>
-        + Mul<&'c T, Output = T>
-        + Div<&'c T, Output = T>,
-{
-    type Point = Point3<T>;
-
-    fn a(&self) -> &Self::Point {
-        &self.a
-    }
-
-    fn b(&self) -> &Self::Point {
-        &self.b
-    }
-
-    fn midpoint(&self) -> Self::Point {
-        Point3 {
-            x: &(&self.a.x + &self.b.x) / &T::from(2),
-            y: &(&self.a.y + &self.b.y) / &T::from(2),
-            z: &(&self.a.z + &self.b.z) / &T::from(2),
-        }
-    }
-}
+pub type Segment2<T> = Segment<T, 2>;
+pub type Segment3<T> = Segment<T, 3>;

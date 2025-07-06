@@ -20,19 +20,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::numeric::scalar::Scalar;
 use crate::operations::Zero;
 use std::hash::Hash;
-use std::ops::{Add, Sub};
+use std::ops::{Add, Index, IndexMut, Sub};
 
-pub trait SpatialElement<T>:
+pub trait SpatialElement<T: Scalar, const N: usize>:
     Clone
-    + Add<Output = Self>
-    + Sub<Output = Self>
+    //+ Add<Output = Self>
+    //+ Sub<Output = Self>
+    + Index<usize, Output = T>
+    + IndexMut<usize>
     + Zero
     + Eq
     + PartialEq
     + Hash
     + PartialOrd
-    + From<(T, T, T)>
+    + From<[T; N]>
 {
+    fn new(coords: [T; N]) -> Self;
+
+    fn from_vals<V>(vals: [V; N]) -> Self
+    where
+        V: Into<T>;
 }

@@ -21,11 +21,9 @@
 // SOFTWARE.
 
 use cgar::geometry::segment::Segment3;
+use cgar::geometry::spatial_element::SpatialElement;
 use cgar::geometry::{Point2, Point3, Segment2};
-use cgar::kernel::{
-    BigRationalKernel, F64Kernel, are_collinear_2, are_collinear_3, are_equal_2, are_equal_3,
-    is_point_on_segment_2, is_point_on_segment_3, orient2d, orient3d,
-};
+use cgar::kernel::{are_collinear, are_equal, is_point_on_segment, orient};
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::numeric::cgar_rational::CgarRational;
 use rug::Rational;
@@ -34,47 +32,47 @@ const EPS: f64 = 1e-9;
 
 #[test]
 fn test_orient2d() {
-    let a = Point2::<CgarF64>::new(0.0, 0.0);
-    let b = Point2::<CgarF64>::new(1.0, 0.0);
-    let c = Point2::<CgarF64>::new(0.0, 1.0);
+    let a = Point2::<CgarF64>::from_vals([0.0, 0.0]);
+    let b = Point2::<CgarF64>::from_vals([1.0, 0.0]);
+    let c = Point2::<CgarF64>::from_vals([0.0, 1.0]);
 
-    let res = orient2d(&a, &b, &c);
+    let res = orient(&[a, b, c]);
     assert!(res > CgarF64(0.0));
 }
 
 #[test]
 fn test_are_equal_2() {
-    let a = Point2::<CgarF64>::new(1.0, 2.0);
-    let b = Point2::<CgarF64>::new(1.0 + EPS / 2.0, 2.0);
-    let c = Point2::<CgarF64>::new(1.0 + EPS * 10.0, 2.0);
+    let a = Point2::<CgarF64>::from_vals([1.0, 2.0]);
+    let b = Point2::<CgarF64>::from_vals([1.0 + EPS / 2.0, 2.0]);
+    let c = Point2::<CgarF64>::from_vals([1.0 + EPS * 10.0, 2.0]);
 
-    assert!(are_equal_2(&a, &b, &CgarF64(EPS)));
-    assert!(!are_equal_2(&a, &c, &CgarF64(EPS)));
+    assert!(are_equal(&a, &b, &CgarF64(EPS)));
+    assert!(!are_equal(&a, &c, &CgarF64(EPS)));
 }
 
 #[test]
 fn test_are_collinear_2() {
-    let a = Point2::<CgarF64>::new(0.0, 0.0);
-    let b = Point2::<CgarF64>::new(1.0, 1.0);
-    let c = Point2::<CgarF64>::new(2.0, 2.0);
+    let a = Point2::<CgarF64>::from_vals([0.0, 0.0]);
+    let b = Point2::<CgarF64>::from_vals([1.0, 1.0]);
+    let c = Point2::<CgarF64>::from_vals([2.0, 2.0]);
 
-    assert!(are_collinear_2(&a, &b, &c, &CgarF64(EPS)));
+    assert!(are_collinear(&a, &b, &c, &CgarF64(EPS)));
 
-    let d = Point2::new(2.0, 2.000001);
-    assert!(!are_collinear_2(&a, &b, &d, &CgarF64(EPS)));
+    let d = Point2::from_vals([2.0, 2.000001]);
+    assert!(!are_collinear(&a, &b, &d, &CgarF64(EPS)));
 }
 
 #[test]
 fn test_is_point_on_segment_2() {
     let seg = Segment2::new(
-        &Point2::<CgarF64>::new(0.0, 0.0),
-        &Point2::<CgarF64>::new(2.0, 2.0),
+        &Point2::<CgarF64>::from_vals([0.0, 0.0]),
+        &Point2::from_vals([2.0, 2.0]),
     );
-    let on = Point2::new(1.0, 1.0);
-    let off = Point2::new(3.0, 3.0);
+    let on = Point2::from_vals([1.0, 1.0]);
+    let off = Point2::from_vals([3.0, 3.0]);
 
-    assert!(is_point_on_segment_2(&on, &seg, &CgarF64(EPS)));
-    assert!(!is_point_on_segment_2(&off, &seg, &CgarF64(EPS)));
+    assert!(is_point_on_segment(&on, &seg, &CgarF64(EPS)));
+    assert!(!is_point_on_segment(&off, &seg, &CgarF64(EPS)));
 }
 
 fn eps() -> CgarRational {
@@ -83,63 +81,57 @@ fn eps() -> CgarRational {
 
 #[test]
 fn test_bigrational_orient2d() {
-    let a = Point2::<CgarRational>::new(
-        CgarRational(Rational::from(0)),
-        CgarRational(Rational::from(0)),
-    );
-    let b = Point2::new(
-        CgarRational(Rational::from(1)),
-        CgarRational(Rational::from(0)),
-    );
-    let c = Point2::new(
-        CgarRational(Rational::from(0)),
-        CgarRational(Rational::from(1)),
-    );
+    let a = Point2::<CgarRational>::from_vals([0, 0]);
+    let b = Point2::<CgarRational>::from_vals([1, 0]);
+    let c = Point2::<CgarRational>::from_vals([0, 1]);
 
-    let res = orient2d(&a, &b, &c);
+    let res = orient(&[a, b, c]);
     assert!(res.0 > 0);
 }
 
 #[test]
 fn test_orient3d() {
-    let a = Point3::<CgarF64>::new(0.0, 0.0, 0.0);
-    let b = Point3::new(1.0, 0.0, 0.0);
-    let c = Point3::new(0.0, 1.0, 0.0);
-    let d = Point3::new(0.0, 0.0, 1.0);
+    let a = Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]);
+    let b = Point3::from_vals([1.0, 0.0, 0.0]);
+    let c = Point3::from_vals([0.0, 1.0, 0.0]);
+    let d = Point3::from_vals([0.0, 0.0, 1.0]);
 
-    let res = orient3d(&a, &b, &c, &d);
+    let res = orient(&[a, b, c, d]);
     assert!(res.0 > 0.0);
 }
 
 #[test]
 fn test_are_equal_3() {
-    let p1 = Point3::<CgarF64>::new(1.0, 2.0, 3.0);
-    let p2 = Point3::<CgarF64>::new(1.0 + EPS / 2.0, 2.0, 3.0);
-    let p3 = Point3::<CgarF64>::new(1.0 + EPS * 10.0, 2.0, 3.0);
+    let p1 = Point3::<CgarF64>::from_vals([1.0, 2.0, 3.0]);
+    let p2 = Point3::<CgarF64>::from_vals([1.0 + EPS / 2.0, 2.0, 3.0]);
+    let p3 = Point3::<CgarF64>::from_vals([1.0 + EPS * 10.0, 2.0, 3.0]);
 
-    assert!(are_equal_3(&p1, &p2, &CgarF64(EPS)));
-    assert!(!are_equal_3(&p1, &p3, &CgarF64(EPS)));
+    assert!(are_equal(&p1, &p2, &CgarF64(EPS)));
+    assert!(!are_equal(&p1, &p3, &CgarF64(EPS)));
 }
 
 #[test]
 fn test_are_collinear_3() {
-    let a = Point3::<CgarF64>::new(0.0, 0.0, 0.0);
-    let b = Point3::new(1.0, 1.0, 1.0);
-    let c = Point3::new(2.0, 2.0, 2.0);
-    assert!(are_collinear_3(&a, &b, &c, &CgarF64(EPS)));
+    let a = Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]);
+    let b = Point3::from_vals([1.0, 1.0, 1.0]);
+    let c = Point3::from_vals([2.0, 2.0, 2.0]);
+    assert!(are_collinear(&a, &b, &c, &CgarF64(EPS)));
 
-    let d = Point3::new(2.0, 2.0, 2.000001);
-    assert!(!are_collinear_3(&a, &b, &d, &CgarF64(EPS)));
+    let d = Point3::from_vals([2.0, 2.0, 2.000001]);
+    assert!(!are_collinear(&a, &b, &d, &CgarF64(EPS)));
 }
 
 #[test]
 fn test_is_point_on_segment_3() {
-    let seg = Segment3::<CgarF64>::new(&Point3::new(0.0, 0.0, 0.0), &Point3::new(2.0, 2.0, 2.0));
-    let on = Point3::new(1.0, 1.0, 1.0);
-    let off = Point3::new(3.0, 3.0, 3.0);
+    let seg = Segment3::<CgarF64>::new(
+        &Point3::from_vals([0.0, 0.0, 0.0]),
+        &Point3::from_vals([2.0, 2.0, 2.0]),
+    );
+    let on = Point3::from_vals([1.0, 1.0, 1.0]);
+    let off = Point3::from_vals([3.0, 3.0, 3.0]);
 
-    assert!(is_point_on_segment_3(&on, &seg, &CgarF64(EPS)));
-    assert!(!is_point_on_segment_3(&off, &seg, &CgarF64(EPS)));
+    assert!(is_point_on_segment(&on, &seg, &CgarF64(EPS)));
+    assert!(!is_point_on_segment(&off, &seg, &CgarF64(EPS)));
 }
 
 fn eps_rational() -> CgarRational {
@@ -148,28 +140,12 @@ fn eps_rational() -> CgarRational {
 
 #[test]
 fn test_bigrational_orient3d() {
-    let a = Point3::new(
-        CgarRational(Rational::from(0)),
-        CgarRational(Rational::from(0)),
-        CgarRational(Rational::from(0)),
-    );
-    let b = Point3::new(
-        CgarRational(Rational::from(1)),
-        CgarRational(Rational::from(0)),
-        CgarRational(Rational::from(0)),
-    );
-    let c = Point3::new(
-        CgarRational(Rational::from(0)),
-        CgarRational(Rational::from(1)),
-        CgarRational(Rational::from(0)),
-    );
-    let d = Point3::new(
-        CgarRational(Rational::from(0)),
-        CgarRational(Rational::from(0)),
-        CgarRational(Rational::from(1)),
-    );
+    let a = Point3::<CgarRational>::from_vals([0, 0, 0]);
+    let b = Point3::from_vals([1, 0, 0]);
+    let c = Point3::from_vals([0, 1, 0]);
+    let d = Point3::from_vals([0, 0, 1]);
 
-    let res: CgarRational = orient3d(&a, &b, &c, &d);
+    let res: CgarRational = orient(&[a, b, c, d]);
     // expect positive rational
     assert!(res.0 > Rational::from((0, 1)));
 }

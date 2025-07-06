@@ -20,17 +20,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::mesh::point_trait::PointTrait;
+use crate::{
+    geometry::spatial_element::SpatialElement, mesh::point_trait::PointTrait,
+    numeric::scalar::Scalar,
+};
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub struct Vertex<T, P: PointTrait<T>> {
+pub struct Vertex<T: Scalar, const N: usize, P: SpatialElement<T, N>> {
     pub position: P,
     pub half_edge: Option<usize>,
     _phantom: PhantomData<T>,
 }
 
-impl<T, P: PointTrait<T>> Vertex<T, P> {
+impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Vertex<T, N, P> {
     pub fn new(position: P) -> Self {
         Self {
             position,

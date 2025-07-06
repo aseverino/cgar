@@ -20,49 +20,41 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::geometry::vector::VectorOps;
-use crate::geometry::{Point2, Point3, Vector3};
+use crate::geometry::point::Point;
 use crate::numeric::scalar::Scalar;
-use std::ops::{Add, Div, Mul, Sub};
+use std::{
+    array::from_fn,
+    ops::{Add, Mul, Neg, Sub},
+};
 
 /// Returns:
 /// - >0 if counter-clockwise
 /// - <0 if clockwise
 /// - =0 if collinear
-pub fn orient2d<T>(a: &Point2<T>, b: &Point2<T>, c: &Point2<T>) -> T
+pub fn orient<T, const N: usize>(p: &[Point<T, N>]) -> T
 where
-    T: Scalar,
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar + Neg<Output = T>,
+    for<'a> &'a T: Add<&'a T, Output = T> + Sub<&'a T, Output = T> + Mul<&'a T, Output = T>,
 {
-    &(&(&b.x - &a.x) * &(&c.y - &a.y)) - &(&(&b.y - &a.y) * &(&c.x - &a.x))
-}
+    assert!(p.len() == N + 1, "need N+1 points");
+    // 1. Build an NxN matrix of the difference vectors  (p[i+1] – p[0])
+    let mut m: [[T; N]; N] =
+        from_fn(|row| from_fn(|col| &p[row + 1].coords[col] - &p[0].coords[col]));
 
-pub fn orient3d<T>(a: &Point3<T>, b: &Point3<T>, c: &Point3<T>, d: &Point3<T>) -> T
-where
-    T: Scalar,
-    Vector3<T>: VectorOps<T, Vector3<T>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>,
-{
-    let ab = Vector3 {
-        x: &b.x - &a.x,
-        y: &b.y - &a.y,
-        z: &b.z - &a.z,
-    };
-
-    let ac = Vector3 {
-        x: &c.x - &a.x,
-        y: &c.y - &a.y,
-        z: &c.z - &a.z,
-    };
-
-    let ad = Vector3 {
-        x: &d.x - &a.x,
-        y: &d.y - &a.y,
-        z: &d.z - &a.z,
-    };
-
-    ab.cross(&ac).dot(&ad)
+    // 2. Fraction-free Gaussian elimination → determinant in `det`
+    let mut det = T::one(); // running ±product of pivots
+    for k in 0..N {
+        // pivot = m[k][k];  if zero, determinant is zero
+        if m[k][k].abs() == T::zero() {
+            return T::zero();
+        }
+        for i in (k + 1)..N {
+            for j in (k + 1)..N {
+                //   m[i][j] = m[i][j] * pivot - m[i][k] * m[k][j];
+                m[i][j] = &(&m[i][j] * &m[k][k]) - &(&m[i][k] * &m[k][j]);
+            }
+        }
+        det = det * m[k][k].clone();
+    }
+    det
 }

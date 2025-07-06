@@ -22,16 +22,14 @@
 
 use crate::{
     geometry::{
-        Point2, Point3, Segment2, Segment3, Vector3, spatial_element::SpatialElement,
+        Point2, Point3, Segment2, Segment3, Vector3, point::Point, spatial_element::SpatialElement,
         vector::VectorOps,
     },
-    kernel::are_collinear_3,
-    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    kernel::{are_collinear, orient},
+    numeric::scalar::Scalar,
     operations::{Abs, Zero},
 };
 use std::ops::{Add, Div, Mul, Sub};
-
-use crate::kernel::{are_collinear_2, orient2d};
 
 #[derive(Debug, Clone)]
 pub enum SegmentIntersection2<T>
@@ -85,10 +83,10 @@ where
     let c = &seg2.a;
     let d = &seg2.b;
 
-    let o1 = orient2d(&a, &b, &c);
-    let o2 = orient2d(&a, &b, &d);
-    let o3 = orient2d(&c, &d, &a);
-    let o4 = orient2d(&c, &d, &b);
+    let o1 = orient(&[a.clone(), b.clone(), c.clone()]);
+    let o2 = orient(&[a.clone(), b.clone(), d.clone()]);
+    let o3 = orient(&[c.clone(), d.clone(), a.clone()]);
+    let o4 = orient(&[c.clone(), d.clone(), b.clone()]);
 
     let zero = T::zero();
 
@@ -97,10 +95,10 @@ where
     if intersecting {
         if o1.abs() > eps || o2.abs() > eps || o3.abs() > eps || o4.abs() > eps {
             // Proper intersection — compute the intersection point
-            let (x1, y1) = (&a.x, &a.y);
-            let (x2, y2) = (&b.x, &b.y);
-            let (x3, y3) = (&c.x, &c.y);
-            let (x4, y4) = (&d.x, &d.y);
+            let (x1, y1) = (&a[0], &a[1]);
+            let (x2, y2) = (&b[0], &b[1]);
+            let (x3, y3) = (&c[0], &c[1]);
+            let (x4, y4) = (&d[0], &d[1]);
 
             let denom = &(&(x1 - x2) * &(y3 - y4)) - &(&(y1 - y2) * &(x3 - x4));
             if denom.abs() < eps {
@@ -115,17 +113,22 @@ where
             let px = &px_num / &denom;
             let py = &py_num / &denom;
 
-            return SegmentIntersection2::Point(Point2::<T>::new(px, py));
+            return SegmentIntersection2::Point(Point::<T, 2>::from_vals([px, py]));
         }
 
         // Collinear case
-        if are_collinear_2(&a, &b, &c, &eps) {
+        if are_collinear(&a, &b, &c, &eps) {
             // Compute overlapping segment
             let mut pts = [a, b, c, d];
             pts.sort_by(|p1, p2| {
-                p1.x.partial_cmp(&p2.x)
+                p1[0]
+                    .partial_cmp(&p2[0])
                     .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(p1.y.partial_cmp(&p2.y).unwrap_or(std::cmp::Ordering::Equal))
+                    .then(
+                        p1[1]
+                            .partial_cmp(&p2[1])
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                    )
             });
 
             let s = Segment2::new(&pts[1], &pts[2]);
@@ -180,22 +183,22 @@ where
     let q2 = &seg2.b;
 
     // Direction vectors
-    let d1 = Vector3 {
-        x: &p2.x - &p1.x,
-        y: &p2.y - &p1.y,
-        z: &p2.z - &p1.z,
-    };
-    let d2 = Vector3 {
-        x: &q2.x - &q1.x,
-        y: &q2.y - &q1.y,
-        z: &q2.z - &q1.z,
-    };
+    let d1 = Vector3::from(Point3::from_vals([
+        &p2[0] - &p1[0],
+        &p2[1] - &p1[1],
+        &p2[2] - &p1[2],
+    ]));
+    let d2 = Vector3::from(Point3::from_vals([
+        &q2[0] - &q1[0],
+        &q2[1] - &q1[1],
+        &q2[2] - &q1[2],
+    ]));
 
-    let r = Vector3 {
-        x: &p1.x - &q1.x,
-        y: &p1.y - &q1.y,
-        z: &p1.z - &q1.z,
-    };
+    let r = Vector3::from(Point3::from_vals([
+        &p1[0] - &q1[0],
+        &p1[1] - &q1[1],
+        &p1[2] - &q1[2],
+    ]));
 
     // Dot products
     let a = d1.dot(&d1); // squared length of d1
@@ -214,14 +217,23 @@ where
         (s, t)
     } else {
         // Segments are parallel — handle collinear case
-        if are_collinear_3(p1, p2, q1, &eps) {
+        if are_collinear(p1, p2, q1, &eps) {
             // Sort points by x (then y then z)
             let mut pts = [p1, p2, q1, q2];
             pts.sort_by(|p1, p2| {
-                p1.x.partial_cmp(&p2.x)
+                p1[0]
+                    .partial_cmp(&p2[0])
                     .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(p1.y.partial_cmp(&p2.y).unwrap_or(std::cmp::Ordering::Equal))
-                    .then(p1.z.partial_cmp(&p2.z).unwrap_or(std::cmp::Ordering::Equal))
+                    .then(
+                        p1[1]
+                            .partial_cmp(&p2[1])
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                    )
+                    .then(
+                        p1[2]
+                            .partial_cmp(&p2[2])
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                    )
             });
             return SegmentIntersection3::Overlapping(Segment3 {
                 a: pts[1].clone(),
@@ -249,21 +261,21 @@ where
         t
     };
 
-    let closest_p = Point3 {
-        x: &p1.x + &(&d1.x * &s_clamped),
-        y: &p1.y + &(&d1.y * &s_clamped),
-        z: &p1.z + &(&d1.z * &s_clamped),
-    };
+    let closest_p = Point3::from_vals([
+        &p1[0] + &(&d1[0] * &s_clamped),
+        &p1[1] + &(&d1[1] * &s_clamped),
+        &p1[2] + &(&d1[2] * &s_clamped),
+    ]);
 
-    let closest_q = Point3 {
-        x: &q1.x + &(&d2.x * &t_clamped),
-        y: &q1.y + &(&d2.y * &t_clamped),
-        z: &q1.z + &(&d2.z * &t_clamped),
-    };
+    let closest_q = Point3::from_vals([
+        &q1[0] + &(&d2[0] * &t_clamped),
+        &q1[1] + &(&d2[1] * &t_clamped),
+        &q1[2] + &(&d2[2] * &t_clamped),
+    ]);
 
-    let dx = &closest_p.x - &closest_q.x;
-    let dy = &closest_p.y - &closest_q.y;
-    let dz = &closest_p.z - &closest_q.z;
+    let dx = &closest_p[0] - &closest_q[0];
+    let dy = &closest_p[1] - &closest_q[1];
+    let dz = &closest_p[2] - &closest_q[2];
 
     let dist_squared = &(&(&dx * &dx) + &(&dy * &dy)) + &(&dz * &dz);
 

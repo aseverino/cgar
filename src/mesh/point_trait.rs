@@ -28,7 +28,7 @@ use crate::{
     operations::{Abs, Pow, Sqrt},
 };
 
-pub trait PointTrait<T>: Clone {
+pub trait PointTrait<T, const N: usize>: Clone {
     fn dimensions() -> usize;
     fn coord(&self, axis: usize) -> T;
 }
