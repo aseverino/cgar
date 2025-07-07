@@ -272,7 +272,11 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     pub fn face_vertices(&self, f: usize) -> Vec<usize> {
         self.face_half_edges(f)
             .into_iter()
-            .map(|he| self.half_edges[he].vertex)
+            .map(|he| {
+                // origin of this half-edge is the “vertex” stored on its prev half-edge
+                let prev_he = self.half_edges[he].prev;
+                self.half_edges[prev_he].vertex
+            })
             .collect()
     }
 
