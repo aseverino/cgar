@@ -30,7 +30,7 @@ use cgar::numeric::cgar_rational::CgarRational;
 
 #[test]
 fn test_add_vertices_and_triangle_2() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
@@ -62,7 +62,7 @@ fn test_add_vertices_and_triangle_2() {
 
 #[test]
 fn test_add_vertices_and_triangle_3() {
-    let mut mesh = Mesh::<CgarF64, 3, Point3<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 3>::new();
 
     let v0 = mesh.add_vertex(Point3::from_vals([0.0, 0.0, 0.0]));
     let v1 = mesh.add_vertex(Point3::from_vals([1.0, 0.0, 0.0]));
@@ -103,7 +103,7 @@ fn test_add_vertices_and_triangle_3() {
 
 #[test]
 fn test_add_vertices_and_triangle_2_rational() {
-    let mut mesh = Mesh::<CgarRational, 2, Point2<CgarRational>>::new();
+    let mut mesh = Mesh::<CgarRational, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0, 0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1, 0]));
@@ -135,7 +135,7 @@ fn test_add_vertices_and_triangle_2_rational() {
 
 #[test]
 fn test_add_vertices_and_triangle_3_rational() {
-    let mut mesh = Mesh::<CgarRational, 3, Point3<CgarRational>>::new();
+    let mut mesh = Mesh::<CgarRational, 3>::new();
 
     let v0 = mesh.add_vertex(Point3::from_vals([0, 0, 0]));
     let v1 = mesh.add_vertex(Point3::from_vals([1, 0, 0]));
@@ -167,7 +167,7 @@ fn test_add_vertices_and_triangle_3_rational() {
 
 #[test]
 fn test_connected_two_triangles_2() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
@@ -237,7 +237,7 @@ fn test_connected_two_triangles_2() {
 
 #[test]
 fn test_connected_two_triangles_3() {
-    let mut mesh = Mesh::<CgarF64, 3, Point3<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 3>::new();
 
     let v0 = mesh.add_vertex(Point3::from_vals([0.0, 0.0, 0.0]));
     let v1 = mesh.add_vertex(Point3::from_vals([1.0, 0.0, 0.0]));
@@ -307,7 +307,7 @@ fn test_connected_two_triangles_3() {
 
 #[test]
 fn test_connected_two_triangles_2_rational() {
-    let mut mesh = Mesh::<CgarRational, 2, Point2<CgarRational>>::new();
+    let mut mesh = Mesh::<CgarRational, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0, 0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1, 0]));
@@ -378,7 +378,7 @@ fn test_connected_two_triangles_2_rational() {
 
 #[test]
 fn test_connected_two_triangles_3_rational() {
-    let mut mesh = Mesh::<CgarRational, 3, Point3<CgarRational>>::new();
+    let mut mesh = Mesh::<CgarRational, 3>::new();
 
     let v0 = mesh.add_vertex(Point3::from_vals([0, 0, 0]));
     let v1 = mesh.add_vertex(Point3::from_vals([1, 0, 0]));
@@ -449,7 +449,7 @@ fn test_connected_two_triangles_3_rational() {
 
 #[test]
 fn test_build_boundary_loops() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
@@ -478,7 +478,7 @@ fn test_build_boundary_loops() {
 
 #[test]
 fn test_face_loop_traversal() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
@@ -504,7 +504,7 @@ fn test_face_loop_traversal() {
 
 #[test]
 fn test_boundary_detection_and_loops() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
@@ -538,7 +538,7 @@ fn test_boundary_detection_and_loops() {
 
 #[test]
 fn test_edge_flip() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
@@ -570,7 +570,7 @@ fn test_edge_flip() {
 
 #[test]
 fn test_edge_collapse_rebuild() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
@@ -600,7 +600,7 @@ fn test_edge_collapse_rebuild() {
 
 #[test]
 fn test_edge_split_rebuild() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
@@ -652,7 +652,7 @@ fn is_cycle_equal<T: PartialEq>(cycle: &[T], target: &[T]) -> bool {
 
 #[test]
 fn add_triangle_3d_basics() {
-    let mut mesh: Mesh<CgarF64, 3, Point3<CgarF64>> = Mesh::new();
+    let mut mesh: Mesh<CgarF64, 3> = Mesh::new();
 
     // create a single triangle in the z=0 plane
     let v0 = mesh.add_vertex(Point3::from_vals([0.0, 0.0, 0.0]));
@@ -688,7 +688,7 @@ fn add_triangle_3d_basics() {
 
 #[test]
 fn boundary_loops_3d() {
-    let mut mesh: Mesh<CgarF64, 3, Point3<CgarF64>> = Mesh::new();
+    let mut mesh: Mesh<CgarF64, 3> = Mesh::new();
 
     // same single triangle: open boundary
     let v0 = mesh.add_vertex(Point3::from_vals([0.0, 0.0, 0.0]));
@@ -711,7 +711,7 @@ fn boundary_loops_3d() {
 
 #[test]
 fn one_ring_neighbors_3d() {
-    let mut mesh: Mesh<CgarF64, 3, Point3<CgarF64>> = Mesh::new();
+    let mut mesh: Mesh<CgarF64, 3> = Mesh::new();
 
     // build two triangles sharing edge v0–v1, forming a quad
     let v0 = mesh.add_vertex(Point3::from_vals([0.0, 0.0, 0.0]));
@@ -734,7 +734,7 @@ fn one_ring_neighbors_3d() {
 
 #[test]
 fn test_face_area_and_centroid_2d() {
-    let mut mesh = Mesh::<CgarF64, 2, Point2<CgarF64>>::new();
+    let mut mesh = Mesh::<CgarF64, 2>::new();
 
     // Build a single right‐triangle (v0=(0,0), v1=(1,0), v2=(0,1))
     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
