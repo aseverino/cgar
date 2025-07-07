@@ -43,4 +43,7 @@ pub trait SpatialElement<T: Scalar, const N: usize>:
     fn from_vals<V>(vals: [V; N]) -> Self
     where
         V: Into<T>;
+
+    fn coords(&self) -> &[T; N];
+    fn iter(&self) -> std::slice::Iter<'_, T>;
 }

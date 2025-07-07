@@ -21,7 +21,13 @@
 // SOFTWARE.
 
 use crate::{
-    geometry::{Aabb, FromCoords, spatial_element::SpatialElement},
+    geometry::{
+        Aabb, AabbTree, Point3,
+        point::{Point, PointOps},
+        segment::{Segment, SegmentOps},
+        spatial_element::SpatialElement,
+        tri_tri_intersect::tri_tri_intersection,
+    },
     numeric::scalar::Scalar,
 };
 
@@ -38,15 +44,15 @@ pub enum BooleanOp {
 }
 
 #[derive(Debug, Clone)]
-pub struct Mesh<T: Scalar, const N: usize, P: SpatialElement<T, N>> {
-    pub vertices: Vec<Vertex<T, N, P>>,
+pub struct Mesh<T: Scalar, const N: usize> {
+    pub vertices: Vec<Vertex<T, N>>,
     pub half_edges: Vec<HalfEdge>,
     pub faces: Vec<Face>,
 
     pub edge_map: HashMap<(usize, usize), usize>,
 }
 
-impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Mesh<T, N, P> {
+impl<T: Scalar, const N: usize> Mesh<T, N> {
     pub fn new() -> Self {
         Self {
             vertices: Vec::new(),
@@ -57,10 +63,9 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Mesh<T, N, P> {
     }
 
     /// Compute the AABB of face `f`.
-    pub fn face_aabb(&self, f: usize) -> Aabb<T, N, P>
+    pub fn face_aabb(&self, f: usize) -> Aabb<T, N, Point<T, N>>
     where
         T: Scalar,
-        P: SpatialElement<T, 3> + FromCoords<T, 3>,
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
             + Add<&'a T, Output = T>
@@ -74,7 +79,7 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Mesh<T, N, P> {
         Aabb::from_points(p0, p1).union(&Aabb::from_points(p1, p2))
     }
 
-    pub fn add_vertex(&mut self, position: P) -> usize {
+    pub fn add_vertex(&mut self, position: Point<T, N>) -> usize {
         let idx = self.vertices.len();
         self.vertices.push(Vertex::new(position));
         idx
@@ -444,7 +449,11 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Mesh<T, N, P> {
     /// Splits the interior edge `he` by inserting a new vertex at `pos`.
     /// The two adjacent triangles are each subdivided into two, yielding
     /// four faces in place of the original two.  Returns the new vertex index.
-    pub fn split_edge_rebuild(&mut self, he: usize, pos: P) -> Result<usize, &'static str> {
+    pub fn split_edge_rebuild(
+        &mut self,
+        he: usize,
+        pos: Point<T, N>,
+    ) -> Result<usize, &'static str> {
         // 1) Pre-flight checks
         let he_twin = self.half_edges[he].twin;
         if he_twin == usize::MAX {
@@ -454,7 +463,8 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Mesh<T, N, P> {
         let f1 = self.half_edges[he_twin].face.ok_or("twin has no face")?;
 
         // 2) Gather old vertex positions
-        let mut old_positions: Vec<P> = self.vertices.iter().map(|v| v.position.clone()).collect();
+        let mut old_positions: Vec<Point<T, N>> =
+            self.vertices.iter().map(|v| v.position.clone()).collect();
         // the new vertex gets the next index in that list
         let new_old_idx = old_positions.len();
         old_positions.push(pos.clone());
@@ -523,182 +533,155 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Mesh<T, N, P> {
         Ok(new_old_idx)
     }
 
-    // pub fn boolean(&self, other: &Mesh<T, P>, op: BooleanOp) -> Mesh<T, P>
-    // where
-    //     T: Scalar,
-    //     P: SpatialElement<T> + PointOps<T, Vector3<T>> + PointTrait<T> + FromCoords<T>,
-    //     P::Vector: VectorOps<T, Vector3<T>> + From<Point3<T>> + From<(T, T, T)>,
-    //     Vector3<T>: From<P::Vector>,
-    //     for<'a> &'a T: Sub<&'a T, Output = T>
-    //         + Mul<&'a T, Output = T>
-    //         + Add<&'a T, Output = T>
-    //         + Div<&'a T, Output = T>,
-    // {
-    //     // 1) Make working copies and ensure boundary‐loops are built
-    //     let mut a = self.clone();
-    //     let mut b = other.clone();
-    //     a.build_boundary_loops();
-    //     b.build_boundary_loops();
+    /// Split face `f` so that the segment `p0→p1` lies along its edges.
+    /// You can:
+    ///  - find which edges of `f` each point lies on (or if equal to a vertex),
+    ///  - call your in‐place `split_edge` on those edges,
+    ///  - repeat until both p0 & p1 are actual vertices of `a`.
+    fn split_segment_on_face(&mut self, f: usize, p0: Point<T, N>, p1: Point<T, N>)
+    where
+        T: Scalar,
+        Point<T, N>: SpatialElement<T, N> + PointOps<T, N>,
+        Segment<T, N>: SegmentOps<T, N>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        // We’ll insert each point in turn.
+        for point in [p0, p1].into_iter() {
+            // 1) Walk the half-edge cycle around face `f`
+            let start_he = self.faces[f].half_edge;
+            let mut he = start_he;
+            loop {
+                let v_from = self.half_edges[he].prev; // he.prev → origin of this he
+                let v_to = self.half_edges[he].vertex; // he.vertex → dest of this he
+                let p_from =
+                    Point::<T, N>::from_vals(self.vertices[v_from].position.coords().clone());
+                let p_to = Point::<T, N>::from_vals(self.vertices[v_to].position.coords().clone());
+                let point_a = Point::<T, N>::from_vals(p_from.coords().clone());
+                let point_b = Point::<T, N>::from_vals(p_to.coords().clone());
 
-    //     // 2) Build an AABB‐tree over b’s faces
-    //     let mut items_b = Vec::new();
-    //     for fb in 0..b.faces.len() {
-    //         let ab = b.face_aabb(fb);
-    //         items_b.push((ab, fb));
-    //     }
-    //     let tree_b = AabbTree::build(items_b);
+                // 2) If the point exactly matches an existing vertex, we’re done.
+                if point == p_from || point == p_to {
+                    break;
+                }
 
-    //     // 3) Collect all intersection segments (fa, fb, p0, p1)
-    //     let mut segments: Vec<(usize, usize, P, P)> = Vec::new();
-    //     for fa in 0..a.faces.len() {
-    //         let ab_a = a.face_aabb(fa);
-    //         let mut cands = Vec::new();
-    //         tree_b.query(&ab_a, &mut cands);
+                let segment = Segment::new(&point_a, &point_b);
 
-    //         let fv = a.face_vertices(fa);
-    //         if fv.len() != 3 {
-    //             panic!("Expected a triangle face");
-    //         }
-    //         let pa0 = a.vertices[fv[0]].position.clone();
-    //         let pa1 = a.vertices[fv[1]].position.clone();
-    //         let pa2 = a.vertices[fv[2]].position.clone();
+                // 3) Otherwise, if it lies on this edge, split it here.
+                if segment.is_point_on(&point) {
+                    // split_edge returns the index of the new vertex
+                    let _new_vid = self.split_edge_rebuild(he, point);
+                    break;
+                }
 
-    //         for &fb in &cands {
-    //             let face_vs = b.face_vertices(*fb);
-    //             let qb0 = b.vertices[face_vs[0]].position.clone();
-    //             let qb1 = b.vertices[face_vs[1]].position.clone();
-    //             let qb2 = b.vertices[face_vs[2]].position.clone();
+                // 4) Advance to the next boundary half‐edge of face `f`
+                he = self.half_edges[he].next;
+                if he == start_he {
+                    panic!(
+                        "split_segment_on_face: point {:?} did not lie on face {} boundary",
+                        point, f
+                    );
+                }
+            }
+        }
+    }
 
-    //             if let Some((i0, i1)) = tri_tri_intersection(&pa0, &pa1, &pa2, &qb0, &qb1, &qb2) {
-    //                 segments.push((fa, *fb, i0, i1));
-    //             }
-    //         }
-    //     }
-
-    //     // 4) Split each mesh along those segments so they become conforming
-    //     for (fa, _fb, p, q) in &segments {
-    //         a.split_segment_on_face(*fa, p.clone(), q.clone());
-    //     }
-    //     for (_fa, fb, p, q) in &segments {
-    //         b.split_segment_on_face(*fb, p.clone(), q.clone());
-    //     }
-
-    //     // 5) Classification: keep faces according to `op`
-    //     let mut result = Mesh::new();
-    //     // append all vertices/faces of a into result
-    //     // (you’ll need a helper that bulk‐copies meshes, or just re‐add)
-    //     // then for each face of b:
-    //     //    compute its centroid
-    //     //    let inside = result.point_in_mesh(&centroid)
-    //     //    if matches(op, inside) then append that face
-
-    //     // 6) Rebuild twins/boundaries and return
-    //     result.build_boundary_loops();
-    //     result
-    // }
-
-    // /// Split face `f` so that the segment `p0→p1` lies along its edges.
-    // /// You can:
-    // ///  - find which edges of `f` each point lies on (or if equal to a vertex),
-    // ///  - call your in‐place `split_edge` on those edges,
-    // ///  - repeat until both p0 & p1 are actual vertices of `a`.
-    // fn split_segment_on_face(&mut self, f: usize, p0: P, p1: P)
-    // where
-    //     T: Scalar,
-    //     for<'a> &'a T: Sub<&'a T, Output = T>
-    //         + Add<&'a T, Output = T>
-    //         + Mul<&'a T, Output = T>
-    //         + Div<&'a T, Output = T>,
-    //     P: PointTrait<T> + FromCoords<T> + SpatialElement<T>,
-    // {
-    //     // We’ll insert each point in turn.
-    //     for point in [p0, p1].into_iter() {
-    //         // 1) Walk the half-edge cycle around face `f`
-    //         let start_he = self.faces[f].half_edge;
-    //         let mut he = start_he;
-    //         loop {
-    //             let v_from = self.half_edges[he].prev; // he.prev → origin of this he
-    //             let v_to = self.half_edges[he].vertex; // he.vertex → dest of this he
-    //             let p_from = &self.vertices[v_from].position;
-    //             let p_to = &self.vertices[v_to].position;
-
-    //             // 2) If the point exactly matches an existing vertex, we’re done.
-    //             if point == *p_from || point == *p_to {
-    //                 break;
-    //             }
-
-    //             // 3) Otherwise, if it lies on this edge, split it here.
-    //             if point_on_segment_3d(&point, p_from, p_to) {
-    //                 // split_edge returns the index of the new vertex
-    //                 let _new_vid = self.split_edge_rebuild(he, point.clone());
-    //                 break;
-    //             }
-
-    //             // 4) Advance to the next boundary half‐edge of face `f`
-    //             he = self.half_edges[he].next;
-    //             if he == start_he {
-    //                 // panic!(
-    //                 //     "split_segment_on_face: point {:?} did not lie on face {} boundary",
-    //                 //     point, f
-    //                 // );
-    //             }
-    //         }
-    //     }
-    // }
-
-    // /// Test if `point` lies inside this mesh (using ray‐cast + AABB‐tree).
-    // fn point_in_mesh(&self, point: &P) -> bool {
-    //     // TODO:
-    //     // 1) Build/rerun an AABB‐tree on faces if you don’t have one.
-    //     // 2) Cast a ray in any direction, count face crossings.
-    //     // 3) Return `count % 2 == 1`.
-    //     false
-    // }
+    /// Test if `point` lies inside this mesh (using ray‐cast + AABB‐tree).
+    fn _point_in_mesh(&self, _point: &Point<T, N>) -> bool {
+        // TODO:
+        // 1) Build/rerun an AABB‐tree on faces if you don’t have one.
+        // 2) Cast a ray in any direction, count face crossings.
+        // 3) Return `count % 2 == 1`.
+        false
+    }
 }
 
-// /// Test whether `p` lies on the segment [a→b] in 3D.
-// /// For floats, use an ε; for exact rationals you can do an exact check.
-// fn point_on_segment_3d<P, T>(p: &P, a: &P, b: &P) -> bool
-// where
-//     T: Scalar,
-//     P: SpatialElement<T> + PointTrait<T> + FromCoords<T>,
-//     for<'a> &'a T: Sub<&'a T, Output = T>
-//         + Add<&'a T, Output = T>
-//         + Mul<&'a T, Output = T>
-//         + Div<&'a T, Output = T>,
-// {
-//     // convert to 3D coordinates
-//     let coords_p: Vec<T> = (0..P::dimensions()).map(|i| p.coord(i).clone()).collect();
-//     let coords_a: Vec<T> = (0..P::dimensions()).map(|i| a.coord(i).clone()).collect();
-//     let coords_b: Vec<T> = (0..P::dimensions()).map(|i| b.coord(i).clone()).collect();
+pub trait BooleanImpl<T>
+where
+    T: Scalar,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn boolean(&self, other: &Self, op: BooleanOp) -> Self;
+}
 
-//     // 1) Check collinearity: (p - a) × (b - a) == 0 vector
-//     //    but in N dims, we check that (p - a) is a scalar multiple of (b - a)
-//     let mut t_opt: Option<T> = None;
-//     for i in 0..coords_p.len() {
-//         let da = &coords_p[i] - &coords_a[i];
-//         let db = &coords_b[i] - &coords_a[i];
-//         if db != T::zero() {
-//             // t = da / db must be the same for all coords where db != 0
-//             let t = &da / &db;
-//             if let Some(prev_t) = &t_opt {
-//                 if (&t - &prev_t).abs() > T::from(1e-8) {
-//                     return false;
-//                 }
-//             } else {
-//                 t_opt = Some(t);
-//             }
-//         } else if da != T::zero() {
-//             // b - a = 0 in this dim but p - a != 0 ⇒ off the line
-//             return false;
-//         }
-//     }
+impl<T: Scalar> BooleanImpl<T> for Mesh<T, 3>
+where
+    T: Scalar,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    /// Test whether the triangle `t` intersects the triangle `u`.
+    fn boolean(&self, other: &Mesh<T, 3>, _op: BooleanOp) -> Mesh<T, 3> {
+        // 1) Make working copies and ensure boundary‐loops are built
+        let mut a = self.clone();
+        let mut b = other.clone();
+        a.build_boundary_loops();
+        b.build_boundary_loops();
 
-//     // 2) Check 0 <= t <= 1 for the scalar factor
-//     if let Some(t) = t_opt {
-//         t >= T::zero() && t <= T::one()
-//     } else {
-//         // degenerate edge a==b; only true if p==a
-//         coords_p == coords_a
-//     }
-// }
+        // 2) Build an AABB‐tree over b’s faces
+        let mut items_b = Vec::new();
+        for fb in 0..b.faces.len() {
+            let ab = b.face_aabb(fb);
+            items_b.push((ab, fb));
+        }
+        let tree_b = AabbTree::build(items_b);
+
+        // 3) Collect all intersection segments (fa, fb, p0, p1)
+        let mut segments: Vec<(usize, usize, Point3<T>, Point3<T>)> = Vec::new();
+        for fa in 0..a.faces.len() {
+            let ab_a = a.face_aabb(fa);
+            let mut cands = Vec::new();
+            tree_b.query(&ab_a, &mut cands);
+
+            let fv = a.face_vertices(fa);
+            if fv.len() != 3 {
+                panic!("Expected a triangle face");
+            }
+            let pa0 = Point::<T, 3>::from_vals(a.vertices[fv[0]].position.coords().clone());
+            let pa1 = Point::<T, 3>::from_vals(a.vertices[fv[1]].position.coords().clone());
+            let pa2 = Point::<T, 3>::from_vals(a.vertices[fv[2]].position.coords().clone());
+
+            for &fb in &cands {
+                let face_vs = b.face_vertices(*fb);
+                let qb0 =
+                    Point::<T, 3>::from_vals(b.vertices[face_vs[0]].position.coords().clone());
+                let qb1 =
+                    Point::<T, 3>::from_vals(b.vertices[face_vs[1]].position.coords().clone());
+                let qb2 =
+                    Point::<T, 3>::from_vals(b.vertices[face_vs[2]].position.coords().clone());
+
+                if let Some((i0, i1)) = tri_tri_intersection(&pa0, &pa1, &pa2, &qb0, &qb1, &qb2) {
+                    segments.push((fa, *fb, i0, i1));
+                }
+            }
+        }
+
+        // 4) Split each mesh along those segments so they become conforming
+        for (fa, _fb, p, q) in &segments {
+            a.split_segment_on_face(*fa, p.clone(), q.clone());
+        }
+        for (_fa, fb, p, q) in &segments {
+            b.split_segment_on_face(*fb, p.clone(), q.clone());
+        }
+
+        // 5) Classification: keep faces according to `op`
+        let mut result = Mesh::new();
+        // append all vertices/faces of a into result
+        // (you’ll need a helper that bulk‐copies meshes, or just re‐add)
+        // then for each face of b:
+        //    compute its centroid
+        //    let inside = result.point_in_mesh(&centroid)
+        //    if matches(op, inside) then append that face
+
+        // 6) Rebuild twins/boundaries and return
+        result.build_boundary_loops();
+        result
+    }
+}

@@ -20,18 +20,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{geometry::spatial_element::SpatialElement, numeric::scalar::Scalar};
+use crate::{geometry::point::Point, numeric::scalar::Scalar};
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub struct Vertex<T: Scalar, const N: usize, P: SpatialElement<T, N>> {
-    pub position: P,
+pub struct Vertex<T: Scalar, const N: usize> {
+    pub position: Point<T, N>,
     pub half_edge: Option<usize>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Vertex<T, N, P> {
-    pub fn new(position: P) -> Self {
+impl<T: Scalar, const N: usize> Vertex<T, N> {
+    pub fn new(position: Point<T, N>) -> Self {
         Self {
             position,
             half_edge: None,

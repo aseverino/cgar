@@ -29,17 +29,19 @@ use crate::{
 };
 use std::ops::{Add, Div, Mul, Sub};
 
-pub trait SegmentOps<T: Scalar, const N: usize>: Sized {
-    type Point: SpatialElement<T, N> + PointOps<T, N>;
-
-    fn a(&self) -> &Self::Point;
-    fn b(&self) -> &Self::Point;
+pub trait SegmentOps<T: Scalar, const N: usize>: Sized
+where
+    Point<T, N>: SpatialElement<T, N> + PointOps<T, N>,
+{
+    fn a(&self) -> &Point<T, N>;
+    fn b(&self) -> &Point<T, N>;
 
     fn length(&self) -> T {
         self.a().distance_to(self.b())
     }
 
-    fn midpoint(&self) -> Self::Point;
+    fn midpoint(&self) -> Point<T, N>;
+    fn is_point_on(&self, p: &Point<T, N>) -> bool;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,17 +68,15 @@ where
         + Mul<&'c T, Output = T>
         + Div<&'c T, Output = T>,
 {
-    type Point = Point<T, N>;
-
-    fn a(&self) -> &Self::Point {
+    fn a(&self) -> &Point<T, N> {
         &self.a
     }
 
-    fn b(&self) -> &Self::Point {
+    fn b(&self) -> &Point<T, N> {
         &self.b
     }
 
-    fn midpoint(&self) -> Self::Point {
+    fn midpoint(&self) -> Point<T, N> {
         // Calculate the midpoint by averaging the coordinates of points a and b
         let coords = (0..N)
             .map(|i| {
@@ -93,6 +93,35 @@ where
         //     &(&self.a[0] + &self.b[0]) / &T::from(2),
         //     &(&self.a[1] + &self.b[1]) / &T::from(2),
         // ])
+    }
+
+    fn is_point_on(&self, p: &Point<T, N>) -> bool {
+        let mut t_opt: Option<T> = None;
+
+        for i in 0..N {
+            let da = &p[i] - &self.a[i];
+            let db = &self.b[i] - &self.a[i];
+
+            if db != T::zero() {
+                let t = &da / &db;
+                if let Some(prev_t) = &t_opt {
+                    if (&t - &prev_t).abs() > T::from(1e-8) {
+                        return false;
+                    }
+                } else {
+                    t_opt = Some(t);
+                }
+            } else if da != T::zero() {
+                return false;
+            }
+        }
+
+        if let Some(t) = &t_opt {
+            t >= &T::zero() && t <= &T::one()
+        } else {
+            // a == b; degenerate segment
+            p.iter().zip(self.a.iter()).all(|(p, a)| p == a)
+        }
     }
 }
 

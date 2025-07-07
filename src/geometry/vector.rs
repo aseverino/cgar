@@ -59,6 +59,14 @@ impl<T: Scalar, const N: usize> SpatialElement<T, N> for Vector<T, N> {
     {
         Vector(Point::from_vals(vals.map(|v| v.into())))
     }
+
+    fn coords(&self) -> &[T; N] {
+        &self.0.coords
+    }
+
+    fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.coords.iter()
+    }
 }
 
 // conveniences
