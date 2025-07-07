@@ -34,7 +34,7 @@ pub mod vector;
 //pub mod vector_2;
 //pub mod vector_3;
 
-pub use aabb::{Aabb, FromCoords};
+pub use aabb::Aabb;
 pub use aabb_tree::AabbTree;
 pub use intersection::{
     SegmentIntersection2, SegmentIntersection3, segment_segment_intersection_2,

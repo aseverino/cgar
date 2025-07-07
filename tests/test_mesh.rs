@@ -23,8 +23,8 @@
 use std::collections::HashSet;
 
 use cgar::geometry::spatial_element::SpatialElement;
-use cgar::geometry::{Point2, Point3};
-use cgar::mesh::mesh::Mesh;
+use cgar::geometry::{Aabb, Point2, Point3};
+use cgar::mesh::mesh::{BooleanImpl, BooleanOp, Mesh};
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::numeric::cgar_rational::CgarRational;
 
@@ -751,4 +751,84 @@ fn test_face_area_and_centroid_2d() {
     // Area: 0.5
     let area = mesh.face_area(0);
     assert!((area - 0.5).abs() < 1e-12);
+}
+
+// at the bottom of mesh.rs, or in tests/mesh_boolean.rs:
+
+/// Builds an axis-aligned cube from `min = [x0,y0,z0]` to `max = [x1,y1,z1]`.
+fn make_cube(min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3> {
+    let mut m = Mesh::new();
+    let [x0, y0, z0] = min;
+    let [x1, y1, z1] = max;
+
+    // eight corners
+    let v = [
+        m.add_vertex(Point3::from_vals([x0, y0, z0])),
+        m.add_vertex(Point3::from_vals([x1, y0, z0])),
+        m.add_vertex(Point3::from_vals([x1, y1, z0])),
+        m.add_vertex(Point3::from_vals([x0, y1, z0])),
+        m.add_vertex(Point3::from_vals([x0, y0, z1])),
+        m.add_vertex(Point3::from_vals([x1, y0, z1])),
+        m.add_vertex(Point3::from_vals([x1, y1, z1])),
+        m.add_vertex(Point3::from_vals([x0, y1, z1])),
+    ];
+
+    // each triple is a CCW triangle when viewed from outside
+    let faces = [
+        [0, 1, 2],
+        [0, 2, 3], // bottom
+        [4, 6, 5],
+        [4, 7, 6], // top
+        [0, 5, 1],
+        [0, 4, 5], // front
+        [1, 6, 2],
+        [1, 5, 6], // right
+        [2, 7, 3],
+        [2, 6, 7], // back
+        [3, 4, 0],
+        [3, 7, 4], // left
+    ];
+
+    for &f in &faces {
+        m.add_triangle(v[f[0]], v[f[1]], v[f[2]]);
+    }
+
+    m
+}
+
+#[test]
+fn difference_corner_cube() {
+    // 1) Big unit cube [0,1]^3
+    let big = make_cube([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+    // 2) Smaller cube slicing off the top-far corner
+    let small = make_cube([0.5, 0.5, 0.5], [1.0, 1.0, 1.0]);
+
+    // 3) Perform boolean difference
+    let result = big.boolean(&small, BooleanOp::Difference);
+
+    // 4) Compute the global AABB of the result
+    let mut bb = {
+        let p0 = &result.vertices[0].position;
+        Aabb::from_points(p0, p0)
+    };
+    for v in &result.vertices[1..] {
+        let p = &v.position;
+        bb = bb.union(&Aabb::from_points(p, p));
+    }
+
+    // 5a) It should still span [0,1]^3
+    let expected_min = Point3::from_vals([0.0, 0.0, 0.0]);
+    let expected_max = Point3::from_vals([1.0, 1.0, 1.0]);
+    assert_eq!(bb.min(), &expected_min);
+    assert_eq!(bb.max(), &expected_max);
+
+    // 5b) Cutting the corner introduces new faces,
+    //     so we expect more than the original 12 triangles.
+    assert!(
+        result.faces.len() > big.faces.len(),
+        "expected {} faces, got {}",
+        big.faces.len(),
+        result.faces.len()
+    );
 }

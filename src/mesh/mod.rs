@@ -23,5 +23,4 @@
 pub mod face;
 pub mod half_edge;
 pub mod mesh;
-pub mod point_trait;
 pub mod vertex;

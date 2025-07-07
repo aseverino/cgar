@@ -28,7 +28,7 @@ use std::{
 
 use crate::{
     geometry::{
-        Aabb, FromCoords,
+        Aabb,
         spatial_element::SpatialElement,
         vector::{Vector, VectorOps},
     },
@@ -271,21 +271,6 @@ impl<T: Scalar, const N: usize> PartialOrd for Point<T, N> {
             }
         }
         Some(std::cmp::Ordering::Equal)
-    }
-}
-
-impl<T: Scalar, const N: usize> FromCoords<T, N> for Point<T, N> {
-    fn from_coords(min_coords: Vec<T>, max_coords: Vec<T>) -> Aabb<T, N, Self> {
-        assert_eq!(min_coords.len(), N);
-        assert_eq!(max_coords.len(), N);
-        // Create the min and max points from the provided coordinates
-        let min = Point {
-            coords: array::from_fn(|i| min_coords[i].clone()),
-        };
-        let max = Point {
-            coords: array::from_fn(|i| max_coords[i].clone()),
-        };
-        Aabb::new(min, max)
     }
 }
 

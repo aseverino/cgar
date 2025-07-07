@@ -129,10 +129,3 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
             .unwrap()
     }
 }
-
-// helper to build P from coordinate vectors—add this to your Point2/Point3 implementations:
-pub trait FromCoords<T: Scalar, const N: usize> {
-    fn from_coords(min_coords: Vec<T>, max_coords: Vec<T>) -> Aabb<T, N, Self>
-    where
-        Self: SpatialElement<T, N> + Sized;
-}
