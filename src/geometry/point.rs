@@ -68,6 +68,10 @@ impl<T: Scalar, const N: usize> SpatialElement<T, N> for Point<T, N> {
         &self.coords
     }
 
+    fn coords_mut(&mut self) -> &mut [T; N] {
+        &mut self.coords
+    }
+
     fn iter(&self) -> std::slice::Iter<'_, T> {
         self.coords.iter()
     }
@@ -145,6 +149,22 @@ where
         Point {
             coords: array::from_fn(|_| T::zero()),
         }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.coords.iter().all(|coord| coord.is_zero())
+    }
+    fn is_positive(&self) -> bool {
+        self.coords.iter().all(|coord| coord.is_positive())
+    }
+    fn is_negative(&self) -> bool {
+        self.coords.iter().all(|coord| coord.is_negative())
+    }
+    fn is_positive_or_zero(&self) -> bool {
+        self.coords.iter().all(|coord| coord.is_positive_or_zero())
+    }
+    fn is_negative_or_zero(&self) -> bool {
+        self.coords.iter().all(|coord| coord.is_negative_or_zero())
     }
 }
 
@@ -226,6 +246,12 @@ where
         Point {
             coords: [&self[0] + &v[0], &self[1] + &v[1], &self[2] + &v[2]],
         }
+    }
+}
+
+impl<T: Scalar, const N: usize> Into<[T; N]> for Point<T, N> {
+    fn into(self) -> [T; N] {
+        self.coords
     }
 }
 

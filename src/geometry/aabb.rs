@@ -46,6 +46,16 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
             _phantom: std::marker::PhantomData,
         }
     }
+
+    pub fn min(&self) -> &P {
+        &self.min
+    }
+
+    /// Access the maximum corner.
+    pub fn max(&self) -> &P {
+        &self.max
+    }
+
     /// Build the smallest AABB containing two points.
     pub fn from_points(a: &P, b: &P) -> Self {
         let mins = std::array::from_fn(|i| {

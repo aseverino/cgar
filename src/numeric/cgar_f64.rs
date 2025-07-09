@@ -23,13 +23,14 @@
 use num_traits::ToPrimitive;
 
 use crate::{
+    geometry::util::EPS,
     numeric::{cgar_rational::CgarRational, scalar::Scalar},
     operations::{Abs, Pow, Sqrt},
 };
 
 use std::{
     hash::Hash,
-    ops::{Add, Div, Mul, Neg, Sub},
+    ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign},
 };
 
 #[derive(Clone, Debug)]
@@ -100,6 +101,18 @@ impl<'a, 'b> Div<&'b CgarF64> for &'a CgarF64 {
     }
 }
 
+impl<'c> AddAssign<&'c CgarF64> for CgarF64 {
+    fn add_assign(&mut self, rhs: &'c CgarF64) {
+        self.0 += &rhs.0;
+    }
+}
+
+impl<'d> SubAssign<&'d CgarF64> for CgarF64 {
+    fn sub_assign(&mut self, rhs: &'d CgarF64) {
+        self.0 -= &rhs.0;
+    }
+}
+
 impl Div for CgarF64 {
     type Output = CgarF64;
     fn div(self, rhs: CgarF64) -> CgarF64 {
@@ -154,7 +167,7 @@ impl ToPrimitive for CgarF64 {
 
 impl PartialEq for CgarF64 {
     fn eq(&self, other: &CgarF64) -> bool {
-        (self.0 - other.0).abs() < 1e-9
+        (self.0 - other.0).abs() < 1e-10
     }
 }
 
@@ -166,8 +179,9 @@ impl PartialOrd for CgarF64 {
 
 impl Hash for CgarF64 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Convert f64 to its raw u64 bits and feed that to the hasher
-        state.write_u64(self.0.to_bits());
+        let scale = 1e-10_f64;
+        let quantized = (self.0 * scale).round() as i64;
+        quantized.hash(state);
     }
 }
 
@@ -176,6 +190,23 @@ impl Eq for CgarF64 {}
 impl crate::operations::Zero for CgarF64 {
     fn zero() -> Self {
         CgarF64(0.0)
+    }
+
+    fn is_zero(&self) -> bool {
+        self.0.abs() < EPS
+    }
+
+    fn is_positive(&self) -> bool {
+        self.0 > EPS
+    }
+    fn is_negative(&self) -> bool {
+        self.0 < -EPS
+    }
+    fn is_positive_or_zero(&self) -> bool {
+        self.0 >= -EPS
+    }
+    fn is_negative_or_zero(&self) -> bool {
+        self.0 <= EPS
     }
 }
 

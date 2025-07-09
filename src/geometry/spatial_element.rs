@@ -23,12 +23,12 @@
 use crate::numeric::scalar::Scalar;
 use crate::operations::Zero;
 use std::hash::Hash;
-use std::ops::{Index, IndexMut};
+use std::ops::{Add, AddAssign, Index, IndexMut, Sub, SubAssign};
 
 pub trait SpatialElement<T: Scalar, const N: usize>:
     Clone
-    //+ Add<Output = Self>
-    //+ Sub<Output = Self>
+    + Add<Self, Output = Self>
+    + Sub<Self, Output = Self>
     + Index<usize, Output = T>
     + IndexMut<usize>
     + Zero
@@ -36,6 +36,7 @@ pub trait SpatialElement<T: Scalar, const N: usize>:
     + PartialEq
     + Hash
     + PartialOrd
+    + Into<[T; N]>
     + From<[T; N]>
 {
     fn new(coords: [T; N]) -> Self;
@@ -45,5 +46,6 @@ pub trait SpatialElement<T: Scalar, const N: usize>:
         V: Into<T>;
 
     fn coords(&self) -> &[T; N];
+    fn coords_mut(&mut self) -> &mut [T; N];
     fn iter(&self) -> std::slice::Iter<'_, T>;
 }

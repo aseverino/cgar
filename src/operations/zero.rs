@@ -22,6 +22,11 @@
 
 pub trait Zero {
     fn zero() -> Self;
+    fn is_zero(&self) -> bool;
+    fn is_positive(&self) -> bool;
+    fn is_negative(&self) -> bool;
+    fn is_positive_or_zero(&self) -> bool;
+    fn is_negative_or_zero(&self) -> bool;
 }
 
 // impl Zero for f64 {

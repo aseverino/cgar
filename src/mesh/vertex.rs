@@ -23,7 +23,7 @@
 use crate::{geometry::point::Point, numeric::scalar::Scalar};
 use std::marker::PhantomData;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Vertex<T: Scalar, const N: usize> {
     pub position: Point<T, N>,
     pub half_edge: Option<usize>,

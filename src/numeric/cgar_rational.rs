@@ -30,7 +30,7 @@ use crate::{
 
 use std::{
     hash::{Hash, Hasher},
-    ops::{Add, Div, Mul, Neg, Sub},
+    ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign},
 };
 
 // use std::ops::{Add, Div, Mul, Sub};
@@ -114,6 +114,18 @@ impl Div for CgarRational {
     }
 }
 
+impl<'c> AddAssign<&'c CgarRational> for CgarRational {
+    fn add_assign(&mut self, rhs: &'c CgarRational) {
+        self.0 += &rhs.0;
+    }
+}
+
+impl<'d> SubAssign<&'d CgarRational> for CgarRational {
+    fn sub_assign(&mut self, rhs: &'d CgarRational) {
+        self.0 -= &rhs.0;
+    }
+}
+
 impl From<i32> for CgarRational {
     fn from(value: i32) -> Self {
         CgarRational(Rational::from(value))
@@ -184,6 +196,25 @@ impl Eq for CgarRational {}
 impl crate::operations::Zero for CgarRational {
     fn zero() -> Self {
         CgarRational(Rational::from(0))
+    }
+    fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+
+    fn is_positive(&self) -> bool {
+        self.0.is_positive()
+    }
+
+    fn is_negative(&self) -> bool {
+        self.0.is_negative()
+    }
+
+    fn is_positive_or_zero(&self) -> bool {
+        !self.0.is_negative()
+    }
+
+    fn is_negative_or_zero(&self) -> bool {
+        !self.0.is_positive()
     }
 }
 

@@ -23,7 +23,7 @@
 use std::{
     array,
     hash::{Hash, Hasher},
-    ops::{Add, Div, Index, IndexMut, Mul, Sub},
+    ops::{Add, AddAssign, Div, Index, IndexMut, Mul, Sub, SubAssign},
 };
 
 use crate::{
@@ -64,6 +64,10 @@ impl<T: Scalar, const N: usize> SpatialElement<T, N> for Vector<T, N> {
         &self.0.coords
     }
 
+    fn coords_mut(&mut self) -> &mut [T; N] {
+        &mut self.0.coords
+    }
+
     fn iter(&self) -> std::slice::Iter<'_, T> {
         self.0.coords.iter()
     }
@@ -93,6 +97,58 @@ impl<T: Scalar, const N: usize> IndexMut<usize> for Vector<T, N> {
     }
 }
 
+impl<'a, 'b, T, const N: usize> Add<&'b Vector<T, N>> for &'a Vector<T, N>
+where
+    T: Scalar + for<'c> AddAssign<&'c T>,
+{
+    type Output = Vector<T, N>;
+    fn add(self, rhs: &'b Vector<T, N>) -> Self::Output {
+        let mut out = self.clone();
+        for i in 0..N {
+            out[i] += &rhs[i];
+        }
+        out
+    }
+}
+
+impl<T, const N: usize> Add for Vector<T, N>
+where
+    T: Scalar,
+    for<'a, 'b> &'a Vector<T, N>: Add<&'b Vector<T, N>, Output = Vector<T, N>>,
+{
+    type Output = Vector<T, N>;
+    fn add(self, rhs: Vector<T, N>) -> Self::Output {
+        // call the ref-impl explicitly
+        <&Vector<T, N> as Add<&Vector<T, N>>>::add(&self, &rhs)
+    }
+}
+
+impl<'a, 'b, T, const N: usize> Sub<&'b Vector<T, N>> for &'a Vector<T, N>
+where
+    T: Scalar + for<'c> SubAssign<&'c T>,
+{
+    type Output = Vector<T, N>;
+    fn sub(self, rhs: &'b Vector<T, N>) -> Self::Output {
+        let mut out = self.clone();
+        for i in 0..N {
+            out[i] -= &rhs[i];
+        }
+        out
+    }
+}
+
+impl<T, const N: usize> Sub for Vector<T, N>
+where
+    T: Scalar,
+    for<'a, 'b> &'a Vector<T, N>: Sub<&'b Vector<T, N>, Output = Vector<T, N>>,
+{
+    type Output = Vector<T, N>;
+    fn sub(self, rhs: Vector<T, N>) -> Self::Output {
+        // call the ref-impl explicitly
+        <&Vector<T, N> as Sub<&Vector<T, N>>>::sub(&self, &rhs)
+    }
+}
+
 impl<T> VectorOps<T, 2> for Vector<T, 2>
 where
     T: Scalar,
@@ -117,11 +173,7 @@ where
 
     fn normalized(&self) -> Self {
         let n = self.norm();
-        // if n.is_zero() {
-        //     Self::from(Point::zero())
-        // } else {
         Self::from(Point::from_vals([&self[0] / &n, &self[1] / &n]))
-        // }
     }
 
     fn scale(&self, s: &T) -> Self {
@@ -181,6 +233,27 @@ where
         Vector::from(Point {
             coords: array::from_fn(|_| T::zero()),
         })
+    }
+    fn is_zero(&self) -> bool {
+        self.0.coords.iter().all(|c| c.is_zero())
+    }
+    fn is_positive(&self) -> bool {
+        self.0.coords.iter().all(|c| c.is_positive())
+    }
+    fn is_negative(&self) -> bool {
+        !self.is_positive() && !self.is_zero()
+    }
+    fn is_positive_or_zero(&self) -> bool {
+        self.is_positive() || self.is_zero()
+    }
+    fn is_negative_or_zero(&self) -> bool {
+        self.is_negative() || self.is_zero()
+    }
+}
+
+impl<T: Scalar, const N: usize> Into<[T; N]> for Vector<T, N> {
+    fn into(self) -> [T; N] {
+        self.0.coords
     }
 }
 

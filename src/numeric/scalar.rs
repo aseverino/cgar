@@ -21,6 +21,7 @@
 // SOFTWARE.
 
 use num_traits::ToPrimitive;
+use rug::Rational;
 
 use crate::{
     numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational},
@@ -29,7 +30,7 @@ use crate::{
 
 use std::{
     hash::Hash,
-    ops::{Add, Div, Mul, Neg, Sub},
+    ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign},
 };
 
 use std::fmt::Debug;
@@ -40,6 +41,8 @@ pub trait Scalar:
     + Sub<Output = Self>
     + Mul<Output = Self>
     + Div<Output = Self>
+    + for<'a> AddAssign<&'a Self>
+    + for<'a> SubAssign<&'a Self>
     + Debug
     + Abs
     + Pow
@@ -58,4 +61,10 @@ pub trait Scalar:
     + From<CgarF64>
     + From<CgarRational>
 {
+    fn min(self, other: Self) -> Self {
+        if self < other { self } else { other }
+    }
+    fn max(self, other: Self) -> Self {
+        if self > other { self } else { other }
+    }
 }

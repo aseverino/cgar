@@ -105,7 +105,7 @@ where
             if db != T::zero() {
                 let t = &da / &db;
                 if let Some(prev_t) = &t_opt {
-                    if (&t - &prev_t).abs() > T::from(1e-8) {
+                    if (&t - &prev_t).abs() > T::from(1e-10) {
                         return false;
                     }
                 } else {
