@@ -24,15 +24,11 @@ pub mod aabb;
 pub mod aabb_tree;
 pub mod intersection;
 pub mod point;
-//pub mod point_2;
-//pub mod point_3;
 pub mod segment;
 pub mod spatial_element;
 pub mod tri_tri_intersect;
 pub mod util;
 pub mod vector;
-//pub mod vector_2;
-//pub mod vector_3;
 
 pub use aabb::Aabb;
 pub use aabb_tree::AabbTree;
