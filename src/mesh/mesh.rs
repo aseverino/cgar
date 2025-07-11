@@ -582,6 +582,113 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         *self = new_mesh;
         Ok(())
     }
+    pub fn split_edge(&mut self, he: usize, pos: Point<T, N>) -> Result<usize, &'static str> {
+        let prev = self.half_edges[he].prev;
+        let u = self.half_edges[prev].vertex;
+        let v = self.half_edges[he].vertex;
+
+        // Check if we already have this position
+        if pos == self.vertices[u].position {
+            return Ok(u);
+        }
+        if pos == self.vertices[v].position {
+            return Ok(v);
+        }
+
+        // Add new vertex
+        let w = self.vertices.len();
+        self.vertices.push(Vertex::new(pos.clone()));
+
+        // Find all faces containing edge u-v (or v-u)
+        let mut affected_faces = Vec::new();
+        for face_idx in 0..self.faces.len() {
+            let vs = self.face_vertices(face_idx);
+            for i in 0..vs.len() {
+                let curr = vs[i];
+                let next = vs[(i + 1) % vs.len()];
+                if (curr == u && next == v) || (curr == v && next == u) {
+                    affected_faces.push((face_idx, curr, next, vs[(i + 2) % vs.len()]));
+                    break;
+                }
+            }
+        }
+
+        // For each affected face, replace it with two new faces
+        let mut new_face_indices = Vec::new();
+        let mut faces_to_remove = Vec::new();
+        for (face_idx, a, b, c) in affected_faces {
+            faces_to_remove.push(face_idx);
+
+            // Remove old face by marking for removal
+            self.faces[face_idx].half_edge = usize::MAX;
+
+            // Add two new triangles: (a, w, c) and (w, b, c)
+            let f1 = self.faces.len();
+            let f2 = self.faces.len() + 1;
+            new_face_indices.push((f1, [a, w, c]));
+            new_face_indices.push((f2, [w, b, c]));
+        }
+
+        // Remove marked faces
+        self.faces.retain(|f| f.half_edge != usize::MAX);
+
+        // Add new faces and half-edges, updating connectivity
+        for (face_idx, verts) in new_face_indices {
+            let base_idx = self.half_edges.len();
+            let edge_vertices = [
+                (verts[0], verts[1]),
+                (verts[1], verts[2]),
+                (verts[2], verts[0]),
+            ];
+            let mut edge_indices = [0; 3];
+
+            // Create the 3 new half-edges
+            for (i, &(from, to)) in edge_vertices.iter().enumerate() {
+                let mut he = HalfEdge::new(to);
+                he.face = Some(face_idx);
+                let idx = base_idx + i;
+
+                // Find twin edge (to → from)
+                if let Some(&twin_idx) = self.edge_map.get(&(to, from)) {
+                    he.twin = twin_idx;
+                    self.half_edges[twin_idx].twin = idx;
+                } else {
+                    he.twin = usize::MAX;
+                }
+
+                self.edge_map.insert((from, to), idx);
+                self.half_edges.push(he);
+                edge_indices[i] = idx;
+            }
+
+            // Link next/prev
+            self.half_edges[edge_indices[0]].next = edge_indices[1];
+            self.half_edges[edge_indices[0]].prev = edge_indices[2];
+            self.half_edges[edge_indices[1]].next = edge_indices[2];
+            self.half_edges[edge_indices[1]].prev = edge_indices[0];
+            self.half_edges[edge_indices[2]].next = edge_indices[0];
+            self.half_edges[edge_indices[2]].prev = edge_indices[1];
+
+            // Attach half-edge to vertices
+            self.vertices[verts[0]]
+                .half_edge
+                .get_or_insert(edge_indices[0]);
+            self.vertices[verts[1]]
+                .half_edge
+                .get_or_insert(edge_indices[1]);
+            self.vertices[verts[2]]
+                .half_edge
+                .get_or_insert(edge_indices[2]);
+
+            self.faces.push(Face::new(edge_indices[0]));
+        }
+
+        // Remove old edge from edge_map
+        self.edge_map.remove(&(u, v));
+        self.edge_map.remove(&(v, u));
+
+        Ok(w)
+    }
 
     /// Splits the interior edge `he` by inserting a new vertex at `pos`.
     /// The two adjacent triangles are each subdivided into two, yielding
