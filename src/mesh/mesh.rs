@@ -310,6 +310,147 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
         loops
     }
+    fn cast_ray(&self, p: &Point<T, 3>, dir: &Vector<T, 3>) -> Option<bool>
+    where
+        T: Scalar,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let orig = p.coords();
+        let mut hits: Vec<T> = Vec::new();
+
+        for fi in 0..self.faces.len() {
+            let vs_idxs = self.face_vertices(fi);
+            let vs: [&Point<T, 3>; 3] = [
+                &Point::<T, 3>::from_vals([
+                    self.vertices[vs_idxs[0]].position[0].clone(),
+                    self.vertices[vs_idxs[0]].position[1].clone(),
+                    self.vertices[vs_idxs[0]].position[2].clone(),
+                ]),
+                &Point::<T, 3>::from_vals([
+                    self.vertices[vs_idxs[1]].position[0].clone(),
+                    self.vertices[vs_idxs[1]].position[1].clone(),
+                    self.vertices[vs_idxs[1]].position[2].clone(),
+                ]),
+                &Point::<T, 3>::from_vals([
+                    self.vertices[vs_idxs[2]].position[0].clone(),
+                    self.vertices[vs_idxs[2]].position[1].clone(),
+                    self.vertices[vs_idxs[2]].position[2].clone(),
+                ]),
+            ];
+
+            // Use Möller–Trumbore with better precision handling
+            if let Some(t) = self.ray_triangle_intersection(&orig, dir, vs) {
+                if t > T::from(1e-10) {
+                    // Ignore hits very close to ray origin
+                    hits.push(t);
+                }
+            }
+        }
+
+        if hits.is_empty() {
+            return None; // Ray didn't hit anything
+        }
+
+        // Sort and remove near-duplicates more carefully
+        hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let mut filtered_hits = Vec::new();
+        let mut last_t = None;
+
+        for t in hits {
+            if last_t.as_ref().map_or(true, |lt: &T| {
+                (t.clone() - lt.clone()).abs() > T::from(1e-8)
+            }) {
+                filtered_hits.push(t.clone());
+                last_t = Some(t);
+            }
+        }
+
+        Some(filtered_hits.len() % 2 == 1)
+    }
+
+    /// Robust ray-triangle intersection using Möller-Trumbore algorithm
+    fn ray_triangle_intersection(
+        &self,
+        ray_origin: &[T; 3],
+        ray_dir: &Vector<T, 3>,
+        triangle: [&Point<T, 3>; 3],
+    ) -> Option<T>
+    where
+        T: Scalar,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let eps = T::from(1e-12);
+
+        // Triangle vertices
+        let v0 = triangle[0];
+        let v1 = triangle[1];
+        let v2 = triangle[2];
+
+        // Triangle edges
+        let edge1 = Vector::<T, 3>::from_vals([&v1[0] - &v0[0], &v1[1] - &v0[1], &v1[2] - &v0[2]]);
+
+        let edge2 = Vector::<T, 3>::from_vals([&v2[0] - &v0[0], &v2[1] - &v0[1], &v2[2] - &v0[2]]);
+
+        // Cross product: ray_dir × edge2
+        let h = Vector::<T, 3>::from_vals([
+            &ray_dir[1] * &edge2[2] - &ray_dir[2] * &edge2[1],
+            &ray_dir[2] * &edge2[0] - &ray_dir[0] * &edge2[2],
+            &ray_dir[0] * &edge2[1] - &ray_dir[1] * &edge2[0],
+        ]);
+
+        // Determinant
+        let a = edge1.dot(&h);
+
+        if a.abs() < eps {
+            return None; // Ray is parallel to triangle
+        }
+
+        let f = T::one() / a;
+
+        // Vector from v0 to ray origin
+        let s = Vector::<T, 3>::from_vals([
+            &ray_origin[0] - &v0[0],
+            &ray_origin[1] - &v0[1],
+            &ray_origin[2] - &v0[2],
+        ]);
+
+        // Calculate u parameter
+        let u = &f * &s.dot(&h);
+
+        if u < T::zero() || u > T::one() {
+            return None; // Intersection outside triangle
+        }
+
+        // Cross product: s × edge1
+        let q = Vector::<T, 3>::from_vals([
+            &s[1] * &edge1[2] - &s[2] * &edge1[1],
+            &s[2] * &edge1[0] - &s[0] * &edge1[2],
+            &s[0] * &edge1[1] - &s[1] * &edge1[0],
+        ]);
+
+        // Calculate v parameter
+        let v = &f * &ray_dir.dot(&q);
+
+        if v < T::zero() || &u + &v > T::one() {
+            return None; // Intersection outside triangle
+        }
+
+        // Calculate t parameter (distance along ray)
+        let t = &f * &edge2.dot(&q);
+
+        if t > eps {
+            Some(t) // Valid intersection
+        } else {
+            None // Intersection behind ray origin or too close
+        }
+    }
 
     /// Flip an interior edge given one of its half‐edges `he`.
     /// Returns Err if `he` is on the boundary (i.e. twin or face is None).
