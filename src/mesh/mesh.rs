@@ -131,35 +131,27 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
     /// Return the centroid of face `f` as a Vec<f64> of length = dimensions().
     /// Currently works for any dimension, but returns a flat Vec.
-    pub fn face_centroid(&self, f: usize) -> Vec<f64> {
-        let he_idxs = &self.face_half_edges(f);
-        let dim = N;
-        let mut sum = vec![0.0; dim];
-        for he in he_idxs {
-            let v_idx = self.half_edges[*he].vertex;
-            let p = &self.vertices[v_idx].position;
-            for i in 0..dim {
-                // use to_f64, which returns Option<f64>
-                sum[i] += p[i].to_f64().expect("cannot convert to f64");
+    pub fn face_centroid(&self, f: usize) -> Vector<T, N>
+    where
+        Vector<T, N>: VectorOps<T, N>,
+    {
+        let face_vertices = self.face_vertices(f);
+        let n = T::from(face_vertices.len() as f64);
+
+        let mut centroid: Vector<T, N> = Vector::zero();
+
+        for &v_idx in &face_vertices {
+            let coords = self.vertices[v_idx].position.coords();
+            for i in 0..3.min(N) {
+                centroid[i] += &coords[i];
             }
         }
-        let n = he_idxs.len() as f64;
-        sum.iter().map(|c| c / n).collect()
-    }
 
-    pub fn face_area(&self, f: usize) -> f64 {
-        assert_eq!(N, 2);
-        let vs = self.face_vertices(f);
-        let p0 = &self.vertices[vs[0]].position;
-        let p1 = &self.vertices[vs[1]].position;
-        let p2 = &self.vertices[vs[2]].position;
-        let x0 = p0[0].to_f64().unwrap();
-        let y0 = p0[1].to_f64().unwrap();
-        let x1 = p1[0].to_f64().unwrap();
-        let y1 = p1[1].to_f64().unwrap();
-        let x2 = p2[0].to_f64().unwrap();
-        let y2 = p2[1].to_f64().unwrap();
-        ((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)).abs() * 0.5
+        for coord in centroid.coords_mut().iter_mut() {
+            *coord = coord.clone() / n.clone();
+        }
+
+        centroid
     }
 
     pub fn build_boundary_loops(&mut self) {
