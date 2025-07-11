@@ -26,7 +26,9 @@ use std::{
 };
 
 use crate::{
-    geometry::{Point3, Vector3, point::PointOps, vector::VectorOps},
+    geometry::{
+        Point3, Vector3, point::PointOps, spatial_element::SpatialElement, vector::VectorOps,
+    },
     numeric::scalar::Scalar,
     operations::Zero,
 };
@@ -49,13 +51,13 @@ where
         + Div<&'a T, Output = T>,
 {
     // 1) plane test for triangle T1
-    let e1 = p1.sub(p0).as_vector();
-    let e2 = p2.sub(p0).as_vector();
+    let e1 = (p1 - p0).as_vector();
+    let e2 = (p2 - p0).as_vector();
     let n1 = e1.cross(&e2);
 
-    let d0 = n1.dot(&q0.sub(p0).as_vector().into());
-    let d1 = n1.dot(&q1.sub(p0).as_vector().into());
-    let d2 = n1.dot(&q2.sub(p0).as_vector().into());
+    let d0 = n1.dot(&(q0 - p0).as_vector().into());
+    let d1 = n1.dot(&(q1 - p0).as_vector().into());
+    let d2 = n1.dot(&(q2 - p0).as_vector().into());
 
     if (d0 > T::zero() && d1 > T::zero() && d2 > T::zero())
         || (d0 < T::zero() && d1 < T::zero() && d2 < T::zero())
@@ -68,13 +70,13 @@ where
     }
 
     // 2) plane test for triangle T2
-    let f1 = q1.sub(q0).as_vector();
-    let f2 = q2.sub(q0).as_vector();
+    let f1 = (q1 - q0).as_vector();
+    let f2 = (q2 - q0).as_vector();
     let n2 = f1.cross(&f2);
 
-    let e0 = n2.dot(&p0.sub(q0).as_vector().into());
-    let e1_ = n2.dot(&p1.sub(q0).as_vector().into());
-    let e2_ = n2.dot(&p2.sub(q0).as_vector().into());
+    let e0 = n2.dot(&(p0 - q0).as_vector().into());
+    let e1_ = n2.dot(&(p1 - q0).as_vector().into());
+    let e2_ = n2.dot(&(p2 - q0).as_vector().into());
 
     if (e0 > T::zero() && e1_ > T::zero() && e2_ > T::zero())
         || (e0 < T::zero() && e1_ < T::zero() && e2_ < T::zero())
@@ -86,17 +88,17 @@ where
     let tri_axes = [
         e1.cross(&f1),
         e1.cross(&f2),
-        e1.cross(&q0.sub(q2).as_vector()),
+        e1.cross(&(q0 - q2).as_vector()),
         e2.cross(&f1),
         e2.cross(&f2),
-        e2.cross(&q0.sub(q2).as_vector()),
-        p0.sub(p2).as_vector().cross(&f1),
-        p0.sub(p2).as_vector().cross(&f2),
-        p0.sub(p2).as_vector().cross(&q0.sub(q2).as_vector()),
+        e2.cross(&(q0 - q2).as_vector()),
+        (p0 - p2).as_vector().cross(&f1),
+        (p0 - p2).as_vector().cross(&f2),
+        (p0 - p2).as_vector().cross(&(q0 - q2).as_vector()),
     ];
 
     for axis in &tri_axes {
-        if *axis == Vector3::<T>::zero() {
+        if Vector3::<T>::zero() == *axis {
             continue; // parallel edges
         }
         let (min1, max1) = project_3d_triangle(axis, p0, p1, p2);
@@ -296,35 +298,23 @@ where
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    // 1) pick drop-axis
-    let na = [n[0].abs(), n[1].abs(), n[2].abs()];
-    let (i0, i1) = if na[0] > na[1] && na[0] > na[2] {
-        (1, 2)
-    } else if na[1] > na[2] {
-        (0, 2)
-    } else {
-        (0, 1)
-    };
+    let (i0, i1, drop) = coplanar_axes(n);
+
     // 2) build 2D points
-    let to2d = |p: &Point3<T>| (p[i0].clone(), p[i1].clone());
+    let to2d = |p: &Point3<T>| project_to_2d(p, i0, i1);
     let t1 = [to2d(p0), to2d(p1), to2d(p2)];
     let t2 = [to2d(q0), to2d(q1), to2d(q2)];
 
-    // 3) collect vertices in each other
+    // 3) collect vertices of one triangle inside the other
     let mut pts: Vec<Point3<T>> = Vec::new();
-    for (x, y) in &t1 {
+    for (i, (x, y)) in t1.iter().enumerate() {
         if point_in_tri_2d((x.clone(), y.clone()), &t2) {
-            // lift back to 3D by reinserting zero for dropped coord
-            let mut coords = [x.clone(), y.clone(), T::zero()];
-            coords[i1] = coords[1].clone();
-            coords[i0] = coords[0].clone(); // careful with indexing
-            pts.push([coords[0].clone(), coords[1].clone(), coords[2].clone()].into());
+            pts.push(back_project_to_3d(&x, &y, i0, i1, drop, &p0));
         }
     }
-    for (x, y) in &t2 {
+    for (i, (x, y)) in t2.iter().enumerate() {
         if point_in_tri_2d((x.clone(), y.clone()), &t1) {
-            let coords = [x.clone(), y.clone(), T::zero()];
-            pts.push([coords[0].clone(), coords[1].clone(), coords[2].clone()].into());
+            pts.push(back_project_to_3d(&x, &y, i0, i1, drop, &q0));
         }
     }
 
@@ -343,13 +333,13 @@ where
         for (c, d) in &edges2 {
             if let Some((ix, iy)) = segment_intersect_2d(a.clone(), b.clone(), c.clone(), d.clone())
             {
-                let coords = [ix, iy, T::zero()];
-                pts.push([coords[0].clone(), coords[1].clone(), coords[2].clone()].into());
+                // Here we use p0 as the reference for the dropped axis, but you could interpolate if desired
+                pts.push(back_project_to_3d(&ix, &iy, i0, i1, drop, p0));
             }
         }
     }
 
-    // 5) dedupe & pick endpoints (same as above)
+    // 5) dedupe
     let mut set = HashSet::new();
     let mut uniq: Vec<Point3<T>> = Vec::new();
     for p in pts {
@@ -358,9 +348,9 @@ where
         }
     }
     if uniq.len() == 2 {
-        Some((uniq[0].clone().into(), uniq[1].clone().into()))
+        Some((uniq[0].clone(), uniq[1].clone()))
     } else if uniq.len() == 1 {
-        Some((uniq[0].clone().into(), uniq[0].clone().into()))
+        Some((uniq[0].clone(), uniq[0].clone()))
     } else {
         None
     }
@@ -385,8 +375,8 @@ where
         + Div<&'a T, Output = T>,
 {
     // 1) Build plane of T2: n2·x + d2 = 0
-    let v01 = q1.sub(q0).as_vector();
-    let v02 = q2.sub(q0).as_vector();
+    let v01 = (q1 - q0).as_vector();
+    let v02 = (q2 - q0).as_vector();
     let n2 = v01.cross(&v02);
     let d2 = -n2.dot(&q0.as_vector().into());
 
@@ -412,8 +402,8 @@ where
     }
 
     // 3) Build plane of T1:
-    let u01 = p1.sub(p0).as_vector();
-    let u02 = p2.sub(p0).as_vector();
+    let u01 = (p1 - p0).as_vector();
+    let u02 = (p2 - p0).as_vector();
     let n1 = u01.cross(&u02);
     let d1 = -n1.dot(&p0.as_vector().into());
 
@@ -437,8 +427,8 @@ where
 
     // 6) Return as before
     match uniq.len() {
-        2 => Some((uniq[0].clone().into(), uniq[1].clone().into())),
-        1 => Some((uniq[0].clone().into(), uniq[0].clone().into())),
+        2 => Some((uniq[0].clone(), uniq[1].clone())),
+        1 => Some((uniq[0].clone(), uniq[0].clone())),
         _ => None,
     }
 }
@@ -462,11 +452,21 @@ where
         return None;
     }
 
+    // Check for division by zero
+    let denominator = &da - &db;
+    if denominator == T::zero() {
+        // Edge is parallel to plane, check if it lies on the plane
+        if da == T::zero() {
+            return Some(a.clone()); // Both points are on the plane
+        }
+        return None;
+    }
+
     // compute interpolation parameter t = da / (da - db)
     let t = &da / &(&da - &db);
 
     // point = a + t*(b - a)
-    let dir = b.sub(a).as_vector();
+    let dir = (b - a).as_vector();
     let offset = dir.scale(&t);
     Some(a.add_vector(&offset))
 }
@@ -482,9 +482,9 @@ where
         + Div<&'a T, Output = T>,
 {
     // compute vectors
-    let v0 = c.sub(a).as_vector();
-    let v1 = b.sub(a).as_vector();
-    let v2 = p.sub(a).as_vector();
+    let v0 = (c - a).as_vector();
+    let v1 = (b - a).as_vector();
+    let v2 = (p - a).as_vector();
 
     // dot products
     let dot00 = v0.dot(&v0);
@@ -500,4 +500,41 @@ where
 
     // inside if u>=0, v>=0, u+v<=1
     u >= T::zero() && v >= T::zero() && (&u + &v) <= T::one()
+}
+
+/// Given a normal, return the indices of the two axes to keep (largest dropped).
+fn coplanar_axes<T: Scalar>(n: &Vector3<T>) -> (usize, usize, usize) {
+    let na = [n[0].abs(), n[1].abs(), n[2].abs()];
+    let (i0, i1, drop) = if na[0] > na[1] && na[0] > na[2] {
+        (1, 2, 0)
+    } else if na[1] > na[2] {
+        (0, 2, 1)
+    } else {
+        (0, 1, 2)
+    };
+    (i0, i1, drop)
+}
+
+/// Project a 3D point onto a 2D plane using the provided axes.
+fn project_to_2d<T: Scalar>(p: &Point3<T>, i0: usize, i1: usize) -> (T, T) {
+    (p[i0].clone(), p[i1].clone())
+}
+
+/// Back-project a 2D point into 3D, using a reference 3D point for the dropped axis.
+fn back_project_to_3d<T: Scalar>(
+    x: &T,
+    y: &T,
+    i0: usize,
+    i1: usize,
+    drop: usize,
+    reference: &Point3<T>,
+) -> Point3<T>
+where
+    Point3<T>: SpatialElement<T, 3>,
+{
+    let mut coords = core::array::from_fn(|_| T::zero());
+    coords[i0] = x.clone();
+    coords[i1] = y.clone();
+    coords[drop] = reference[drop].clone();
+    Point3::from_vals(coords)
 }
