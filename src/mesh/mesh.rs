@@ -310,6 +310,39 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
         loops
     }
+    pub fn point_in_mesh(&self, _tree: &AabbTree<T, 3, Point<T, 3>, usize>, p: &Point<T, 3>) -> bool
+    where
+        T: Scalar,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let eps = T::from(1e-9);
+
+        // 0) First check if point is exactly ON the mesh surface
+        let distance_to_surface = self.point_to_mesh_distance(_tree, p);
+        if distance_to_surface < eps {
+            return false; // Points ON the surface are not "inside"
+        }
+
+        let mut inside_count = 0;
+        let mut total_rays = 0;
+
+        let n_rays = 32;
+        for _ in 0..n_rays {
+            let dir: Vector<T, 3> = random_unit_vector();
+            if let Some(is_inside) = self.cast_ray(p, &dir) {
+                if is_inside {
+                    inside_count += 1;
+                }
+                total_rays += 1;
+            }
+        }
+
+        // Majority vote: if most rays say "inside", then it's inside
+        total_rays > 0 && inside_count > total_rays / 2
+    }
     fn cast_ray(&self, p: &Point<T, 3>, dir: &Vector<T, 3>) -> Option<bool>
     where
         T: Scalar,
