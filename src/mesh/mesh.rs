@@ -95,6 +95,40 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         idx
     }
 
+    pub fn faces_containing_point(&self, p: &Point<T, N>) -> Vec<usize>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let eps = T::from(1e-9);
+        let mut result = Vec::new();
+        for f in 0..self.faces.len() {
+            let vs = self.face_vertices(f);
+            if vs.len() != 3 {
+                continue;
+            }
+            let a = &self.vertices[vs[0]].position;
+            let b = &self.vertices[vs[1]].position;
+            let c = &self.vertices[vs[2]].position;
+
+            // check coplanarity
+            let n = (b - a).as_vector().cross(&(c - a).as_vector());
+            if n.dot(&(p - a).as_vector()).abs() > eps {
+                continue;
+            }
+
+            // check inside or on boundary
+            if point_in_or_on_triangle(p, a, b, c) {
+                result.push(f);
+            }
+        }
+        result
+    }
+
     /// Adds a triangle face given three vertex indices (in CCW order).
     /// Note: this is a naive non-twin-connected insertion for now.
     pub fn add_triangle(&mut self, v0: usize, v1: usize, v2: usize) -> usize {
@@ -820,69 +854,888 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         Ok(new_old_idx)
     }
 
-    /// Split face `f` so that the segment `p0→p1` lies along its edges.
-    /// You can:
-    ///  - find which edges of `f` each point lies on (or if equal to a vertex),
-    ///  - call your in‐place `split_edge` on those edges,
-    ///  - repeat until both p0 & p1 are actual vertices of `a`.
-    fn split_segment_on_face(&mut self, f: usize, p0: Point<T, N>, p1: Point<T, N>)
+    pub fn carve_segment_across_faces(&mut self, p_idx: usize, q_idx: usize)
     where
         T: Scalar,
-        Point<T, N>: SpatialElement<T, N> + PointOps<T, N>,
-        Segment<T, N>: SegmentOps<T, N>,
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
         for<'a> &'a T: Sub<&'a T, Output = T>
-            + Add<&'a T, Output = T>
             + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        // We’ll insert each point in turn.
-        for point in [p0, p1].into_iter() {
-            // 1) Walk the half-edge cycle around face `f`
-            let start_he = self.faces[f].half_edge;
-            let mut he = start_he;
+        let p_pos = self.vertices[p_idx].position.clone();
+        let q_pos = self.vertices[q_idx].position.clone();
+        let segment_dir = (&q_pos - &p_pos).as_vector();
+
+        // CHECK FOR DEGENERATE SEGMENT FIRST
+        if p_pos.distance_to(&q_pos) < T::from(1e-10) {
+            println!("WARNING: Degenerate segment detected, skipping carve");
+            return;
+        }
+
+        // Find all faces containing the starting point
+        let mut current_faces = self.faces_containing_point(&p_pos);
+        if current_faces.is_empty() {
+            eprintln!("ERROR: No face contains starting point");
+            return;
+        }
+
+        let mut curr_idx = p_idx;
+        let mut visited_faces = std::collections::HashSet::new();
+        let mut iteration_count = 0;
+        let max_iterations = self.faces.len() * 2; // Safety limit
+
             loop {
-                let v_from = self.half_edges[he].prev; // he.prev → origin of this he
-                let v_to = self.half_edges[he].vertex; // he.vertex → dest of this he
-                let p_from =
-                    Point::<T, N>::from_vals(self.vertices[v_from].position.coords().clone());
-                let p_to = Point::<T, N>::from_vals(self.vertices[v_to].position.coords().clone());
-                let point_a = Point::<T, N>::from_vals(p_from.coords().clone());
-                let point_b = Point::<T, N>::from_vals(p_to.coords().clone());
+            iteration_count += 1;
+            if iteration_count > max_iterations {
+                eprintln!(
+                    "ERROR: Carve exceeded maximum iterations, stopping to prevent infinite loop"
+                );
+                break;
+            }
 
-                // 2) If the point exactly matches an existing vertex, we’re done.
-                if point == p_from || point == p_to {
+            // Try each candidate face
+            let mut advanced = false;
+            for &face in &current_faces.clone() {
+                if visited_faces.contains(&face) {
+                    continue;
+                }
+                visited_faces.insert(face);
+
+                // Check if target is on this face
+                if self.face_vertices(face).contains(&q_idx) {
+                    self.split_segment_by_indices(face, curr_idx, q_idx, true);
+                    return;
+                }
+
+                // Strategy 1: Try to advance along existing colinear edges
+                if let Some((next_idx, next_face)) =
+                    self.advance_along_colinear_edge(face, &p_pos, &q_pos, curr_idx, q_idx)
+                {
+                    curr_idx = next_idx;
+                    current_faces = vec![next_face];
+                    advanced = true;
                     break;
                 }
 
-                let segment = Segment::new(&point_a, &point_b);
-
-                // 3) Otherwise, if it lies on this edge, split it here.
-                if segment.is_point_on(&point) {
-                    // split_edge returns the index of the new vertex
-                    let _new_vid = self.split_edge_rebuild(he, point);
+                // Strategy 2: Find edge intersections with robust geometry
+                if let Some((intersection_vertex, next_face)) =
+                    self.find_edge_intersection(face, &p_pos, &q_pos, curr_idx)
+                {
+                    curr_idx = intersection_vertex;
+                    current_faces = vec![next_face];
+                    advanced = true;
                     break;
-                }
-
-                // 4) Advance to the next boundary half‐edge of face `f`
-                he = self.half_edges[he].next;
-                if he == start_he {
-                    panic!(
-                        "split_segment_on_face: point {:?} did not lie on face {} boundary",
-                        point, f
-                    );
                 }
             }
+
+            if advanced {
+                continue;
+            }
+
+            // Strategy 3: Direct face splitting as fallback
+            let face = current_faces[0];
+            self.split_segment_by_indices(face, curr_idx, q_idx, true);
+                    break;
+                }
+    }
+
+    /// Strategy 1: Advance along existing colinear edges
+    fn advance_along_colinear_edge(
+        &self,
+        face: usize,
+        p_pos: &Point<T, N>,
+        q_pos: &Point<T, N>,
+        curr_idx: usize,
+        q_idx: usize,
+    ) -> Option<(usize, usize)>
+    where
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let segment_dir = (q_pos - p_pos).as_vector();
+        let eps = T::from(1e-8);
+
+        println!(
+            "      advance_along_colinear_edge: face={}, curr_idx={}",
+            face, curr_idx
+        );
+
+        for &he in &self.face_half_edges(face) {
+            let src = self.half_edges[self.half_edges[he].prev].vertex;
+            let dst = self.half_edges[he].vertex;
+
+            println!(
+                "        Checking edge {} -> {} (half-edge {})",
+                src, dst, he
+            );
+
+            if src != curr_idx {
+                println!("          SKIP: Edge doesn't start from current vertex");
+                continue; // Must start from current vertex
+            }
+
+            let edge_start = &self.vertices[src].position;
+            let edge_end = &self.vertices[dst].position;
+            let edge_dir = (edge_end - edge_start).as_vector();
+
+            println!(
+                "          Edge direction: ({:.6}, {:.6}, {:.6})",
+                edge_dir.coords()[0].to_f64().unwrap(),
+                edge_dir.coords()[1].to_f64().unwrap(),
+                edge_dir.coords()[2].to_f64().unwrap()
+            );
+
+            // Check if edge is colinear with segment
+            if self.are_colinear_with_overlap(&segment_dir, &edge_dir, eps.clone()) {
+                println!("          COLINEAR DETECTED!");
+
+                // Check if edge advances toward target
+                let progress = (&self.vertices[dst].position - p_pos)
+                    .as_vector()
+                    .dot(&segment_dir);
+                let total = segment_dir.dot(&segment_dir);
+
+                println!(
+                    "          Progress: {:.6}, Total: {:.6}",
+                    progress.to_f64().unwrap(),
+                    total.to_f64().unwrap()
+                );
+
+                if progress > T::zero() && progress < total {
+                    if dst == q_idx {
+                        println!("          REACHED TARGET!");
+                        return Some((dst, face)); // Reached target
+                    }
+
+                    // Find adjacent face through this edge
+                    let twin_he = self.half_edges[he].twin;
+                    println!("          Twin half-edge: {}", twin_he);
+
+                    if twin_he != usize::MAX {
+                        if let Some(next_face) = self.half_edges[twin_he].face {
+                            println!("          ADVANCING to face {}", next_face);
+                            return Some((dst, next_face));
+                        } else {
+                            println!("          Twin has no face (boundary?)");
+                        }
+                    } else {
+                        println!("          No twin (boundary edge)");
+                    }
+                } else {
+                    println!("          Edge doesn't advance toward target");
+                }
+            } else {
+                println!("          Not colinear");
+            }
+        }
+
+        println!("      advance_along_colinear_edge: No advancement found");
+        None
+    }
+
+    /// Strategy 2: Robust edge intersection with multiple fallback methods
+    fn find_edge_intersection(
+        &mut self,
+        face: usize,
+        p_pos: &Point<T, N>,
+        q_pos: &Point<T, N>,
+        curr_idx: usize,
+    ) -> Option<(usize, usize)>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let mut best_intersection = None;
+        let mut best_t = T::one();
+
+        println!(
+            "      find_robust_edge_intersection: face={}, curr_idx={}",
+            face, curr_idx
+        );
+
+        for &he in &self.face_half_edges(face) {
+            let src = self.half_edges[self.half_edges[he].prev].vertex;
+            let dst = self.half_edges[he].vertex;
+
+            println!(
+                "        Checking edge {} -> {} (half-edge {})",
+                src, dst, he
+            );
+
+            // Skip edges connected to current vertex
+            if src == curr_idx || dst == curr_idx {
+                println!("          SKIP: Edge connected to current vertex");
+                continue;
+            }
+
+            let edge_start = &self.vertices[src].position;
+            let edge_end = &self.vertices[dst].position;
+
+            println!(
+                "          Edge start: ({:.6}, {:.6}, {:.6})",
+                edge_start.coords()[0].to_f64().unwrap(),
+                edge_start.coords()[1].to_f64().unwrap(),
+                edge_start.coords()[2].to_f64().unwrap()
+            );
+            println!(
+                "          Edge end: ({:.6}, {:.6}, {:.6})",
+                edge_end.coords()[0].to_f64().unwrap(),
+                edge_end.coords()[1].to_f64().unwrap(),
+                edge_end.coords()[2].to_f64().unwrap()
+            );
+
+            // Use your existing robust intersection computation
+            if let Some((intersection_point, t)) =
+                self.compute_intersection(p_pos, q_pos, edge_start, edge_end)
+            {
+                println!(
+                    "          INTERSECTION FOUND at t={:.6}",
+                    t.to_f64().unwrap()
+                );
+                println!(
+                    "          Intersection point: ({:.6}, {:.6}, {:.6})",
+                    intersection_point.coords()[0].to_f64().unwrap(),
+                    intersection_point.coords()[1].to_f64().unwrap(),
+                    intersection_point.coords()[2].to_f64().unwrap()
+                );
+
+                let eps = T::from(1e-6);
+                if t > eps && t < T::one() - eps && t < best_t {
+                    println!("          NEW BEST INTERSECTION");
+                    best_t = t.clone();
+                    best_intersection = Some((he, intersection_point));
+                } else {
+                    println!(
+                        "          Intersection rejected (t out of bounds or worse than current best)"
+                    );
+                }
+            } else {
+                println!("          No intersection found");
+            }
+        }
+
+        if let Some((he, intersection_point)) = best_intersection {
+            println!("      SPLITTING EDGE {} at best intersection", he);
+
+            // Split the edge and advance
+            if let Ok(new_vertex_idx) = self.split_edge(he, intersection_point) {
+                println!("      Created new vertex {}", new_vertex_idx);
+
+                // IMPORTANT: After split_edge, half-edge indices may be invalid!
+                // Re-find faces containing the new vertex
+                let new_vertex_pos = self.vertices[new_vertex_idx].position.clone();
+                let containing_faces = self.faces_containing_point(&new_vertex_pos);
+
+                println!(
+                    "      New vertex {} is on faces: {:?}",
+                    new_vertex_idx, containing_faces
+                );
+
+                if !containing_faces.is_empty() {
+                    // Pick a face that's not the original one we were processing
+                    let next_face = containing_faces[0];
+                    println!("      ADVANCING to re-found face {}", next_face);
+                    return Some((new_vertex_idx, next_face));
+                } else {
+                    println!("      ERROR: New vertex not found on any face after split!");
+            }
+            } else {
+                println!("      ERROR: Failed to split edge");
+            }
+        } else {
+            println!("      find_robust_edge_intersection: No valid intersection found");
+        }
+
+        None
+    }
+
+    /// Robust intersection computation with multiple methods
+    fn compute_intersection(
+        &self,
+        p: &Point<T, N>,
+        q: &Point<T, N>,
+        a: &Point<T, N>,
+        b: &Point<T, N>,
+    ) -> Option<(Point<T, N>, T)>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        // Method 1: 3D parametric line intersection
+        if let Some(result) = self.parametric_line_intersection_3d(p, q, a, b) {
+            return Some(result);
+        }
+
+        // Method 2: Try all projection planes
+        for drop_axis in 0..3 {
+            if let Some(result) = self.projected_intersection_2d(p, q, a, b, drop_axis) {
+                return Some(result);
+            }
+        }
+
+        // Method 3: Distance-based closest approach
+        self.closest_approach_intersection(p, q, a, b)
+    }
+
+    /// Method 1: Direct 3D parametric intersection
+    fn parametric_line_intersection_3d(
+        &self,
+        p: &Point<T, N>,
+        q: &Point<T, N>,
+        a: &Point<T, N>,
+        b: &Point<T, N>,
+    ) -> Option<(Point<T, N>, T)>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let d1 = (q - p).as_vector();
+        let d2 = (b - a).as_vector();
+        let r = (a - p).as_vector();
+
+        // Solve: p + t*d1 = a + s*d2
+        // This gives us: t*d1 - s*d2 = r
+
+        let d1_dot_d1 = d1.dot(&d1);
+        let d1_dot_d2 = d1.dot(&d2);
+        let d2_dot_d2 = d2.dot(&d2);
+        let d1_dot_r = d1.dot(&r);
+        let d2_dot_r = d2.dot(&r);
+
+        let denom = &d1_dot_d1 * &d2_dot_d2 - &d1_dot_d2 * &d1_dot_d2;
+        let eps = T::from(1e-12);
+
+        if &denom.abs() < &eps {
+            return None; // Lines are parallel
+        }
+
+        let t = (&d2_dot_d2 * &d1_dot_r - &d1_dot_d2 * &d2_dot_r) / denom.clone();
+        let s = (&d1_dot_d1 * &d2_dot_r - &d1_dot_d2 * &d1_dot_r) / denom;
+
+        // Check if intersection is within both line segments
+        let eps_bounds = T::from(1e-10);
+        if t >= -eps_bounds.clone()
+            && t <= T::one() + eps_bounds.clone()
+            && s >= -eps_bounds.clone()
+            && s <= T::one() + eps_bounds
+        {
+            let intersection = p + &d1.scale(&t).0;
+            return Some((intersection, t));
+        }
+
+        None
+    }
+
+    /// Method 2: Projection-based intersection for a specific axis
+    fn projected_intersection_2d(
+        &self,
+        p: &Point<T, N>,
+        q: &Point<T, N>,
+        a: &Point<T, N>,
+        b: &Point<T, N>,
+        drop_axis: usize,
+    ) -> Option<(Point<T, N>, T)>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        // Choose two axes to keep (drop the specified axis)
+        let (i0, i1) = match drop_axis {
+            0 => (1, 2),
+            1 => (0, 2),
+            _ => (0, 1),
+        };
+
+        // Project to 2D
+        let p2 = Point::<T, 2>::from_vals([p.coords()[i0].clone(), p.coords()[i1].clone()]);
+        let q2 = Point::<T, 2>::from_vals([q.coords()[i0].clone(), q.coords()[i1].clone()]);
+        let a2 = Point::<T, 2>::from_vals([a.coords()[i0].clone(), a.coords()[i1].clone()]);
+        let b2 = Point::<T, 2>::from_vals([b.coords()[i0].clone(), b.coords()[i1].clone()]);
+
+        // **CHECK FOR DEGENERATE PROJECTIONS FIRST**
+        let segment_2d_len_sq =
+            (&q2[0] - &p2[0]) * (&q2[0] - &p2[0]) + (&q2[1] - &p2[1]) * (&q2[1] - &p2[1]);
+        let edge_2d_len_sq =
+            (&b2[0] - &a2[0]) * (&b2[0] - &a2[0]) + (&b2[1] - &a2[1]) * (&b2[1] - &a2[1]);
+
+        if segment_2d_len_sq < T::from(1e-16) || edge_2d_len_sq < T::from(1e-16) {
+            return None; // Degenerate projection
+        }
+
+        // **USE PARAMETRIC 2D INTERSECTION (NOT segment_intersect_2d)**
+        let dir_segment = [&q2[0] - &p2[0], &q2[1] - &p2[1]];
+        let dir_edge = [&b2[0] - &a2[0], &b2[1] - &a2[1]];
+
+        // Solve: p2 + t*dir_segment = a2 + s*dir_edge
+        let denom = &dir_segment[0] * &dir_edge[1] - &dir_segment[1] * &dir_edge[0];
+
+        if denom.abs() < T::from(1e-12) {
+            return None; // Parallel in 2D
+        }
+
+        let diff = [&a2[0] - &p2[0], &a2[1] - &p2[1]];
+        let t = (&diff[0] * &dir_edge[1] - &diff[1] * &dir_edge[0]) / denom.clone();
+        let s = (&diff[0] * &dir_segment[1] - &diff[1] * &dir_segment[0]) / denom;
+
+        // Check bounds
+        let eps = T::from(1e-10);
+        if t >= -eps.clone()
+            && t <= T::one() + eps.clone()
+            && s >= -eps.clone()
+            && s <= T::one() + eps
+        {
+            // Lift back to 3D by interpolating along the original segment
+            let dir_3d = (q - p).as_vector();
+            let intersection_3d = p + &dir_3d.scale(&t).0;
+            return Some((intersection_3d, t));
+        }
+
+        None
+    }
+
+    /// Method 3: Closest approach between line segments
+    fn closest_approach_intersection(
+        &self,
+        p: &Point<T, N>,
+        q: &Point<T, N>,
+        a: &Point<T, N>,
+        b: &Point<T, N>,
+    ) -> Option<(Point<T, N>, T)>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let d1 = (q - p).as_vector();
+        let d2 = (b - a).as_vector();
+        let r = (p - a).as_vector();
+
+        let a_val = d1.dot(&d1);
+        let b_val = d1.dot(&d2);
+        let c_val = d2.dot(&d2);
+        let d_val = d1.dot(&r);
+        let e_val = d2.dot(&r);
+
+        let denom = &a_val * &c_val - &b_val * &b_val;
+        let eps = T::from(1e-12);
+
+        if denom.abs() < eps {
+            return None;
+        }
+
+        let t = (&b_val * &e_val - &c_val * &d_val) / denom.clone();
+        let s = (&a_val * &e_val - &b_val * &d_val) / denom;
+
+        // Check if closest approach is within reasonable bounds and distance
+        if t >= T::from(-0.1) && t <= T::from(1.1) && s >= T::from(-0.1) && s <= T::from(1.1) {
+            let point1 = p + &d1.scale(&t).0;
+            let point2 = a + &d2.scale(&s).0;
+            let distance = point1.distance_to(&point2);
+
+            if distance < T::from(1e-6) {
+                // Lines are close enough to be considered intersecting
+                let intersection = p + &d1.scale(&t.clone().max(T::zero()).min(T::one())).0;
+                let clamped_t = &t.max(T::zero()).min(T::one());
+                return Some((intersection, clamped_t.clone()));
+            }
+        }
+
+        None
+    }
+
+    /// Helper: Check if two vectors are colinear with potential overlap
+    fn are_colinear_with_overlap(&self, v1: &Vector<T, N>, v2: &Vector<T, N>, eps: T) -> bool
+    where
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let cross = v1.cross(v2);
+        cross.norm() < eps
+    }
+
+    pub fn split_segment_by_indices(
+        &mut self,
+        face: usize,
+        vi0: usize,
+        vi1: usize,
+        update_loops: bool,
+    ) {
+        // 1) If there’s already a half‐edge vi0→vi1 on this face, split that edge
+        if let Some(he) = self.find_half_edge_on_face(face, vi0, vi1) {
+            println!(
+                "Found existing half-edge {} from {} to {}, splitting it",
+                he, vi0, vi1
+            );
+            let _ = self.split_edge(he, self.vertices[vi1].position.clone());
+        } else {
+            println!(
+                "No existing half-edge from {} to {}, splitting face {}",
+                vi0, vi1, face
+            );
+            // 2) No direct half‐edge: do a single two‐triangle split of this face
+            let vs = self.face_vertices(face);
+            let &third = vs.iter().find(|&&v| v != vi0 && v != vi1).unwrap();
+            // collect all faces except `face`
+            let mut new_tris = Vec::with_capacity(self.faces.len() + 1);
+            for f in 0..self.faces.len() {
+                if f != face {
+                    let fv = self.face_vertices(f);
+                    new_tris.push([fv[0], fv[1], fv[2]]);
+                }
+            }
+            // add the two halves of the split
+            new_tris.push([vi0, vi1, third]);
+            new_tris.push([vi1, vi0, third]);
+
+            // rebuild entire mesh (vertices unchanged)
+            let old_positions = self
+                .vertices
+                .iter()
+                .map(|v| v.position.clone())
+                .collect::<Vec<_>>();
+            *self = Mesh::new();
+            for pos in old_positions {
+                self.add_vertex(pos);
+            }
+            for tri in new_tris {
+                self.add_triangle(tri[0], tri[1], tri[2]);
+            }
+        }
+
+        // 3) rebuild boundary loops if asked
+        if update_loops {
+            //self.build_boundary_loops();
         }
     }
 
-    /// Test if `point` lies inside this mesh (using ray‐cast + AABB‐tree).
-    fn _point_in_mesh(&self, _point: &Point<T, N>) -> bool {
-        // TODO:
-        // 1) Build/rerun an AABB‐tree on faces if you don’t have one.
-        // 2) Cast a ray in any direction, count face crossings.
-        // 3) Return `count % 2 == 1`.
-        false
+    pub fn split_segment_by_indices_2(
+        &mut self,
+        face: usize,
+        vi0: usize,
+        vi1: usize,
+        update_loops: bool,
+    ) {
+        // 1. Find half-edge from vi0 to vi1 or vi1 to vi0 on this face.
+        let mut he_match = None;
+        for &he in &self.face_half_edges(face) {
+            let src = self.half_edges[self.half_edges[he].prev].vertex;
+            let dst = self.half_edges[he].vertex;
+            if (src == vi0 && dst == vi1) || (src == vi1 && dst == vi0) {
+                he_match = Some((he, src, dst));
+                break;
+            }
+        }
+
+        match he_match {
+            Some((he, src, dst)) => {
+                // 2. Edge already exists as a half-edge in this face.
+                // Optional: Split it if you want to insert a new vertex between, but for a segment split, we’re done.
+                // No-op: edge already present as half-edge
+                // Optionally, you could check if it’s a boundary edge and act accordingly.
+                return;
+            }
+            None => {
+                // 3. No half-edge directly between vi0 and vi1; need to split through intermediate vertices.
+                // We'll find the path between vi0 and vi1 along the face boundary.
+                // (Works for triangles and polygons.)
+                let face_vs = self.face_vertices(face);
+                // Find path vi0 -> ... -> vi1 along face boundary
+                let mut path = Vec::new();
+                let mut found = false;
+                for i in 0..face_vs.len() {
+                    if face_vs[i] == vi0 {
+                        // Walk forward until we find vi1
+                        let mut idx = i;
+                        loop {
+                            // println!("Checking vertex {} on face {}", face_vs[idx], face);
+                            let next_idx = (idx + 1) % face_vs.len();
+                            let v = face_vs[next_idx];
+                            path.push(face_vs[idx]);
+                            if v == vi1 {
+                                path.push(v);
+                                found = true;
+                                break;
+                            }
+                            idx = next_idx;
+                            if idx == i {
+                                break; // Avoid infinite loops
+                            }
+                        }
+                        if found {
+                            break;
+                        }
+                        path.clear();
+                    }
+                }
+                if !found {
+                    panic!("Vertices not on the same face boundary");
+                }
+                // Now path = [vi0, ..., vi1]
+                // For every consecutive pair, check if edge exists, else split at middle points.
+                for pair in path.windows(2) {
+                    // println!("Processing pair: {:?}", pair);
+                    let v_from = pair[0];
+                    let v_to = pair[1];
+                    let he = self.find_half_edge_on_face(face, v_from, v_to);
+                    if he.is_none() {
+                        // Should not happen: mesh connectivity error
+                        panic!("No half-edge between consecutive face boundary vertices");
+                    }
+                    // For robust Booleans, only split at explicit new points.
+                    // If we wanted to insert more points (not just along edges), do so here.
+                }
+                // After splitting, the edge should exist
+            }
+        }
+
+        if update_loops {
+            //self.build_boundary_loops();
+        }
     }
+
+    /// Utility: Finds the half-edge index on the given face from vi_from to vi_to.
+    fn find_half_edge_on_face(&self, face: usize, vi_from: usize, vi_to: usize) -> Option<usize> {
+        // Add safety check to prevent infinite loops
+        let start_he = self.faces[face].half_edge;
+        let mut current_he = start_he;
+        let mut count = 0;
+        let max_iterations = self.half_edges.len(); // Safety limit
+
+        loop {
+            // println!("Checking half-edge {} on face {}", current_he, face);
+
+            // Safety check to prevent infinite loops
+            if count > max_iterations {
+                // println!("Warning: Infinite loop detected in find_half_edge_on_face");
+                return None;
+            }
+
+            let src = self.half_edges[self.half_edges[current_he].prev].vertex;
+            let dst = self.half_edges[current_he].vertex;
+
+            if src == vi_from && dst == vi_to {
+                return Some(current_he);
+            }
+
+            current_he = self.half_edges[current_he].next;
+            count += 1;
+
+            if current_he == start_he {
+                break;
+            }
+        }
+
+        None
+    }
+
+    /// Naïve but correct: returns the *closest* distance from `p` to ANY triangle in `self`
+    /// You can optimize this later by using the tree to cull away distant faces.
+    pub fn point_to_mesh_distance(
+        &self,
+        _tree: &AabbTree<T, 3, Point<T, 3>, usize>,
+        p: &Point3<T>,
+    ) -> T
+    where
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let mut min_d2 = T::from(std::f64::INFINITY);
+        for fi in 0..self.faces.len() {
+            let vs = self.face_vertices(fi);
+            let v0 = Point::<T, 3>::from_vals([
+                self.vertices[vs[0]].position[0].clone(),
+                self.vertices[vs[0]].position[1].clone(),
+                self.vertices[vs[0]].position[2].clone(),
+            ]);
+            let v1 = Point::<T, 3>::from_vals([
+                self.vertices[vs[1]].position[0].clone(),
+                self.vertices[vs[1]].position[1].clone(),
+                self.vertices[vs[1]].position[2].clone(),
+            ]);
+            let v2 = Point::<T, 3>::from_vals([
+                self.vertices[vs[2]].position[0].clone(),
+                self.vertices[vs[2]].position[1].clone(),
+                self.vertices[vs[2]].position[2].clone(),
+            ]);
+
+            let d2 = distance_point_triangle_squared(&p, &v0, &v1, &v2);
+            println!(
+                "Distance squared from point {:?} to triangle {}: {}",
+                p,
+                fi,
+                d2.to_f64().unwrap()
+            );
+            min_d2 = min_d2.min(d2);
+        }
+        min_d2.sqrt()
+    }
+
+    /// Given a face and a target point, finds an existing vertex (if close)
+    /// or splits the appropriate edge and returns the new vertex index.
+    pub fn find_or_insert_vertex_on_face(&mut self, face: usize, p: &Point<T, N>) -> Option<usize>
+    where
+        T: Scalar,
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        // 1. Check if p coincides with a face vertex.
+        let vs = self.face_vertices(face);
+        let face_vs = self.face_vertices(face);
+        for &vi in &face_vs {
+            if self.vertices[vi].position.distance_to(p) < EPS.into() {
+                return Some(vi);
+            }
+        }
+
+        let mut check = false;
+        println!("Beginning to check face {}", face);
+        // 2. Check if p is on a face edge, and split if so.
+        for &he in &self.face_half_edges(face) {
+            // println!("Checking half-edge {}", he);
+            println!("Checking half-edge {}", he);
+            let src = self.half_edges[self.half_edges[he].prev].vertex;
+            let dst = self.half_edges[he].vertex;
+            let ps = &self.vertices[src].position;
+            let pd = &self.vertices[dst].position;
+            // Is p on segment [ps, pd]?
+            if point_on_segment_eps(ps, pd, p, EPS.into()) {
+                // Split edge and return new vertex index.
+                let new_vi = self.split_edge(he, p.clone()).unwrap();
+                check = true;
+                println!("Point is on.");
+                return Some(new_vi);
+            } else {
+                println!("Point {:?} is not on edge from {:?} to {:?}", p, ps, pd);
+            }
+            // println!("Point {:?} is not on edge from {:?} to {:?}", p, ps, pd);
+        }
+
+        // 3. If p is strictly inside this triangular face, split it into 3 (RARE case).
+        let a = &self.vertices[vs[0]].position;
+        let b = &self.vertices[vs[1]].position;
+        let c = &self.vertices[vs[2]].position;
+        if point_in_or_on_triangle(p, a, b, c) {
+            // 3.a add new vertex
+            let w = self.add_vertex(p.clone());
+
+            // 3.b remove old face by marking its half‐edge
+            self.faces[face].half_edge = usize::MAX;
+
+            // 3.c collect all other faces, rebuild this one into 3 triangles
+            let mut new_tris = Vec::new();
+            for f in 0..self.faces.len() {
+                if f != face {
+                    let fv = self.face_vertices(f);
+                    new_tris.push([fv[0], fv[1], fv[2]]);
+                }
+            }
+            // split (a,b,c) into (a,b,w), (b,c,w), (c,a,w)
+            new_tris.push([vs[0], vs[1], w]);
+            new_tris.push([vs[1], vs[2], w]);
+            new_tris.push([vs[2], vs[0], w]);
+
+            // rebuild mesh (vertices unchanged)
+            let old_positions = self
+                .vertices
+                .iter()
+                .map(|v| v.position.clone())
+                .collect::<Vec<_>>();
+            *self = Mesh::new();
+            for pos in old_positions {
+                self.add_vertex(pos);
+            }
+            for t in new_tris {
+                self.add_triangle(t[0], t[1], t[2]);
+            }
+
+            return Some(w);
+        }
+
+        if !check {
+            println!("WARNING: Point {:?} is not on any edge of face {}", p, face);
+        }
+
+        None
+    }
+
+    pub fn half_edge_between(&self, vi0: usize, vi1: usize) -> Option<usize> {
+        // Check edge_map for direct connection
+        if let Some(&he_idx) = self.edge_map.get(&(vi0, vi1)) {
+            return Some(he_idx);
+        }
+        // Also check the reverse direction (for undirected edge)
+        if let Some(&he_idx) = self.edge_map.get(&(vi1, vi0)) {
+            return Some(he_idx);
+        }
+        None
+    }
+}
+
+fn point_in_or_on_triangle<T: Scalar, const N: usize>(
+    p: &Point<T, N>,
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    c: &Point<T, N>,
+) -> bool
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    // barycentric coordinates
+    let v0 = (c - a).as_vector();
+    let v1 = (b - a).as_vector();
+    let v2 = (p - a).as_vector();
+    let dot00 = v0.dot(&v0);
+    let dot01 = v0.dot(&v1);
+    let dot02 = v0.dot(&v2);
+    let dot11 = v1.dot(&v1);
+    let dot12 = v1.dot(&v2);
+
+    let inv = &T::one() / &(&dot00 * &dot11 - &dot01 * &dot01);
+    let u = &(&dot11 * &dot02 - &dot01 * &dot12) * &inv;
+    let v = &(&dot00 * &dot12 - &dot01 * &dot02) * &inv;
+
+    // allow on‐edge within small epsilon
+    let e = T::from(1e-9);
+    u >= -e.clone() && v >= -e.clone() && u + v <= T::one() + e
 }
 
 pub trait BooleanImpl<T>
