@@ -26,17 +26,27 @@ use crate::{
         point::{Point, PointOps},
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
-        tri_tri_intersect::tri_tri_intersection,
+        tri_tri_intersect::{self, tri_tri_intersection, tri_tri_overlap},
+        util::EPS,
+        vector::{Vector, VectorOps},
     },
-    numeric::scalar::Scalar,
+    io::obj::write_obj,
+    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    operations::Zero,
 };
+use num_traits::Float;
+use rand::prelude::*;
 
 use super::{face::Face, half_edge::HalfEdge, vertex::Vertex};
+use core::panic;
 use std::{
+    array::from_fn,
     collections::{HashMap, HashSet},
     ops::{Add, Div, Mul, Sub},
 };
+use std::{convert::TryInto, f64::consts::PI};
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum BooleanOp {
     Union,
     Intersection,

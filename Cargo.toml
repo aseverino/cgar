@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 num-traits = "0.2.19"
+rand = "0.9.1"
 rug = "1.24"

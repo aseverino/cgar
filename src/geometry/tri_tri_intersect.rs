@@ -27,7 +27,11 @@ use std::{
 
 use crate::{
     geometry::{
-        Point3, Vector3, point::PointOps, spatial_element::SpatialElement, vector::VectorOps,
+        Point2, Point3, Vector3,
+        point::{Point, PointOps},
+        spatial_element::SpatialElement,
+        util::*,
+        vector::{Vector, VectorOps},
     },
     numeric::scalar::Scalar,
     operations::Zero,
@@ -35,85 +39,113 @@ use crate::{
 
 /// Fast 3D triangle–triangle overlap test (Möller 1997).
 /// Returns true if T1=(p0,p1,p2) and T2=(q0,q1,q2) intersect.
-pub fn tri_tri_overlap<T>(
-    p0: &Point3<T>,
-    p1: &Point3<T>,
-    p2: &Point3<T>,
-    q0: &Point3<T>,
-    q1: &Point3<T>,
-    q2: &Point3<T>,
-) -> bool
+pub fn tri_tri_overlap<T: Scalar>(
+    pa: &[Point<T, 3>; 3],
+    pb: &[Point<T, 3>; 3],
+    normal: &Vector<T, 3>,
+) -> Vec<(Point<T, 3>, Point<T, 3>)>
 where
-    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Mul<&'a T, Output = T>,
+{
+    // **ROBUST AXIS SELECTION: Test all three projections and pick the best one**
+    let mut best_projection = None;
+    let mut best_area = T::from(0.0);
+
+    for drop_axis in 0..3 {
+        let (i0, i1) = match drop_axis {
+            0 => (1, 2), // Drop X, keep Y,Z
+            1 => (0, 2), // Drop Y, keep X,Z
+            _ => (0, 1), // Drop Z, keep X,Y
+        };
+
+        // Project both triangles to this 2D plane
+        let to2 = |p: &Point<T, 3>| Point::<T, 2>::from_vals([p[i0].clone(), p[i1].clone()]);
+        let pa2 = [to2(&pa[0]), to2(&pa[1]), to2(&pa[2])];
+        let pb2 = [to2(&pb[0]), to2(&pb[1]), to2(&pb[2])];
+
+        // Compute projected areas of both triangles
+        let area_a = triangle_area_2d(&pa2[0], &pa2[1], &pa2[2]);
+        let area_b = triangle_area_2d(&pb2[0], &pb2[1], &pb2[2]);
+        let total_area = area_a + area_b;
+
+        // Keep the projection with maximum total area
+        if total_area > best_area {
+            best_area = total_area.clone();
+            best_projection = Some((i0, i1, pa2, pb2));
+        }
+    }
+
+    // Check if we found a valid projection
+    if best_area < T::from(1e-12) {
+        println!("WARNING: All projections are degenerate, triangles are likely collinear");
+        return Vec::new();
+    }
+
+    let (i0, i1, pa2, pb2) = best_projection.unwrap();
+
+    let mut overlaps = Vec::new();
+    for ai in 0..3 {
+        let a0 = &pa2[ai];
+        let a1 = &pa2[(ai + 1) % 3];
+        for bi in 0..3 {
+            let b0 = &pb2[bi];
+            let b1 = &pb2[(bi + 1) % 3];
+
+            // **ADDITIONAL DEGENERACY CHECK FOR 2D SEGMENTS**
+            let seg_a_len_sq =
+                (&a1[0] - &a0[0]) * (&a1[0] - &a0[0]) + (&a1[1] - &a0[1]) * (&a1[1] - &a0[1]);
+            let seg_b_len_sq =
+                (&b1[0] - &b0[0]) * (&b1[0] - &b0[0]) + (&b1[1] - &b0[1]) * (&b1[1] - &b0[1]);
+
+            if seg_a_len_sq < T::from(1e-16) || seg_b_len_sq < T::from(1e-16) {
+                continue; // Skip degenerate segments
+            }
+
+            if let Some((r0, r1)) = segment_intersect_2d(a0, a1, b0, b1) {
+                let intersection_len_sq =
+                    (&r1[0] - &r0[0]) * (&r1[0] - &r0[0]) + (&r1[1] - &r0[1]) * (&r1[1] - &r0[1]);
+                if intersection_len_sq > T::from(1e-16) {
+                    // Lift back to 3D along A-edge
+                    overlaps.push((
+                        lift_to_3d(&pa[ai], &pa[(ai + 1) % 3], &r0),
+                        lift_to_3d(&pa[ai], &pa[(ai + 1) % 3], &r1),
+                    ));
+                }
+            }
+        }
+    }
+    overlaps
+}
+
+/// Given 3D edge p->q and 2D projected intersection r, return 3D point
+pub fn lift_to_3d<T: Scalar>(p: &Point<T, 3>, q: &Point<T, 3>, r2: &Point<T, 2>) -> Point<T, 3>
+where
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    // 1) plane test for triangle T1
-    let e1 = (p1 - p0).as_vector();
-    let e2 = (p2 - p0).as_vector();
-    let n1 = e1.cross(&e2);
-
-    let d0 = n1.dot(&(q0 - p0).as_vector().into());
-    let d1 = n1.dot(&(q1 - p0).as_vector().into());
-    let d2 = n1.dot(&(q2 - p0).as_vector().into());
-
-    if (d0 > T::zero() && d1 > T::zero() && d2 > T::zero())
-        || (d0 < T::zero() && d1 < T::zero() && d2 < T::zero())
-    {
-        return false;
-    }
-    // coplanar?
-    if d0 == T::zero() && d1 == T::zero() && d2 == T::zero() {
-        return coplanar_tri_tri(p0, p1, p2, q0, q1, q2, &n1);
-    }
-
-    // 2) plane test for triangle T2
-    let f1 = (q1 - q0).as_vector();
-    let f2 = (q2 - q0).as_vector();
-    let n2 = f1.cross(&f2);
-
-    let e0 = n2.dot(&(p0 - q0).as_vector().into());
-    let e1_ = n2.dot(&(p1 - q0).as_vector().into());
-    let e2_ = n2.dot(&(p2 - q0).as_vector().into());
-
-    if (e0 > T::zero() && e1_ > T::zero() && e2_ > T::zero())
-        || (e0 < T::zero() && e1_ < T::zero() && e2_ < T::zero())
-    {
-        return false;
-    }
-
-    // 3) 9 cross‐edge SAT tests
-    let tri_axes = [
-        e1.cross(&f1),
-        e1.cross(&f2),
-        e1.cross(&(q0 - q2).as_vector()),
-        e2.cross(&f1),
-        e2.cross(&f2),
-        e2.cross(&(q0 - q2).as_vector()),
-        (p0 - p2).as_vector().cross(&f1),
-        (p0 - p2).as_vector().cross(&f2),
-        (p0 - p2).as_vector().cross(&(q0 - q2).as_vector()),
-    ];
-
-    for axis in &tri_axes {
-        if Vector3::<T>::zero() == *axis {
-            continue; // parallel edges
-        }
-        let (min1, max1) = project_3d_triangle(axis, p0, p1, p2);
-        let (min2, max2) = project_3d_triangle(axis, q0, q1, q2);
-        if max1 < min2 || max2 < min1 {
-            return false;
-        }
-    }
-
-    true
+    // compute t along edge by comparing one coordinate
+    let t = if !(&q[0] - &p[0]).is_zero() {
+        (&r2[0] - &p[0]) / (&q[0] - &p[0])
+    } else if !(&q[1] - &p[1]).is_zero() {
+        (&r2[1] - &p[1]) / (&q[1] - &p[1])
+    } else {
+        (&r2[0] - &p[2]) / (&q[2] - &p[2])
+    };
+    Point::<T, 3>::from_vals([
+        &p[0] + &(&t * &(&q[0] - &p[0])),
+        &p[1] + &(&t * &(&q[1] - &p[1])),
+        &p[2] + &(&t * &(&q[2] - &p[2])),
+    ])
 }
 
 /// Return true if 2D point `p` lies inside (or on) the triangle `tri` = [(x0,y0),(x1,y1),(x2,y2)].
 /// Uses a barycentric‐coordinate test.
-fn point_in_tri_2d<T>(p: (T, T), tri: &[(T, T); 3]) -> bool
+fn point_in_tri_2d<T>(p: &Point2<T>, tri: &[Point2<T>; 3]) -> bool
 where
     T: Scalar,
     for<'a> &'a T: Sub<&'a T, Output = T>
@@ -121,51 +153,89 @@ where
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    let (x, y) = p;
-    let (x0, y0) = &tri[0];
-    let (x1, y1) = &tri[1];
-    let (x2, y2) = &tri[2];
+    let (x, y) = (&p.coords[0], &p.coords[1]);
+    let (x0, y0) = (&tri[0].coords[0], &tri[0].coords[1]);
+    let (x1, y1) = (&tri[1].coords[0], &tri[1].coords[1]);
+    let (x2, y2) = (&tri[2].coords[0], &tri[2].coords[1]);
     // Compute barycentric coords
     let denom = &(&(y1 - y2) * &(x0 - x2)) + &(&(x2 - x1) * &(y0 - y2));
     if denom == T::zero() {
         // degenerate triangle
         return false;
     }
-    let u = &(&(&(y1 - y2) * &(&x - &x2)) + &(&(x2 - x1) * &(&y - &y2))) / &denom;
-    let v = &(&(&(y2 - y0) * &(&x - &x2)) + &(&(x0 - x2) * &(&y - &y2))) / &denom;
+    let u = &(&(&(y1 - y2) * &(x - &x2)) + &(&(x2 - x1) * &(y - &y2))) / &denom;
+    let v = &(&(&(y2 - y0) * &(x - &x2)) + &(&(x0 - x2) * &(y - &y2))) / &denom;
     u >= T::zero() && v >= T::zero() && (&u + &v) <= T::one()
 }
 
 /// If segments [a→b] and [c→d] intersect in 2D, return the intersection point.
 /// Otherwise return None.  (Colinear or parallel ⇒ None.)
-fn segment_intersect_2d<T>(a: (T, T), b: (T, T), c: (T, T), d: (T, T)) -> Option<(T, T)>
+pub fn segment_intersect_2d<T: Scalar>(
+    a0: &Point<T, 2>,
+    a1: &Point<T, 2>,
+    b0: &Point<T, 2>,
+    b1: &Point<T, 2>,
+) -> Option<(Point<T, 2>, Point<T, 2>)>
 where
-    T: Scalar,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Mul<&'a T, Output = T>,
 {
-    let (x1, y1) = a;
-    let (x2, y2) = b;
-    let (x3, y3) = c;
-    let (x4, y4) = d;
-    // denominator = cross(dir_ab, dir_cd)
-    let denom = &(&(&y4 - &y3) * &(&x2 - &x1)) - &(&(&x4 - &x3) * &(&y2 - &y1));
-    if denom == T::zero() {
-        return None; // parallel or colinear
-    }
-    // compute parameters t,u
-    let t = &(&(&(&x4 - &x3) * &(&y1 - &y3)) - &(&(&y4 - &y3) * &(&x1 - &x3))) / &denom;
-    let u = &(&(&(&x2 - &x1) * &(&y1 - &y3)) - &(&(&y2 - &y1) * &(&x1 - &x3))) / &denom;
-    // check if intersection lies on both segments
-    if t < T::zero() || t > T::one() || u < T::zero() || u > T::one() {
+    // 2D segment intersection including overlap
+    // direction vectors
+    let da = [&a1[0] - &a0[0], &a1[1] - &a0[1]];
+    let db = [&b1[0] - &b0[0], &b1[1] - &b0[1]];
+    // cross of directions
+    let denom = &da[0] * &db[1] - &da[1] * &db[0];
+    if denom.is_zero() {
+        // parallel or colinear
+        // check colinearity via cross of (b0 - a0) and da
+        let diff = [&b0[0] - &a0[0], &b0[1] - &a0[1]];
+        let cross = &diff[0] * &da[1] - &diff[1] * &da[0];
+        if cross.is_zero() {
+            // colinear: project onto A's parameter t
+            let len2 = &da[0] * &da[0] + &da[1] * &da[1];
+            if !len2.is_positive() {
+                return None;
+            }
+            let t0 = &(&diff[0] * &da[0] + &diff[1] * &da[1]) / &len2;
+            let t1 = &(&(&b1[0] - &a0[0]) * &da[0] + &(&b1[1] - &a0[1]) * &da[1]) / &len2;
+            let (tmin, tmax) = if t0 < t1 { (t0, t1) } else { (t1, t0) };
+            let start = tmin.max(0.0.into());
+            let end = tmax.min(1.0.into());
+            if start <= end {
+                let p_start = Point::<T, 2>::from_vals([
+                    &a0[0] + &(&da[0] * &start),
+                    &a0[1] + &(&da[1] * &start),
+                ]);
+                let p_end = Point::<T, 2>::from_vals([
+                    &a0[0] + &(&da[0] * &end),
+                    &a0[1] + &(&da[1] * &end),
+                ]);
+                return Some((p_start, p_end));
+            }
+        }
         return None;
     }
-    // intersection = a + t*(b-a)
-    let ix = &x1 + &(&t * &(&x2 - &x1));
-    let iy = &y1 + &(&t * &(&y2 - &y1));
-    Some((ix, iy))
+    // lines intersect at single point, solve via cross ratios
+    let diff = [&b0[0] - &a0[0], &b0[1] - &a0[1]];
+    let s = &(&diff[0] * &db[1] - &diff[1] * &db[0]) / &denom;
+    let u = &(&diff[0] * &da[1] - &diff[1] * &da[0]) / &denom;
+
+    if s >= (-EPS).into()
+        && s <= (1.0 + EPS).into()
+        && u >= (-EPS).into()
+        && u <= (1.0 + EPS).into()
+    {
+        let ix = &a0[0] + &(&s * &da[0]);
+        let iy = &a0[1] + &(&s * &da[1]);
+        return Some((
+            Point::<T, 2>::from_vals([ix.clone(), iy.clone()]),
+            Point::<T, 2>::from_vals([ix, iy]),
+        ));
+    }
+    None
 }
 
 /// Project a 3D triangle onto `axis`, returning (min,max).
@@ -307,14 +377,14 @@ where
 
     // 3) collect vertices of one triangle inside the other
     let mut pts: Vec<Point3<T>> = Vec::new();
-    for (i, (x, y)) in t1.iter().enumerate() {
-        if point_in_tri_2d((x.clone(), y.clone()), &t2) {
-            pts.push(back_project_to_3d(&x, &y, i0, i1, drop, &p0));
+    for (i, p) in t1.iter().enumerate() {
+        if point_in_tri_2d(p, &t2) {
+            pts.push(back_project_to_3d(p, i0, i1, drop, &p0));
         }
     }
-    for (i, (x, y)) in t2.iter().enumerate() {
-        if point_in_tri_2d((x.clone(), y.clone()), &t1) {
-            pts.push(back_project_to_3d(&x, &y, i0, i1, drop, &q0));
+    for (i, p) in t2.iter().enumerate() {
+        if point_in_tri_2d(p, &t1) {
+            pts.push(back_project_to_3d(p, i0, i1, drop, &q0));
         }
     }
 
@@ -331,10 +401,9 @@ where
     ];
     for (a, b) in &edges1 {
         for (c, d) in &edges2 {
-            if let Some((ix, iy)) = segment_intersect_2d(a.clone(), b.clone(), c.clone(), d.clone())
-            {
+            if let Some((ix, _iy)) = segment_intersect_2d(a, b, c, d) {
                 // Here we use p0 as the reference for the dropped axis, but you could interpolate if desired
-                pts.push(back_project_to_3d(&ix, &iy, i0, i1, drop, p0));
+                pts.push(back_project_to_3d(&ix, i0, i1, drop, p0));
             }
         }
     }
@@ -516,14 +585,13 @@ fn coplanar_axes<T: Scalar>(n: &Vector3<T>) -> (usize, usize, usize) {
 }
 
 /// Project a 3D point onto a 2D plane using the provided axes.
-fn project_to_2d<T: Scalar>(p: &Point3<T>, i0: usize, i1: usize) -> (T, T) {
-    (p[i0].clone(), p[i1].clone())
+fn project_to_2d<T: Scalar>(p: &Point3<T>, i0: usize, i1: usize) -> Point2<T> {
+    Point2::from_vals([p[i0].clone(), p[i1].clone()])
 }
 
 /// Back-project a 2D point into 3D, using a reference 3D point for the dropped axis.
 fn back_project_to_3d<T: Scalar>(
-    x: &T,
-    y: &T,
+    p: &Point2<T>,
     i0: usize,
     i1: usize,
     drop: usize,
@@ -532,9 +600,9 @@ fn back_project_to_3d<T: Scalar>(
 where
     Point3<T>: SpatialElement<T, 3>,
 {
-    let mut coords = core::array::from_fn(|_| T::zero());
-    coords[i0] = x.clone();
-    coords[i1] = y.clone();
+    let mut coords = Point3::zero();
+    coords[i0] = p.coords[0].clone();
+    coords[i1] = p.coords[1].clone();
     coords[drop] = reference[drop].clone();
-    Point3::from_vals(coords)
+    coords
 }
