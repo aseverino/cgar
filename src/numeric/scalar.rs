@@ -67,4 +67,6 @@ pub trait Scalar:
     fn max(self, other: Self) -> Self {
         if self > other { self } else { other }
     }
+
+    fn from_num_den(num: i32, den: i32) -> Self;
 }

@@ -36,6 +36,12 @@ use std::{
 #[derive(Clone, Debug)]
 pub struct CgarF64(pub f64);
 
+impl Scalar for CgarF64 {
+    fn from_num_den(num: i32, den: i32) -> Self {
+        CgarF64(num as f64 / den as f64)
+    }
+}
+
 impl<'a, 'b> Add<&'b CgarF64> for &'a CgarF64 {
     type Output = CgarF64;
 
@@ -167,21 +173,29 @@ impl ToPrimitive for CgarF64 {
 
 impl PartialEq for CgarF64 {
     fn eq(&self, other: &CgarF64) -> bool {
-        (self.0 - other.0).abs() < 1e-10
+        (self.0 - other.0).abs() < EPS
     }
 }
 
 impl PartialOrd for CgarF64 {
     fn partial_cmp(&self, other: &CgarF64) -> Option<std::cmp::Ordering> {
+        let diff = self.0 - other.0;
+        if diff.abs() < EPS {
+            return Some(std::cmp::Ordering::Equal);
+        }
+        if diff > EPS {
+            return Some(std::cmp::Ordering::Greater);
+        }
+        if diff < -EPS {
+            return Some(std::cmp::Ordering::Less);
+        }
         self.0.partial_cmp(&other.0)
     }
 }
 
 impl Hash for CgarF64 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let scale = 1e-10_f64;
-        let quantized = (self.0 * scale).round() as i64;
-        quantized.hash(state);
+        self.0.to_bits().hash(state);
     }
 }
 
@@ -241,5 +255,3 @@ impl Neg for CgarF64 {
         CgarF64(-self.0)
     }
 }
-
-impl Scalar for CgarF64 {}

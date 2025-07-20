@@ -67,7 +67,6 @@ where
 pub fn segment_segment_intersection_2<T>(
     seg1: &Segment2<T>,
     seg2: &Segment2<T>,
-    eps: T,
 ) -> SegmentIntersection2<T>
 where
     T: Scalar,
@@ -92,7 +91,11 @@ where
     let intersecting = (&o1 * &o2) <= zero && (&o3 * &o4) <= zero;
 
     if intersecting {
-        if o1.abs() > eps || o2.abs() > eps || o3.abs() > eps || o4.abs() > eps {
+        if o1.abs().is_positive()
+            || o2.abs().is_positive()
+            || o3.abs().is_positive()
+            || o4.abs().is_positive()
+        {
             // Proper intersection — compute the intersection point
             let (x1, y1) = (&a[0], &a[1]);
             let (x2, y2) = (&b[0], &b[1]);
@@ -100,7 +103,7 @@ where
             let (x4, y4) = (&d[0], &d[1]);
 
             let denom = &(&(x1 - x2) * &(y3 - y4)) - &(&(y1 - y2) * &(x3 - x4));
-            if denom.abs() < eps {
+            if denom.abs().is_zero() {
                 return SegmentIntersection2::None; // Parallel but not overlapping
             }
 
@@ -116,7 +119,7 @@ where
         }
 
         // Collinear case
-        if are_collinear(&a, &b, &c, &eps) {
+        if are_collinear(&a, &b, &c) {
             // Compute overlapping segment
             let mut pts = [a, b, c, d];
             pts.sort_by(|p1, p2| {
@@ -167,7 +170,6 @@ where
 pub fn segment_segment_intersection_3<T>(
     seg1: &Segment3<T>,
     seg2: &Segment3<T>,
-    eps: T,
 ) -> SegmentIntersection3<T>
 where
     T: Scalar,
@@ -210,13 +212,13 @@ where
 
     let zero = T::zero();
 
-    let (s, t) = if denom.abs() > eps {
+    let (s, t) = if denom.abs().is_positive() {
         let s = &(&(&b * &e) - &(&c * &d)) / &denom;
         let t = &(&(&a * &e) - &(&b * &d)) / &denom;
         (s, t)
     } else {
         // Segments are parallel — handle collinear case
-        if are_collinear(p1, p2, q1, &eps) {
+        if are_collinear(p1, p2, q1) {
             // Sort points by x (then y then z)
             let mut pts = [p1, p2, q1, q2];
             pts.sort_by(|p1, p2| {
@@ -277,8 +279,7 @@ where
     let dz = &closest_p[2] - &closest_q[2];
 
     let dist_squared = &(&(&dx * &dx) + &(&dy * &dy)) + &(&dz * &dz);
-
-    if dist_squared < &eps * &eps {
+    if dist_squared <= zero {
         SegmentIntersection3::Point(closest_p)
     } else {
         SegmentIntersection3::None

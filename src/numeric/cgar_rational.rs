@@ -33,14 +33,14 @@ use std::{
     ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign},
 };
 
-// use std::ops::{Add, Div, Mul, Sub};
-
-// use num_traits::ToPrimitive;
-// use rug::Rational;
-// use std::hash::{Hash, Hasher};
-
 #[derive(Clone, Debug)]
 pub struct CgarRational(pub Rational);
+
+impl Scalar for CgarRational {
+    fn from_num_den(num: i32, den: i32) -> Self {
+        CgarRational(Rational::from((num, den)))
+    }
+}
 
 impl<'a, 'b> Add<&'b CgarRational> for &'a CgarRational {
     type Output = CgarRational;
@@ -250,5 +250,3 @@ impl Neg for CgarRational {
         CgarRational(-self.0)
     }
 }
-
-impl Scalar for CgarRational {}

@@ -103,7 +103,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        let eps = T::from(1e-9);
         let mut result = Vec::new();
         for f in 0..self.faces.len() {
             let vs = self.face_vertices(f);
@@ -116,7 +115,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
             // check coplanarity
             let n = (b - a).as_vector().cross(&(c - a).as_vector());
-            if n.dot(&(p - a).as_vector()).abs() > eps {
+            if n.dot(&(p - a).as_vector()).abs().is_positive() {
                 continue;
             }
 
@@ -240,7 +239,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let ac_2d = Vector::<T, 2>::from_vals([ac[0].clone(), ac[1].clone()]);
 
         let cross_product = ab_2d.cross(&ac_2d);
-        cross_product.abs() / T::from(2.0)
+        cross_product.abs() / T::from_num_den(2, 1)
     }
 
     fn face_area_3d(&self, f: usize) -> T
@@ -269,7 +268,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let ac_3d = Vector::<T, 3>::from_vals([ac[0].clone(), ac[1].clone(), ac[2].clone()]);
 
         let cross_product = ab_3d.cross(&ac_3d);
-        cross_product.norm() / T::from(2.0)
+        cross_product.norm() / T::from_num_den(2, 1)
     }
 
     /// Enumerate all outgoing half-edges from `v` exactly once,
@@ -448,11 +447,9 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        let eps = T::from(1e-9);
-
         // 0) First check if point is exactly ON the mesh surface
         let distance_to_surface = self.point_to_mesh_distance(_tree, p);
-        if distance_to_surface < eps {
+        if distance_to_surface.is_zero() {
             return false; // Points ON the surface are not "inside"
         }
 
@@ -550,8 +547,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        let eps = T::from(1e-12);
-
         // Triangle vertices
         let v0 = triangle[0];
         let v1 = triangle[1];
@@ -572,7 +567,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         // Determinant
         let a = edge1.dot(&h);
 
-        if a.abs() < eps {
+        if a.abs().is_zero() {
             return None; // Ray is parallel to triangle
         }
 
@@ -609,7 +604,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         // Calculate t parameter (distance along ray)
         let t = &f * &edge2.dot(&q);
 
-        if t > eps {
+        if t.is_positive() {
             Some(t) // Valid intersection
         } else {
             None // Intersection behind ray origin or too close
@@ -1047,7 +1042,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Div<&'a T, Output = T>,
     {
         let segment_dir = (q_pos - p_pos).as_vector();
-        let eps = T::from(1e-8);
 
         for &he in &self.face_half_edges(face) {
             let src = self.half_edges[self.half_edges[he].prev].vertex;
@@ -1062,7 +1056,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             let edge_dir = (edge_end - edge_start).as_vector();
 
             // Check if edge is colinear with segment
-            if self.are_colinear_with_overlap(&segment_dir, &edge_dir, eps.clone()) {
+            if self.are_colinear_with_overlap(&segment_dir, &edge_dir) {
                 // Check if edge advances toward target
                 let progress = (&self.vertices[dst].position - p_pos)
                     .as_vector()
@@ -1361,7 +1355,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     }
 
     /// Helper: Check if two vectors are colinear with potential overlap
-    fn are_colinear_with_overlap(&self, v1: &Vector<T, N>, v2: &Vector<T, N>, eps: T) -> bool
+    fn are_colinear_with_overlap(&self, v1: &Vector<T, N>, v2: &Vector<T, N>) -> bool
     where
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
         for<'a> &'a T: Sub<&'a T, Output = T>
@@ -1370,7 +1364,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Div<&'a T, Output = T>,
     {
         let cross = v1.cross(v2);
-        cross.norm() < eps
+        cross.norm().is_zero()
     }
 
     pub fn split_segment_by_indices(
@@ -1589,7 +1583,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let vs = self.face_vertices(face);
         let face_vs = self.face_vertices(face);
         for &vi in &face_vs {
-            if self.vertices[vi].position.distance_to(p) < EPS.into() {
+            if self.vertices[vi].position.distance_to(p).is_zero() {
                 return Some(vi);
             }
         }
@@ -1601,7 +1595,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             let ps = &self.vertices[src].position;
             let pd = &self.vertices[dst].position;
             // Is p on segment [ps, pd]?
-            if point_on_segment_eps(ps, pd, p, EPS.into()) {
+            if point_on_segment(ps, pd, p) {
                 // Split edge and return new vertex index.
                 let new_vi = self.split_edge(he, p.clone()).unwrap();
                 return Some(new_vi);
@@ -1756,7 +1750,7 @@ where
                 if let Some(s) = tri_tri_intersection(&pa, &pb) {
                     let segment_length = s.length();
                     // **FILTER DEGENERATE SEGMENTS**
-                    if segment_length > T::from(1e-10) {
+                    if segment_length.is_positive() {
                         segments.push((fa, *fb, s));
                     }
                 } else {
@@ -1768,19 +1762,18 @@ where
                     let n_a = e1a.as_vector().cross(&e2a.as_vector());
                     let n_b = e1b.as_vector().cross(&e2b.as_vector());
 
-                    if n_a.dot(&n_b).abs() > (1.0 - EPS).into() {
+                    if n_a.dot(&n_b).abs() > T::from_num_den(1, 1) {
                         let diff: Point<T, 3> = &pa[0] - &pb[0];
                         if n_a.dot(&diff.as_vector()).abs().is_zero() {
                             // **COPLANAR CASE: Use tri_tri_intersection**
                             if let Some(segment) = tri_tri_intersection(&pa, &pb) {
-                                if segment.length() > T::from(EPS) {
+                                if segment.length().is_positive() {
                                     // Check if this segment already exists
                                     let is_duplicate = segments.iter().any(|(_, _, existing)| {
-                                        (segment.a.distance_to(&existing.a) < T::from(EPS)
-                                            && segment.b.distance_to(&existing.b) < T::from(EPS))
-                                            || (segment.a.distance_to(&existing.b) < T::from(EPS)
-                                                && segment.b.distance_to(&existing.a)
-                                                    < T::from(EPS))
+                                        (segment.a.distance_to(&existing.a).is_zero()
+                                            && segment.b.distance_to(&existing.b).is_zero())
+                                            || (segment.a.distance_to(&existing.b).is_zero()
+                                                && segment.b.distance_to(&existing.a).is_zero())
                                     });
 
                                     if !is_duplicate {
@@ -1933,7 +1926,7 @@ where
             let inside_b = b.point_in_mesh(&tree_b, &cen);
             let distance_to_b = b.point_to_mesh_distance(&tree_b, &cen);
 
-            let on_bnd = op == BooleanOp::Difference && distance_to_b < EPS.into();
+            let on_bnd = op == BooleanOp::Difference && distance_to_b.is_negative_or_zero();
             let keep = match op {
                 BooleanOp::Union => !inside_b,
                 BooleanOp::Intersection => inside_b,
@@ -2016,7 +2009,7 @@ where
                     if a.point_in_mesh(&tree_a, &cen) {
                         // distance to A’s surface
                         let dist = a.point_to_mesh_distance(&tree_a, &cen);
-                        if dist > T::from(EPS) {
+                        if dist.is_positive() {
                             let vs = b.face_vertices(fb);
                             result.add_triangle(
                                 vid_map[&(VertexSource::B, vs[2])],
@@ -2066,25 +2059,12 @@ where
     let ac = Vector::<T, 3>::from_vals([&c[0] - &a[0], &c[1] - &a[1], &c[2] - &a[2]]);
     let ap = Vector::<T, 3>::from_vals([&p[0] - &a[0], &p[1] - &a[1], &p[2] - &a[2]]);
 
+    // Face normal squared‐length
     let n = ab.cross(&ac);
     let nn2 = n.dot(&n);
 
-    // scale‐dependent epsilon: e.g. square of length of the longest edge times 1e-18
-    let edge_max = ab
-        .dot(&ab)
-        .max(ac.dot(&ac))
-        .max((c - b).as_vector().dot(&(c - b).as_vector()));
-    let eps2 = T::from(edge_max.to_f64().unwrap() * 1e-18);
-
-    // 1) degenerate triangle?  fall back to three segment tests
-    if &nn2 <= &eps2 {
-        return distance_point_segment_squared(p, a, b)
-            .min(distance_point_segment_squared(p, b, c))
-            .min(distance_point_segment_squared(p, c, a));
-    }
-
-    // 1) degenerate triangle?  fall back to three segment tests
-    if &nn2 <= &eps2 {
+    // Degenerate triangle?  (zero area)
+    if nn2.is_zero() {
         return distance_point_segment_squared(p, a, b)
             .min(distance_point_segment_squared(p, b, c))
             .min(distance_point_segment_squared(p, c, a));
@@ -2169,28 +2149,23 @@ where
     let u = (&dot11 * &dot02 - &dot01 * &dot12) * inv_denom.clone();
     let v = (&dot00 * &dot12 - &dot01 * &dot02) * inv_denom;
 
-    if u >= T::zero() - eps2.clone() && v >= T::zero() - eps2.clone() && u + v <= T::one() + eps2 {
-        // truly inside the face
-        // squared distance to plane:
+    if u >= T::zero() && v >= T::zero() && u + v <= T::one() {
         let d_plane = ap.dot(&n);
-        return (d_plane.clone() * d_plane) / nn2;
+        return d_plane.clone() * d_plane / nn2;
     }
 
     // if we get here, that means numerical jitter kicked us out of face region
     // but we’ve already tested all three edges above, so this *shouldn’t* happen.
     // As a safe fallback, return the minimum of the three edge distances:
-    let final_result = distance_point_segment_squared(p, a, b)
+    distance_point_segment_squared(p, a, b)
         .min(distance_point_segment_squared(p, b, c))
-        .min(distance_point_segment_squared(p, c, a));
-
-    final_result
+        .min(distance_point_segment_squared(p, c, a))
 }
 
-fn point_on_segment_eps<T: Scalar, const N: usize>(
+fn point_on_segment<T: Scalar, const N: usize>(
     a: &Point<T, N>,
     b: &Point<T, N>,
     p: &Point<T, N>,
-    eps: T,
 ) -> bool
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
@@ -2206,15 +2181,15 @@ where
     let ab_dot_ap = ab.as_vector().dot(&ap.as_vector());
     // Project and check that projection is within [0, 1] with some tolerance
     if ab_dot_ab == T::zero() {
-        return &a.distance_to(p) < &eps;
+        return a.distance_to(p).is_zero();
     }
     let t = ab_dot_ap / ab_dot_ab;
-    if t < -eps.clone() || t > &T::one() + &eps {
+    if t.is_negative() || t > T::one() {
         return false;
     }
     // Closest point on segment
     let closest = a + &ab.as_vector().scale(&t).0;
-    closest.distance_to(p) < eps
+    closest.distance_to(p).is_zero()
 }
 
 /// Remove duplicate faces from mesh

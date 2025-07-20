@@ -25,12 +25,12 @@ use crate::geometry::segment::Segment;
 use crate::numeric::scalar::Scalar;
 use std::ops::{Add, Div, Mul, Sub};
 
-pub fn are_equal<T: Scalar, const N: usize>(p1: &Point<T, N>, p2: &Point<T, N>, eps: &T) -> bool
+pub fn are_equal<T: Scalar, const N: usize>(p1: &Point<T, N>, p2: &Point<T, N>) -> bool
 where
     for<'a> &'a T: Sub<&'a T, Output = T> + Mul<&'a T, Output = T>,
 {
     for i in 0..N {
-        if (&p1.coords[i] - &p2.coords[i]).abs() >= *eps {
+        if !(&p1.coords[i] - &p2.coords[i]).abs().is_zero() {
             return false;
         }
     }
@@ -38,12 +38,7 @@ where
     return true;
 }
 
-pub fn are_collinear<T, const N: usize>(
-    a: &Point<T, N>,
-    b: &Point<T, N>,
-    c: &Point<T, N>,
-    eps: &T,
-) -> bool
+pub fn are_collinear<T, const N: usize>(a: &Point<T, N>, b: &Point<T, N>, c: &Point<T, N>) -> bool
 where
     T: Scalar,
     for<'a> &'a T: Sub<&'a T, Output = T>
@@ -55,7 +50,7 @@ where
         let ui = &b.coords[i] - &a.coords[i];
         let vi = &c.coords[i] - &a.coords[i];
 
-        if ui.abs() > *eps {
+        if ui.abs().is_positive() {
             // first non-zero component gives the candidate scale factor
             let r = &vi / &ui;
 
@@ -63,12 +58,12 @@ where
             for j in (i + 1)..N {
                 let uj = &b.coords[j] - &a.coords[j];
                 let vj = &c.coords[j] - &a.coords[j];
-                if (&vj - &(&uj * &r)).abs() > *eps {
+                if (&vj - &(&uj * &r)).abs().is_positive() {
                     return false; // breaks proportionality
                 }
             }
             return true; // all coordinates match
-        } else if vi.abs() > *eps {
+        } else if vi.abs().is_positive() {
             return false; // ui ≈ 0 but vi isn’t ⇒ not collinear
         }
     }
@@ -76,7 +71,7 @@ where
     true
 }
 
-pub fn is_point_on_segment<T, const N: usize>(p: &Point<T, N>, seg: &Segment<T, N>, eps: &T) -> bool
+pub fn is_point_on_segment<T, const N: usize>(p: &Point<T, N>, seg: &Segment<T, N>) -> bool
 where
     T: Scalar,
     for<'a> &'a T: Sub<&'a T, Output = T>
@@ -86,7 +81,7 @@ where
     T: PartialOrd, // needed for comparisons inside the loop
 {
     // 1.  If P, A, B are not collinear, P cannot lie on AB
-    if !are_collinear(p, &seg.a, &seg.b, eps) {
+    if !are_collinear(p, &seg.a, &seg.b) {
         return false;
     }
 
@@ -95,13 +90,11 @@ where
         let ai = &seg.a.coords[i];
         let bi = &seg.b.coords[i];
 
-        // min_i, max_i with ±eps tolerance
-        let (min_i, max_i) = if ai < bi { (ai, bi) } else { (bi, ai) };
-        let lo = min_i - eps;
-        let hi = max_i + eps;
+        // min_i, max_i bounds
+        let (min_i, max_i) = if ai <= bi { (ai, bi) } else { (bi, ai) };
 
         let pi = &p.coords[i];
-        if pi < &lo || pi > &hi {
+        if pi < min_i || pi > max_i {
             return false; // outside on some axis ⇒ not on segment
         }
     }
