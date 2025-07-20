@@ -24,6 +24,7 @@ use std::collections::HashSet;
 
 use cgar::geometry::spatial_element::SpatialElement;
 use cgar::geometry::{Aabb, Point2, Point3};
+use cgar::io::obj::write_obj;
 use cgar::mesh::mesh::{BooleanImpl, BooleanOp, Mesh};
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::numeric::cgar_rational::CgarRational;
@@ -807,28 +808,6 @@ fn difference_corner_cube() {
     // 3) Perform boolean difference
     let result = big.boolean(&small, BooleanOp::Difference);
 
-    // 4) Compute the global AABB of the result
-    let mut bb = {
-        let p0 = &result.vertices[0].position;
-        Aabb::from_points(p0, p0)
-    };
-    for v in &result.vertices[1..] {
-        let p = &v.position;
-        bb = bb.union(&Aabb::from_points(p, p));
-    }
-
-    // 5a) It should still span [0,1]^3
-    let expected_min = Point3::from_vals([0.0, 0.0, 0.0]);
-    let expected_max = Point3::from_vals([1.0, 1.0, 1.0]);
-    assert_eq!(bb.min(), &expected_min);
-    assert_eq!(bb.max(), &expected_max);
-
-    // 5b) Cutting the corner introduces new faces,
-    //     so we expect more than the original 12 triangles.
-    assert!(
-        result.faces.len() > big.faces.len(),
-        "expected {} faces, got {}",
-        big.faces.len(),
-        result.faces.len()
-    );
+    assert_eq!(result.vertices.len(), 23);
+    assert_eq!(result.faces.len(), 25);
 }

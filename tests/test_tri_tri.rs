@@ -23,39 +23,9 @@
 use std::cmp::Ordering;
 
 use cgar::{
-    geometry::{
-        Point3,
-        spatial_element::SpatialElement,
-        tri_tri_intersect::{tri_tri_intersection, tri_tri_overlap},
-    },
+    geometry::{Point3, spatial_element::SpatialElement, tri_tri_intersect::tri_tri_intersection},
     numeric::cgar_f64::CgarF64,
 };
-
-#[test]
-fn test_triangles_overlap() {
-    let t1 = [
-        Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]),
-        Point3::from_vals([1.0, 0.0, 0.0]),
-        Point3::from_vals([0.0, 1.0, 0.0]),
-    ];
-    let t2 = [
-        Point3::from_vals([0.1, 0.1, 0.0]),
-        Point3::from_vals([0.9, 0.1, 0.0]),
-        Point3::from_vals([0.1, 0.9, 0.0]),
-    ];
-    assert!(tri_tri_overlap(
-        &t1[0], &t1[1], &t1[2], &t2[0], &t2[1], &t2[2]
-    ));
-
-    let t3 = [
-        Point3::from_vals([2.0, 2.0, 0.0]),
-        Point3::from_vals([3.0, 2.0, 0.0]),
-        Point3::from_vals([2.0, 3.0, 0.0]),
-    ];
-    assert!(!tri_tri_overlap(
-        &t1[0], &t1[1], &t1[2], &t3[0], &t3[1], &t3[2]
-    ));
-}
 
 fn _sort_pair<T: PartialOrd + Clone>(mut a: T, mut b: T) -> (T, T) {
     if a > b {
@@ -81,14 +51,12 @@ fn test_coplanar_overlap()
         Point3::from_vals([1.0, 1.0, 0.0]),
     ];
 
-    let seg = tri_tri_intersection(&t1[0], &t1[1], &t1[2], &t2[0], &t2[1], &t2[2])
-        .expect("triangles should intersect");
+    let seg = tri_tri_intersection(&t1, &t2).expect("triangles should intersect");
 
     // We expect the endpoints (0,1,0) and (1,0,0), in either order.
-    let (a, b) = seg;
     let (a, b) = (
-        (a[0].clone(), a[1].clone(), a[2].clone()),
-        (b[0].clone(), b[1].clone(), b[2].clone()),
+        (seg.a[0].clone(), seg.a[1].clone(), seg.a[2].clone()),
+        (seg.b[0].clone(), seg.b[1].clone(), seg.b[2].clone()),
     );
     let wanted = [
         (CgarF64(0.0), CgarF64(1.0), CgarF64(0.0)),
@@ -109,13 +77,13 @@ fn test_coplanar_disjoint() {
         Point3::from_vals([1.0, 0.0, 0.0]),
         Point3::from_vals([0.0, 1.0, 0.0]),
     ];
-    let t3 = [
+    let t2 = [
         Point3::from_vals([2.0, 2.0, 0.0]),
         Point3::from_vals([3.0, 2.0, 0.0]),
         Point3::from_vals([2.0, 3.0, 0.0]),
     ];
 
-    let seg = tri_tri_intersection(&t1[0], &t1[1], &t1[2], &t3[0], &t3[1], &t3[2]);
+    let seg = tri_tri_intersection(&t1, &t2);
     assert!(
         seg.is_none(),
         "disjoint coplanar triangles should not intersect"
@@ -137,12 +105,13 @@ fn test_non_coplanar_slice_f64() {
         Point3::from_vals([0.8, 0.8, 1.0]),
     ];
 
-    let seg = tri_tri_intersection(&t1[0], &t1[1], &t1[2], &t2[0], &t2[1], &t2[2])
-        .expect("should slice and intersect");
+    let seg = tri_tri_intersection(&t1, &t2).expect("should slice and intersect");
 
     // The two intersection points should lie on z=0 at (0.2,0.2) and (0.5,0.5)
-    let (a, b) = seg;
-    let (a2, b2) = ((a[0].clone(), a[1].clone()), (b[0].clone(), b[1].clone()));
+    let (a2, b2) = (
+        (seg.a[0].clone(), seg.a[1].clone()),
+        (seg.b[0].clone(), seg.b[1].clone()),
+    );
     let pts = [a2, b2];
     println!("Intersection points: {:?}", pts);
     assert!(pts.contains(&(0.2.into(), 0.2.into())));

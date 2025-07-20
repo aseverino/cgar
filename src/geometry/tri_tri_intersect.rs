@@ -27,8 +27,9 @@ use std::{
 
 use crate::{
     geometry::{
-        Point2, Point3, Vector3,
+        Point2, Point3, Segment3, Vector3,
         point::{Point, PointOps},
+        segment::Segment,
         spatial_element::SpatialElement,
         util::*,
         vector::{Vector, VectorOps},
@@ -36,111 +37,6 @@ use crate::{
     numeric::scalar::Scalar,
     operations::Zero,
 };
-
-/// Fast 3D triangle–triangle overlap test (Möller 1997).
-/// Returns true if T1=(p0,p1,p2) and T2=(q0,q1,q2) intersect.
-pub fn tri_tri_overlap<T: Scalar>(
-    pa: &[Point<T, 3>; 3],
-    pb: &[Point<T, 3>; 3],
-) -> Vec<(Point<T, 3>, Point<T, 3>)>
-where
-    for<'a> &'a T: Add<&'a T, Output = T>
-        + Sub<&'a T, Output = T>
-        + Div<&'a T, Output = T>
-        + Mul<&'a T, Output = T>,
-{
-    // **ROBUST AXIS SELECTION: Test all three projections and pick the best one**
-    let mut best_projection = None;
-    let mut best_area = T::from(0.0);
-
-    for drop_axis in 0..3 {
-        let (i0, i1) = match drop_axis {
-            0 => (1, 2), // Drop X, keep Y,Z
-            1 => (0, 2), // Drop Y, keep X,Z
-            _ => (0, 1), // Drop Z, keep X,Y
-        };
-
-        // Project both triangles to this 2D plane
-        let to2 = |p: &Point<T, 3>| Point::<T, 2>::from_vals([p[i0].clone(), p[i1].clone()]);
-        let pa2 = [to2(&pa[0]), to2(&pa[1]), to2(&pa[2])];
-        let pb2 = [to2(&pb[0]), to2(&pb[1]), to2(&pb[2])];
-
-        // Compute projected areas of both triangles
-        let area_a = triangle_area_2d(&pa2[0], &pa2[1], &pa2[2]);
-        let area_b = triangle_area_2d(&pb2[0], &pb2[1], &pb2[2]);
-        let total_area = area_a + area_b;
-
-        // Keep the projection with maximum total area
-        if total_area > best_area {
-            best_area = total_area.clone();
-            best_projection = Some((i0, i1, pa2, pb2));
-        }
-    }
-
-    // Check if we found a valid projection
-    if best_area < T::from(1e-12) {
-        println!("WARNING: All projections are degenerate, triangles are likely collinear");
-        return Vec::new();
-    }
-
-    let (i0, i1, pa2, pb2) = best_projection.unwrap();
-
-    let mut overlaps = Vec::new();
-    for ai in 0..3 {
-        let a0 = &pa2[ai];
-        let a1 = &pa2[(ai + 1) % 3];
-        for bi in 0..3 {
-            let b0 = &pb2[bi];
-            let b1 = &pb2[(bi + 1) % 3];
-
-            // **ADDITIONAL DEGENERACY CHECK FOR 2D SEGMENTS**
-            let seg_a_len_sq =
-                (&a1[0] - &a0[0]) * (&a1[0] - &a0[0]) + (&a1[1] - &a0[1]) * (&a1[1] - &a0[1]);
-            let seg_b_len_sq =
-                (&b1[0] - &b0[0]) * (&b1[0] - &b0[0]) + (&b1[1] - &b0[1]) * (&b1[1] - &b0[1]);
-
-            if seg_a_len_sq < T::from(1e-16) || seg_b_len_sq < T::from(1e-16) {
-                continue; // Skip degenerate segments
-            }
-
-            if let Some((r0, r1)) = segment_intersect_2d(a0, a1, b0, b1) {
-                let intersection_len_sq =
-                    (&r1[0] - &r0[0]) * (&r1[0] - &r0[0]) + (&r1[1] - &r0[1]) * (&r1[1] - &r0[1]);
-                if intersection_len_sq > T::from(1e-16) {
-                    // Lift back to 3D along A-edge
-                    overlaps.push((
-                        lift_to_3d(&pa[ai], &pa[(ai + 1) % 3], &r0),
-                        lift_to_3d(&pa[ai], &pa[(ai + 1) % 3], &r1),
-                    ));
-                }
-            }
-        }
-    }
-    overlaps
-}
-
-/// Given 3D edge p->q and 2D projected intersection r, return 3D point
-pub fn lift_to_3d<T: Scalar>(p: &Point<T, 3>, q: &Point<T, 3>, r2: &Point<T, 2>) -> Point<T, 3>
-where
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // compute t along edge by comparing one coordinate
-    let t = if !(&q[0] - &p[0]).is_zero() {
-        (&r2[0] - &p[0]) / (&q[0] - &p[0])
-    } else if !(&q[1] - &p[1]).is_zero() {
-        (&r2[1] - &p[1]) / (&q[1] - &p[1])
-    } else {
-        (&r2[0] - &p[2]) / (&q[2] - &p[2])
-    };
-    Point::<T, 3>::from_vals([
-        &p[0] + &(&t * &(&q[0] - &p[0])),
-        &p[1] + &(&t * &(&q[1] - &p[1])),
-        &p[2] + &(&t * &(&q[2] - &p[2])),
-    ])
-}
 
 /// Return true if 2D point `p` lies inside (or on) the triangle `tri` = [(x0,y0),(x1,y1),(x2,y2)].
 /// Uses a barycentric‐coordinate test.
@@ -174,7 +70,7 @@ pub fn segment_intersect_2d<T: Scalar>(
     a1: &Point<T, 2>,
     b0: &Point<T, 2>,
     b1: &Point<T, 2>,
-) -> Option<(Point<T, 2>, Point<T, 2>)>
+) -> Option<Segment<T, 2>>
 where
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
@@ -212,7 +108,7 @@ where
                     &a0[0] + &(&da[0] * &end),
                     &a0[1] + &(&da[1] * &end),
                 ]);
-                return Some((p_start, p_end));
+                return Some(Segment::new(&p_start, &p_end));
             }
         }
         return None;
@@ -229,9 +125,9 @@ where
     {
         let ix = &a0[0] + &(&s * &da[0]);
         let iy = &a0[1] + &(&s * &da[1]);
-        return Some((
-            Point::<T, 2>::from_vals([ix.clone(), iy.clone()]),
-            Point::<T, 2>::from_vals([ix, iy]),
+        return Some(Segment::new(
+            &Point::<T, 2>::from_vals([ix.clone(), iy.clone()]),
+            &Point::<T, 2>::from_vals([ix, iy]),
         ));
     }
     None
@@ -271,95 +167,11 @@ where
     (min, max)
 }
 
-/// Handle the coplanar case by projecting both triangles into 2D
-/// and performing a 2D SAT on the plane.
-fn coplanar_tri_tri<T>(
-    p0: &Point3<T>,
-    p1: &Point3<T>,
-    p2: &Point3<T>,
-    q0: &Point3<T>,
-    q1: &Point3<T>,
-    q2: &Point3<T>,
-    n: &Vector3<T>,
-) -> bool
-where
-    T: Scalar,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // 1) Choose the projection plane by dropping the largest normal component
-    let (i0, i1) = {
-        let na = [n[0].abs(), n[1].abs(), n[2].abs()];
-        if na[0] > na[1] && na[0] > na[2] {
-            (1, 2)
-        } else if na[1] > na[2] {
-            (0, 2)
-        } else {
-            (0, 1)
-        }
-    };
-
-    // 2) Build 2D tuples (x,y) for each triangle
-    let to2d = |p: &Point3<T>| (p[i0].clone(), p[i1].clone());
-    let t1: [(T, T); 3] = [to2d(p0), to2d(p1), to2d(p2)];
-    let t2: [(T, T); 3] = [to2d(q0), to2d(q1), to2d(q2)];
-
-    // 3) A small helper to project a 2D triangle onto an axis
-    let project_2d = |axis: (T, T), tri: &[(T, T); 3]| -> (T, T) {
-        let (ax, ay) = axis;
-        let mut min = &(&tri[0].0 * &ax) + &(&tri[0].1 * &ay);
-        let mut max = min.clone();
-        for &(ref x, ref y) in &tri[1..] {
-            let proj = &(&(x * &ax) + &(y * &ay));
-            if proj < &min {
-                min = proj.clone();
-            }
-            if proj > &max {
-                max = proj.clone();
-            }
-        }
-        (min, max)
-    };
-
-    // 4) SAT on edges of the first triangle
-    for &(i, j) in &[(0, 1), (1, 2), (2, 0)] {
-        let dx = &t1[j].0 - &t1[i].0;
-        let dy = &t1[j].1 - &t1[i].1;
-        let axis = (-dy, dx);
-        let (min1, max1) = project_2d(axis.clone(), &t1);
-        let (min2, max2) = project_2d(axis.clone(), &t2);
-        if max1 < min2 || max2 < min1 {
-            return false;
-        }
-    }
-
-    // 5) SAT on edges of the second triangle
-    for &(i, j) in &[(0, 1), (1, 2), (2, 0)] {
-        let dx = &(t2[j].0) - &(t2[i].0);
-        let dy = &(t2[j].1) - &(t2[i].1);
-        let axis = (-dy, dx);
-        let (min1, max1) = project_2d(axis.clone(), &t1);
-        let (min2, max2) = project_2d(axis.clone(), &t2);
-        if max1 < min2 || max2 < min1 {
-            return false;
-        }
-    }
-
-    // No separating axis found in 2D ⇒ triangles overlap
-    true
-}
-
 fn coplanar_tri_tri_intersection<T>(
-    p0: &Point3<T>,
-    p1: &Point3<T>,
-    p2: &Point3<T>,
-    q0: &Point3<T>,
-    q1: &Point3<T>,
-    q2: &Point3<T>,
+    p: &[Point3<T>; 3],
+    q: &[Point3<T>; 3],
     n: &Vector3<T>,
-) -> Option<(Point3<T>, Point3<T>)>
+) -> Option<Segment3<T>>
 where
     T: Scalar,
     for<'a> &'a T: Sub<&'a T, Output = T>
@@ -371,19 +183,19 @@ where
 
     // 2) build 2D points
     let to2d = |p: &Point3<T>| project_to_2d(p, i0, i1);
-    let t1 = [to2d(p0), to2d(p1), to2d(p2)];
-    let t2 = [to2d(q0), to2d(q1), to2d(q2)];
+    let t1 = [to2d(&p[0]), to2d(&p[1]), to2d(&p[2])];
+    let t2 = [to2d(&q[0]), to2d(&q[1]), to2d(&q[2])];
 
     // 3) collect vertices of one triangle inside the other
     let mut pts: Vec<Point3<T>> = Vec::new();
-    for (i, p) in t1.iter().enumerate() {
-        if point_in_tri_2d(p, &t2) {
-            pts.push(back_project_to_3d(p, i0, i1, drop, &p0));
+    for point in &t1 {
+        if point_in_tri_2d(point, &t2) {
+            pts.push(back_project_to_3d(point, i0, i1, drop, &p[0]));
         }
     }
-    for (i, p) in t2.iter().enumerate() {
-        if point_in_tri_2d(p, &t1) {
-            pts.push(back_project_to_3d(p, i0, i1, drop, &q0));
+    for point in &t2 {
+        if point_in_tri_2d(point, &t1) {
+            pts.push(back_project_to_3d(point, i0, i1, drop, &q[0]));
         }
     }
 
@@ -400,9 +212,9 @@ where
     ];
     for (a, b) in &edges1 {
         for (c, d) in &edges2 {
-            if let Some((ix, _iy)) = segment_intersect_2d(a, b, c, d) {
+            if let Some(s) = segment_intersect_2d(a, b, c, d) {
                 // Here we use p0 as the reference for the dropped axis, but you could interpolate if desired
-                pts.push(back_project_to_3d(&ix, i0, i1, drop, p0));
+                pts.push(back_project_to_3d(&s.a, i0, i1, drop, &p[0]));
             }
         }
     }
@@ -416,9 +228,9 @@ where
         }
     }
     if uniq.len() == 2 {
-        Some((uniq[0].clone(), uniq[1].clone()))
+        Some(Segment::new(&uniq[0], &uniq[1]))
     } else if uniq.len() == 1 {
-        Some((uniq[0].clone(), uniq[0].clone()))
+        Some(Segment::new(&uniq[0], &uniq[0]))
     } else {
         None
     }
@@ -427,14 +239,7 @@ where
 /// Computes the segment where triangles T1=(p0,p1,p2) and T2=(q0,q1,q2) intersect.
 /// Returns `None` if they don’t intersect, or `Some((a,b))` where `a` and `b` are
 /// the two endpoints of the intersection segment (possibly `a==b` if they touch at a point).
-pub fn tri_tri_intersection<T>(
-    p0: &Point3<T>,
-    p1: &Point3<T>,
-    p2: &Point3<T>,
-    q0: &Point3<T>,
-    q1: &Point3<T>,
-    q2: &Point3<T>,
-) -> Option<(Point3<T>, Point3<T>)>
+pub fn tri_tri_intersection<T>(p: &[Point3<T>; 3], q: &[Point3<T>; 3]) -> Option<Segment3<T>>
 where
     T: Scalar,
     for<'a> &'a T: Sub<&'a T, Output = T>
@@ -443,42 +248,42 @@ where
         + Div<&'a T, Output = T>,
 {
     // 1) Build plane of T2: n2·x + d2 = 0
-    let v01 = (q1 - q0).as_vector();
-    let v02 = (q2 - q0).as_vector();
+    let v01 = (&q[1] - &q[0]).as_vector();
+    let v02 = (&q[2] - &q[0]).as_vector();
     let n2 = v01.cross(&v02);
-    let d2 = -n2.dot(&q0.as_vector().into());
+    let d2 = -n2.dot(&q[0].as_vector().into());
 
     // signed distances of p-verts to T2’s plane
-    let d_p0 = &n2.dot(&p0.as_vector().into()) + &d2;
-    let d_p1 = &n2.dot(&p1.as_vector().into()) + &d2;
-    let d_p2 = &n2.dot(&p2.as_vector().into()) + &d2;
+    let d_p0 = &n2.dot(&p[0].as_vector().into()) + &d2;
+    let d_p1 = &n2.dot(&p[1].as_vector().into()) + &d2;
+    let d_p2 = &n2.dot(&p[2].as_vector().into()) + &d2;
 
     //  → Fall back for strictly co-planar
     if d_p0 == T::zero() && d_p1 == T::zero() && d_p2 == T::zero() {
         // Must handle co-planar intersection in 2D
-        return coplanar_tri_tri_intersection(p0, p1, p2, q0, q1, q2, &n2);
+        return coplanar_tri_tri_intersection(p, q, &n2);
     }
 
     // 2) Now do the regular non-coplanar plane‐edge clipping:
     let mut pts = Vec::new();
-    for &(a, b) in &[(p0, p1), (p1, p2), (p2, p0)] {
-        if let Some(ip) = intersect_edge_plane(a, b, &n2.clone().into(), &d2) {
-            if point_in_tri(&ip, q0, q1, q2) {
+    for (a, b) in [(&p[0], &p[1]), (&p[1], &p[2]), (&p[2], &p[0])] {
+        if let Some(ip) = intersect_edge_plane(&a, &b, &n2.clone().into(), &d2) {
+            if point_in_tri(&ip, &q[0], &q[1], &q[2]) {
                 pts.push(ip);
             }
         }
     }
 
     // 3) Build plane of T1:
-    let u01 = (p1 - p0).as_vector();
-    let u02 = (p2 - p0).as_vector();
+    let u01 = (&p[1] - &p[0]).as_vector();
+    let u02 = (&p[2] - &p[0]).as_vector();
     let n1 = u01.cross(&u02);
-    let d1 = -n1.dot(&p0.as_vector().into());
+    let d1 = -n1.dot(&p[0].as_vector().into());
 
     // 4) Clip edges of T2 against T1’s plane:
-    for &(a, b) in &[(q0, q1), (q1, q2), (q2, q0)] {
-        if let Some(ip) = intersect_edge_plane(a, b, &n1.clone().into(), &d1) {
-            if point_in_tri(&ip, p0, p1, p2) {
+    for (a, b) in [(&q[0], &q[1]), (&q[1], &q[2]), (&q[2], &q[0])] {
+        if let Some(ip) = intersect_edge_plane(&a, &b, &n1.clone().into(), &d1) {
+            if point_in_tri(&ip, &p[0], &p[1], &p[2]) {
                 pts.push(ip);
             }
         }
@@ -495,8 +300,8 @@ where
 
     // 6) Return as before
     match uniq.len() {
-        2 => Some((uniq[0].clone(), uniq[1].clone())),
-        1 => Some((uniq[0].clone(), uniq[0].clone())),
+        2 => Some(Segment::new(&uniq[0], &uniq[1])),
+        1 => Some(Segment::new(&uniq[0], &uniq[0])),
         _ => None,
     }
 }

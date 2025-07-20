@@ -26,7 +26,7 @@ use crate::{
         point::{Point, PointOps},
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
-        tri_tri_intersect::{self, tri_tri_intersection, tri_tri_overlap},
+        tri_tri_intersect::{self, tri_tri_intersection},
         util::EPS,
         vector::{Vector, VectorOps},
     },
@@ -1732,7 +1732,7 @@ where
 
         // 2) Pre-split A against B, handling both proper and coplanar intersections
         let tree_b_pre = AabbTree::build((0..b.faces.len()).map(|i| (b.face_aabb(i), i)).collect());
-        let mut segments: Vec<(usize, usize, Point<T, 3>, Point<T, 3>)> = Vec::new();
+        let mut segments: Vec<(usize, usize, Segment<T, 3>)> = Vec::new();
         for fa in 0..a.faces.len() {
             let mut candidates = Vec::new();
             tree_b_pre.query(&a.face_aabb(fa), &mut candidates);
@@ -1753,13 +1753,11 @@ where
                 let pb: [Point<T, 3>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
 
                 // Try proper intersection first
-                if let Some((p0, p1)) =
-                    tri_tri_intersection(&pa[0], &pa[1], &pa[2], &pb[0], &pb[1], &pb[2])
-                {
-                    let segment_length = p0.distance_to(&p1);
+                if let Some(s) = tri_tri_intersection(&pa, &pb) {
+                    let segment_length = s.length();
                     // **FILTER DEGENERATE SEGMENTS**
                     if segment_length > T::from(1e-10) {
-                        segments.push((fa, *fb, p0, p1));
+                        segments.push((fa, *fb, s));
                     }
                 } else {
                     // **LIMIT COPLANAR PROCESSING**
@@ -1767,28 +1765,26 @@ where
                     let e2a = &pa[2] - &pa[0];
                     let e1b = &pb[1] - &pb[0];
                     let e2b = &pb[2] - &pb[0];
-                    let nA = e1a.as_vector().cross(&e2a.as_vector());
-                    let nB = e1b.as_vector().cross(&e2b.as_vector());
+                    let n_a = e1a.as_vector().cross(&e2a.as_vector());
+                    let n_b = e1b.as_vector().cross(&e2b.as_vector());
 
-                    if nA.dot(&nB).abs() > (1.0 - EPS).into() {
+                    if n_a.dot(&n_b).abs() > (1.0 - EPS).into() {
                         let diff: Point<T, 3> = &pa[0] - &pb[0];
-                        if nA.dot(&diff.as_vector()).abs().is_zero() {
-                            // **LIMIT COPLANAR OVERLAPS**
-                            let overlaps = tri_tri_overlap(&pa, &pb);
-                            for (q0, q1) in overlaps {
-                                // Filter degenerate and duplicate segments
-                                if q0.distance_to(&q1) > T::from(EPS) {
+                        if n_a.dot(&diff.as_vector()).abs().is_zero() {
+                            // **COPLANAR CASE: Use tri_tri_intersection**
+                            if let Some(segment) = tri_tri_intersection(&pa, &pb) {
+                                if segment.length() > T::from(EPS) {
                                     // Check if this segment already exists
-                                    let is_duplicate =
-                                        segments.iter().any(|(_, _, existing_p0, existing_p1)| {
-                                            (q0.distance_to(existing_p0) < T::from(EPS)
-                                                && q1.distance_to(existing_p1) < T::from(EPS))
-                                                || (q0.distance_to(existing_p1) < T::from(EPS)
-                                                    && q1.distance_to(existing_p0) < T::from(EPS))
-                                        });
+                                    let is_duplicate = segments.iter().any(|(_, _, existing)| {
+                                        (segment.a.distance_to(&existing.a) < T::from(EPS)
+                                            && segment.b.distance_to(&existing.b) < T::from(EPS))
+                                            || (segment.a.distance_to(&existing.b) < T::from(EPS)
+                                                && segment.b.distance_to(&existing.a)
+                                                    < T::from(EPS))
+                                    });
 
                                     if !is_duplicate {
-                                        segments.push((fa, *fb, q0, q1));
+                                        segments.push((fa, *fb, segment));
                                     }
                                 }
                             }
@@ -1804,23 +1800,23 @@ where
         let mut a_and_b_arr = [&mut a, &mut b];
 
         // 3) Split on both meshes
-        for &(_orig_fa, _orig_fb, ref p, ref q) in &segments {
+        for &(_orig_fa, _orig_fb, ref s) in &segments {
             for mesh in a_and_b_arr.iter_mut() {
-                let fa_p_candidates = mesh.faces_containing_point(p);
+                let fa_p_candidates = mesh.faces_containing_point(&s.a);
 
                 let mut pi = None;
                 for &face in &fa_p_candidates {
-                    pi = mesh.find_or_insert_vertex_on_face(face, p);
+                    pi = mesh.find_or_insert_vertex_on_face(face, &s.a);
                     if pi.is_some() {
                         break;
                     }
                 }
                 let pi = pi.expect("no face contains p in A");
 
-                let fa_q_candidates = mesh.faces_containing_point(q);
+                let fa_q_candidates = mesh.faces_containing_point(&s.b);
                 let mut qi = None;
                 for &face in &fa_q_candidates {
-                    qi = mesh.find_or_insert_vertex_on_face(face, q);
+                    qi = mesh.find_or_insert_vertex_on_face(face, &s.b);
                     if qi.is_some() {
                         break;
                     }
