@@ -27,10 +27,9 @@ use cgar::numeric::cgar_f64::CgarF64;
 
 #[test]
 fn test_are_equal() {
-    let p1 = Point2::<CgarF64>::from_vals([1.0000001, 2.0]);
-    let p2 = Point2::from_vals([1.0000002, 2.0]);
-    assert!(are_equal(&p1, &p2, &1e-6.into()));
-    assert!(!are_equal(&p1, &p2, &1e-10.into()));
+    let p1 = Point2::<CgarF64>::from_vals([1.00000000001, 2.0]);
+    let p2 = Point2::from_vals([1.00000000002, 2.0]);
+    assert!(are_equal(&p1, &p2));
 }
 
 #[test]
@@ -38,7 +37,7 @@ fn test_are_collinear() {
     let a = Point2::<CgarF64>::from_vals([0.0, 0.0]);
     let b = Point2::from_vals([1.0, 1.0]);
     let c = Point2::from_vals([2.0, 2.0]);
-    assert!(are_collinear(&a, &b, &c, &1e-9.into()));
+    assert!(are_collinear(&a, &b, &c));
 }
 
 #[test]
@@ -50,6 +49,6 @@ fn test_point_on_segment() {
     let p_on = Point2::from_vals([1.0, 1.0]);
     let p_off = Point2::from_vals([3.0, 3.0]);
 
-    assert!(is_point_on_segment(&p_on, &seg, &1e-9.into()));
-    assert!(!is_point_on_segment(&p_off, &seg, &1e-9.into()));
+    assert!(is_point_on_segment(&p_on, &seg));
+    assert!(!is_point_on_segment(&p_off, &seg));
 }

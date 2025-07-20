@@ -23,6 +23,7 @@
 use cgar::geometry::Point2;
 use cgar::geometry::Point3;
 use cgar::geometry::spatial_element::SpatialElement;
+use cgar::geometry::util::EPS;
 use cgar::kernel::orient;
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::operations::Abs;
@@ -66,5 +67,5 @@ fn orientation_3d_coplanar() {
     let d = Point3::from_vals([1.0, 1.0, 0.0]); // lies in the same z=0 plane
 
     let vol = orient(&[a, b, c, d]);
-    assert!(vol.abs() < 1e-12.into()); // small epsilon to account for floating point
+    assert!(vol.abs() < EPS.into()); // small epsilon to account for floating point
 }

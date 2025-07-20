@@ -38,7 +38,7 @@ fn test_simple_intersection_2() {
         &Point2::from_vals([0.0, 2.0]),
         &Point2::from_vals([2.0, 0.0]),
     );
-    let res = segment_segment_intersection_2(&s1, &s2, 1e-9.into());
+    let res = segment_segment_intersection_2(&s1, &s2);
     assert_eq!(
         res,
         SegmentIntersection2::Point(Point2::from_vals([1.0, 1.0]))
@@ -55,7 +55,7 @@ fn test_no_intersection_2() {
         &Point2::from_vals([0.0, 1.0]),
         &Point2::from_vals([1.0, 1.0]),
     );
-    let res = segment_segment_intersection_2(&s1, &s2, 1e-9.into());
+    let res = segment_segment_intersection_2(&s1, &s2);
     assert_eq!(res, SegmentIntersection2::None);
 }
 
@@ -69,7 +69,7 @@ fn test_collinear_overlap_2() {
         &Point2::from_vals([1.0, 0.0]),
         &Point2::from_vals([3.0, 0.0]),
     );
-    let res = segment_segment_intersection_2(&s1, &s2, 1e-9.into());
+    let res = segment_segment_intersection_2(&s1, &s2);
     assert_eq!(
         res,
         SegmentIntersection2::Overlapping(Segment2::new(
@@ -89,7 +89,7 @@ fn test_simple_intersection_3() {
         &Point3::from_vals([0.0, 2.0, 0.0]),
         &Point3::from_vals([2.0, 0.0, 0.0]),
     );
-    let res = segment_segment_intersection_3(&s1, &s2, 1e-9.into());
+    let res = segment_segment_intersection_3(&s1, &s2);
     assert_eq!(
         res,
         SegmentIntersection3::Point(Point3::from_vals([1.0, 1.0, 0.0]))
@@ -106,7 +106,7 @@ fn test_no_intersection_3() {
         &Point3::from_vals([0.0, 1.0, 1.0]),
         &Point3::from_vals([1.0, 1.0, 1.0]),
     );
-    let res = segment_segment_intersection_3(&s1, &s2, 1e-9.into());
+    let res = segment_segment_intersection_3(&s1, &s2);
     assert_eq!(res, SegmentIntersection3::None);
 }
 
@@ -120,7 +120,7 @@ fn test_collinear_overlap_3() {
         &Point3::from_vals([1.0, 0.0, 0.0]),
         &Point3::from_vals([3.0, 0.0, 0.0]),
     );
-    let res = segment_segment_intersection_3(&s1, &s2, 1e-9.into());
+    let res = segment_segment_intersection_3(&s1, &s2);
     assert_eq!(
         res,
         SegmentIntersection3::Overlapping(Segment3::new(

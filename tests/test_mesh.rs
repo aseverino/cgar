@@ -776,18 +776,18 @@ fn make_cube(min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3> {
 
     // each triple is a CCW triangle when viewed from outside
     let faces = [
-        [0, 1, 2],
-        [0, 2, 3], // bottom
-        [4, 6, 5],
-        [4, 7, 6], // top
-        [0, 5, 1],
-        [0, 4, 5], // front
-        [1, 6, 2],
-        [1, 5, 6], // right
-        [2, 7, 3],
-        [2, 6, 7], // back
-        [3, 4, 0],
-        [3, 7, 4], // left
+        [0, 2, 1],
+        [0, 3, 2],
+        [4, 5, 6],
+        [4, 6, 7],
+        [0, 1, 5],
+        [0, 5, 4],
+        [1, 2, 6],
+        [1, 6, 5],
+        [2, 3, 7],
+        [2, 7, 6],
+        [3, 0, 4],
+        [3, 4, 7],
     ];
 
     for &f in &faces {
@@ -801,6 +801,7 @@ fn make_cube(min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3> {
 fn difference_corner_cube() {
     // 1) Big unit cube [0,1]^3
     let big = make_cube([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    //let _ = write_obj(&big, "/mnt/v/cgar_meshes/big.obj");
 
     // 2) Smaller cube slicing off the top-far corner
     let small = make_cube([0.5, 0.5, 0.5], [1.0, 1.0, 1.0]);
@@ -810,4 +811,6 @@ fn difference_corner_cube() {
 
     assert_eq!(result.vertices.len(), 23);
     assert_eq!(result.faces.len(), 25);
+
+    //let _ = write_obj(&result, "/mnt/v/cgar_meshes/test_corner_cube.obj");
 }
