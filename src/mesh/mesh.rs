@@ -30,7 +30,6 @@ use crate::{
         util::EPS,
         vector::{Vector, VectorOps},
     },
-    io::obj::write_obj,
     numeric::{cgar_f64::CgarF64, scalar::Scalar},
     operations::Zero,
 };
@@ -837,11 +836,10 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     {
         let p_pos = self.vertices[p_idx].position.clone();
         let q_pos = self.vertices[q_idx].position.clone();
-        let segment_dir = (&q_pos - &p_pos).as_vector();
 
         // CHECK FOR DEGENERATE SEGMENT FIRST
         if p_pos.distance_to(&q_pos) < T::from(1e-10) {
-            println!("WARNING: Degenerate segment detected, skipping carve");
+            eprintln!("WARNING: Degenerate segment detected, skipping carve");
             return;
         }
 
@@ -932,22 +930,11 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let segment_dir = (q_pos - p_pos).as_vector();
         let eps = T::from(1e-8);
 
-        println!(
-            "      advance_along_colinear_edge: face={}, curr_idx={}",
-            face, curr_idx
-        );
-
         for &he in &self.face_half_edges(face) {
             let src = self.half_edges[self.half_edges[he].prev].vertex;
             let dst = self.half_edges[he].vertex;
 
-            println!(
-                "        Checking edge {} -> {} (half-edge {})",
-                src, dst, he
-            );
-
             if src != curr_idx {
-                println!("          SKIP: Edge doesn't start from current vertex");
                 continue; // Must start from current vertex
             }
 
@@ -955,58 +942,31 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             let edge_end = &self.vertices[dst].position;
             let edge_dir = (edge_end - edge_start).as_vector();
 
-            println!(
-                "          Edge direction: ({:.6}, {:.6}, {:.6})",
-                edge_dir.coords()[0].to_f64().unwrap(),
-                edge_dir.coords()[1].to_f64().unwrap(),
-                edge_dir.coords()[2].to_f64().unwrap()
-            );
-
             // Check if edge is colinear with segment
             if self.are_colinear_with_overlap(&segment_dir, &edge_dir, eps.clone()) {
-                println!("          COLINEAR DETECTED!");
-
                 // Check if edge advances toward target
                 let progress = (&self.vertices[dst].position - p_pos)
                     .as_vector()
                     .dot(&segment_dir);
                 let total = segment_dir.dot(&segment_dir);
 
-                println!(
-                    "          Progress: {:.6}, Total: {:.6}",
-                    progress.to_f64().unwrap(),
-                    total.to_f64().unwrap()
-                );
-
                 if progress > T::zero() && progress < total {
                     if dst == q_idx {
-                        println!("          REACHED TARGET!");
                         return Some((dst, face)); // Reached target
                     }
 
                     // Find adjacent face through this edge
                     let twin_he = self.half_edges[he].twin;
-                    println!("          Twin half-edge: {}", twin_he);
 
                     if twin_he != usize::MAX {
                         if let Some(next_face) = self.half_edges[twin_he].face {
-                            println!("          ADVANCING to face {}", next_face);
                             return Some((dst, next_face));
-                        } else {
-                            println!("          Twin has no face (boundary?)");
                         }
-                    } else {
-                        println!("          No twin (boundary edge)");
                     }
-                } else {
-                    println!("          Edge doesn't advance toward target");
                 }
-            } else {
-                println!("          Not colinear");
             }
         }
 
-        println!("      advance_along_colinear_edge: No advancement found");
         None
     }
 
@@ -1029,102 +989,44 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let mut best_intersection = None;
         let mut best_t = T::one();
 
-        println!(
-            "      find_robust_edge_intersection: face={}, curr_idx={}",
-            face, curr_idx
-        );
-
         for &he in &self.face_half_edges(face) {
             let src = self.half_edges[self.half_edges[he].prev].vertex;
             let dst = self.half_edges[he].vertex;
 
-            println!(
-                "        Checking edge {} -> {} (half-edge {})",
-                src, dst, he
-            );
-
             // Skip edges connected to current vertex
             if src == curr_idx || dst == curr_idx {
-                println!("          SKIP: Edge connected to current vertex");
                 continue;
             }
 
             let edge_start = &self.vertices[src].position;
             let edge_end = &self.vertices[dst].position;
 
-            println!(
-                "          Edge start: ({:.6}, {:.6}, {:.6})",
-                edge_start.coords()[0].to_f64().unwrap(),
-                edge_start.coords()[1].to_f64().unwrap(),
-                edge_start.coords()[2].to_f64().unwrap()
-            );
-            println!(
-                "          Edge end: ({:.6}, {:.6}, {:.6})",
-                edge_end.coords()[0].to_f64().unwrap(),
-                edge_end.coords()[1].to_f64().unwrap(),
-                edge_end.coords()[2].to_f64().unwrap()
-            );
-
             // Use your existing robust intersection computation
             if let Some((intersection_point, t)) =
                 self.compute_intersection(p_pos, q_pos, edge_start, edge_end)
             {
-                println!(
-                    "          INTERSECTION FOUND at t={:.6}",
-                    t.to_f64().unwrap()
-                );
-                println!(
-                    "          Intersection point: ({:.6}, {:.6}, {:.6})",
-                    intersection_point.coords()[0].to_f64().unwrap(),
-                    intersection_point.coords()[1].to_f64().unwrap(),
-                    intersection_point.coords()[2].to_f64().unwrap()
-                );
-
                 let eps = T::from(1e-6);
                 if t > eps && t < T::one() - eps && t < best_t {
-                    println!("          NEW BEST INTERSECTION");
                     best_t = t.clone();
                     best_intersection = Some((he, intersection_point));
-                } else {
-                    println!(
-                        "          Intersection rejected (t out of bounds or worse than current best)"
-                    );
                 }
-            } else {
-                println!("          No intersection found");
             }
         }
 
         if let Some((he, intersection_point)) = best_intersection {
-            println!("      SPLITTING EDGE {} at best intersection", he);
-
             // Split the edge and advance
             if let Ok(new_vertex_idx) = self.split_edge(he, intersection_point) {
-                println!("      Created new vertex {}", new_vertex_idx);
-
                 // IMPORTANT: After split_edge, half-edge indices may be invalid!
                 // Re-find faces containing the new vertex
                 let new_vertex_pos = self.vertices[new_vertex_idx].position.clone();
                 let containing_faces = self.faces_containing_point(&new_vertex_pos);
 
-                println!(
-                    "      New vertex {} is on faces: {:?}",
-                    new_vertex_idx, containing_faces
-                );
-
                 if !containing_faces.is_empty() {
                     // Pick a face that's not the original one we were processing
                     let next_face = containing_faces[0];
-                    println!("      ADVANCING to re-found face {}", next_face);
                     return Some((new_vertex_idx, next_face));
-                } else {
-                    println!("      ERROR: New vertex not found on any face after split!");
                 }
-            } else {
-                println!("      ERROR: Failed to split edge");
             }
-        } else {
-            println!("      find_robust_edge_intersection: No valid intersection found");
         }
 
         None
@@ -1361,16 +1263,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     ) {
         // 1) If there’s already a half‐edge vi0→vi1 on this face, split that edge
         if let Some(he) = self.find_half_edge_on_face(face, vi0, vi1) {
-            println!(
-                "Found existing half-edge {} from {} to {}, splitting it",
-                he, vi0, vi1
-            );
             let _ = self.split_edge(he, self.vertices[vi1].position.clone());
         } else {
-            println!(
-                "No existing half-edge from {} to {}, splitting face {}",
-                vi0, vi1, face
-            );
             // 2) No direct half‐edge: do a single two‐triangle split of this face
             let vs = self.face_vertices(face);
             let &third = vs.iter().find(|&&v| v != vi0 && v != vi1).unwrap();
@@ -1446,7 +1340,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                         // Walk forward until we find vi1
                         let mut idx = i;
                         loop {
-                            // println!("Checking vertex {} on face {}", face_vs[idx], face);
                             let next_idx = (idx + 1) % face_vs.len();
                             let v = face_vs[next_idx];
                             path.push(face_vs[idx]);
@@ -1472,7 +1365,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                 // Now path = [vi0, ..., vi1]
                 // For every consecutive pair, check if edge exists, else split at middle points.
                 for pair in path.windows(2) {
-                    // println!("Processing pair: {:?}", pair);
                     let v_from = pair[0];
                     let v_to = pair[1];
                     let he = self.find_half_edge_on_face(face, v_from, v_to);
@@ -1501,11 +1393,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let max_iterations = self.half_edges.len(); // Safety limit
 
         loop {
-            // println!("Checking half-edge {} on face {}", current_he, face);
-
             // Safety check to prevent infinite loops
             if count > max_iterations {
-                // println!("Warning: Infinite loop detected in find_half_edge_on_face");
                 return None;
             }
 
@@ -1560,12 +1449,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             ]);
 
             let d2 = distance_point_triangle_squared(&p, &v0, &v1, &v2);
-            println!(
-                "Distance squared from point {:?} to triangle {}: {}",
-                p,
-                fi,
-                d2.to_f64().unwrap()
-            );
             min_d2 = min_d2.min(d2);
         }
         min_d2.sqrt()
@@ -1592,12 +1475,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
         }
 
-        let mut check = false;
-        println!("Beginning to check face {}", face);
         // 2. Check if p is on a face edge, and split if so.
         for &he in &self.face_half_edges(face) {
-            // println!("Checking half-edge {}", he);
-            println!("Checking half-edge {}", he);
             let src = self.half_edges[self.half_edges[he].prev].vertex;
             let dst = self.half_edges[he].vertex;
             let ps = &self.vertices[src].position;
@@ -1606,13 +1485,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             if point_on_segment_eps(ps, pd, p, EPS.into()) {
                 // Split edge and return new vertex index.
                 let new_vi = self.split_edge(he, p.clone()).unwrap();
-                check = true;
-                println!("Point is on.");
                 return Some(new_vi);
-            } else {
-                println!("Point {:?} is not on edge from {:?} to {:?}", p, ps, pd);
             }
-            // println!("Point {:?} is not on edge from {:?} to {:?}", p, ps, pd);
         }
 
         // 3. If p is strictly inside this triangular face, split it into 3 (RARE case).
@@ -1654,10 +1528,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
 
             return Some(w);
-        }
-
-        if !check {
-            println!("WARNING: Point {:?} is not on any edge of face {}", p, face);
         }
 
         None
@@ -1741,9 +1611,6 @@ where
         a.build_boundary_loops();
         b.build_boundary_loops();
 
-        let mut original_a = a.clone();
-        let mut original_b = b.clone();
-
         // 2) Pre-split A against B, handling both proper and coplanar intersections
         let tree_b_pre = AabbTree::build((0..b.faces.len()).map(|i| (b.face_aabb(i), i)).collect());
         let mut segments: Vec<(usize, usize, Point<T, 3>, Point<T, 3>)> = Vec::new();
@@ -1812,35 +1679,14 @@ where
             }
         }
 
-        println!(
-            "*********** Finished segment collection: {} segments found ***********",
-            segments.len()
-        );
-
         let elm = segments.remove(12);
         segments.push(elm);
 
-        for (fa, fb, p, q) in &segments {
-            println!(
-                "Segment from face {} to face {}: {:?} to {:?}",
-                fa, fb, p, q
-            );
-        }
-
-        println!(
-            "****************** BEFORE START: Mesh has {} faces and {} vertices ********************",
-            a.faces.len(),
-            a.vertices.len(),
-        );
-
         let mut a_and_b_arr = [&mut a, &mut b];
 
-        let mut i = 0;
         // 3) Split on both meshes
         for &(_orig_fa, _orig_fb, ref p, ref q) in &segments {
             for mesh in a_and_b_arr.iter_mut() {
-                println!("Processing segment {}: {:?} to {:?}", i, p, q);
-
                 let fa_p_candidates = mesh.faces_containing_point(p);
 
                 let mut pi = None;
@@ -1864,11 +1710,6 @@ where
 
                 // check if endpoints have an edge between them
                 if mesh.half_edge_between(pi, qi).is_some() {
-                    println!(
-                        "Found existing half-edge between {} and {}, skipping split",
-                        pi, qi
-                    );
-
                     continue; // Skip this segment if edge already exists
                 }
 
@@ -1887,21 +1728,10 @@ where
 
                 remove_duplicate_faces(mesh);
             }
-
-            let _ = write_obj(
-                &a_and_b_arr[0],
-                format!("/mnt/v/cgar_meshes/{}.obj", i).as_str(),
-            );
-            let _ = write_obj(&a_and_b_arr[0], format!("{}.obj", i).as_str());
-
-            i += 1;
         }
 
         a.build_boundary_loops();
         b.build_boundary_loops();
-
-        let _ = write_obj(&a, format!("/mnt/v/cgar_meshes/{}.obj", i).as_str());
-        let _ = write_obj(&a, format!("{}.obj", i).as_str());
 
         // 1. Remove duplicate vertices
         let mut vertex_dedup_map = std::collections::HashMap::new();
@@ -1963,42 +1793,6 @@ where
 
         a = final_mesh;
 
-        i += 1;
-        let _ = write_obj(&a, format!("/mnt/v/cgar_meshes/{}.obj", i).as_str());
-        let _ = write_obj(&a, format!("{}.obj", i).as_str());
-
-        // let's output B's triangle 8 for debugging
-        let mut b_with_only_face_8 = Mesh::<T, 3>::new();
-        for vertex in b.vertices.iter() {
-            b_with_only_face_8.add_vertex(vertex.position.clone());
-        }
-
-        b_with_only_face_8.add_triangle(
-            b.face_vertices(7)[0],
-            b.face_vertices(7)[1],
-            b.face_vertices(7)[2],
-        );
-
-        b_with_only_face_8.add_triangle(
-            b.face_vertices(8)[0],
-            b.face_vertices(8)[1],
-            b.face_vertices(8)[2],
-        );
-
-        // print face 8's vertices positions
-        println!(
-            "Face 7 vertices: {:?}",
-            b.face_vertices(7)
-                .iter()
-                .map(|&vi| b.vertices[vi].position.clone())
-                .collect::<Vec<_>>()
-        );
-
-        let _ = write_obj(
-            &b_with_only_face_8,
-            format!("/mnt/v/cgar_meshes/b_face_8_only.obj").as_str(),
-        );
-
         // 4) Build classification trees
         let tree_a = AabbTree::build((0..a.faces.len()).map(|i| (a.face_aabb(i), i)).collect());
         let tree_b = AabbTree::build((0..b.faces.len()).map(|i| (b.face_aabb(i), i)).collect());
@@ -2031,22 +1825,10 @@ where
                 BooleanOp::Difference => {
                     if inside_b {
                         test_inside += 1;
-                        println!("  -> REMOVING: inside B");
                         false // Always remove faces inside B
                     } else if on_bnd {
-                        // if test_boundary == 1 {
-                        //     true
-                        // } else {
-                        //     test_boundary += 1;
-                        //     false
-                        // }
-                        //has_same_normal_as_b_face(&a, fa, &b, &tree_b, &cen)
                         false
                     } else {
-                        // println!(
-                        //     "  -> KEEPING: outside B (dist={:.6})",
-                        //     distance_to_b.to_f64().unwrap()
-                        // );
                         true // Keep faces outside B
                     }
                 }
@@ -2061,12 +1843,6 @@ where
                 test_added += 1;
             }
         }
-
-        println!("faces that were inside {}", test_inside);
-        println!("removed faces that were boundary: {}", test_boundary);
-        println!("total added faces: {}", test_added);
-
-        let _ = write_obj(&result, "/mnt/v/cgar_meshes/seila.obj");
 
         // 6b) Handle B according to op
         match op {
