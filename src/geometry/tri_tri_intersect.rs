@@ -183,19 +183,19 @@ where
 
     // 2) build 2D points
     let to2d = |p: &Point3<T>| project_to_2d(p, i0, i1);
-    let t1 = [to2d(&p[0]), to2d(&p[1]), to2d(&p[2])];
-    let t2 = [to2d(&q[0]), to2d(&q[1]), to2d(&q[2])];
+    let t1 = [to2d(&p[2]), to2d(&p[0]), to2d(&p[1])];
+    let t2 = [to2d(&q[2]), to2d(&q[0]), to2d(&q[1])];
 
     // 3) collect vertices of one triangle inside the other
     let mut pts: Vec<Point3<T>> = Vec::new();
     for point in &t1 {
         if point_in_tri_2d(point, &t2) {
-            pts.push(back_project_to_3d(point, i0, i1, drop, &p[0]));
+            pts.push(back_project_to_3d(point, i0, i1, drop, &p[2]));
         }
     }
     for point in &t2 {
         if point_in_tri_2d(point, &t1) {
-            pts.push(back_project_to_3d(point, i0, i1, drop, &q[0]));
+            pts.push(back_project_to_3d(point, i0, i1, drop, &q[2]));
         }
     }
 
@@ -214,7 +214,7 @@ where
         for (c, d) in &edges2 {
             if let Some(s) = segment_intersect_2d(a, b, c, d) {
                 // Here we use p0 as the reference for the dropped axis, but you could interpolate if desired
-                pts.push(back_project_to_3d(&s.a, i0, i1, drop, &p[0]));
+                pts.push(back_project_to_3d(&s.a, i0, i1, drop, &p[2]));
             }
         }
     }
@@ -248,15 +248,15 @@ where
         + Div<&'a T, Output = T>,
 {
     // 1) Build plane of T2: n2·x + d2 = 0
-    let v01 = (&q[1] - &q[0]).as_vector();
-    let v02 = (&q[2] - &q[0]).as_vector();
+    let v01 = (&q[0] - &q[2]).as_vector();
+    let v02 = (&q[1] - &q[2]).as_vector();
     let n2 = v01.cross(&v02);
-    let d2 = -n2.dot(&q[0].as_vector().into());
+    let d2 = -n2.dot(&q[2].as_vector().into());
 
     // signed distances of p-verts to T2’s plane
-    let d_p0 = &n2.dot(&p[0].as_vector().into()) + &d2;
-    let d_p1 = &n2.dot(&p[1].as_vector().into()) + &d2;
-    let d_p2 = &n2.dot(&p[2].as_vector().into()) + &d2;
+    let d_p0 = &n2.dot(&p[2].as_vector().into()) + &d2;
+    let d_p1 = &n2.dot(&p[0].as_vector().into()) + &d2;
+    let d_p2 = &n2.dot(&p[1].as_vector().into()) + &d2;
 
     //  → Fall back for strictly co-planar
     if d_p0 == T::zero() && d_p1 == T::zero() && d_p2 == T::zero() {
@@ -266,24 +266,24 @@ where
 
     // 2) Now do the regular non-coplanar plane‐edge clipping:
     let mut pts = Vec::new();
-    for (a, b) in [(&p[0], &p[1]), (&p[1], &p[2]), (&p[2], &p[0])] {
+    for (a, b) in [(&p[2], &p[0]), (&p[0], &p[1]), (&p[1], &p[2])] {
         if let Some(ip) = intersect_edge_plane(&a, &b, &n2.clone().into(), &d2) {
-            if point_in_tri(&ip, &q[0], &q[1], &q[2]) {
+            if point_in_tri(&ip, &q[2], &q[0], &q[1]) {
                 pts.push(ip);
             }
         }
     }
 
     // 3) Build plane of T1:
-    let u01 = (&p[1] - &p[0]).as_vector();
-    let u02 = (&p[2] - &p[0]).as_vector();
+    let u01 = (&p[0] - &p[2]).as_vector();
+    let u02 = (&p[1] - &p[2]).as_vector();
     let n1 = u01.cross(&u02);
-    let d1 = -n1.dot(&p[0].as_vector().into());
+    let d1 = -n1.dot(&p[2].as_vector().into());
 
     // 4) Clip edges of T2 against T1’s plane:
-    for (a, b) in [(&q[0], &q[1]), (&q[1], &q[2]), (&q[2], &q[0])] {
+    for (a, b) in [(&q[2], &q[0]), (&q[0], &q[1]), (&q[1], &q[2])] {
         if let Some(ip) = intersect_edge_plane(&a, &b, &n1.clone().into(), &d1) {
-            if point_in_tri(&ip, &p[0], &p[1], &p[2]) {
+            if point_in_tri(&ip, &p[2], &p[0], &p[1]) {
                 pts.push(ip);
             }
         }
