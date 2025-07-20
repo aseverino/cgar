@@ -757,21 +757,22 @@ fn test_face_area_and_centroid_2d() {
 // at the bottom of mesh.rs, or in tests/mesh_boolean.rs:
 
 /// Builds an axis-aligned cube from `min = [x0,y0,z0]` to `max = [x1,y1,z1]`.
-fn make_cube(min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3> {
+fn make_cube(origin: [f64; 3], min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3> {
     let mut m = Mesh::new();
+    let [ox, oy, oz] = origin;
     let [x0, y0, z0] = min;
     let [x1, y1, z1] = max;
 
     // eight corners
     let v = [
-        m.add_vertex(Point3::from_vals([x0, y0, z0])),
-        m.add_vertex(Point3::from_vals([x1, y0, z0])),
-        m.add_vertex(Point3::from_vals([x1, y1, z0])),
-        m.add_vertex(Point3::from_vals([x0, y1, z0])),
-        m.add_vertex(Point3::from_vals([x0, y0, z1])),
-        m.add_vertex(Point3::from_vals([x1, y0, z1])),
-        m.add_vertex(Point3::from_vals([x1, y1, z1])),
-        m.add_vertex(Point3::from_vals([x0, y1, z1])),
+        m.add_vertex(Point3::from_vals([ox + x0, oy + y0, oz + z0])),
+        m.add_vertex(Point3::from_vals([ox + x1, oy + y0, oz + z0])),
+        m.add_vertex(Point3::from_vals([ox + x1, oy + y1, oz + z0])),
+        m.add_vertex(Point3::from_vals([ox + x0, oy + y1, oz + z0])),
+        m.add_vertex(Point3::from_vals([ox + x0, oy + y0, oz + z1])),
+        m.add_vertex(Point3::from_vals([ox + x1, oy + y0, oz + z1])),
+        m.add_vertex(Point3::from_vals([ox + x1, oy + y1, oz + z1])),
+        m.add_vertex(Point3::from_vals([ox + x0, oy + y1, oz + z1])),
     ];
 
     // each triple is a CCW triangle when viewed from outside
@@ -798,19 +799,25 @@ fn make_cube(min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3> {
 }
 
 #[test]
-fn difference_corner_cube() {
+fn difference_boolean() {
     // 1) Big unit cube [0,1]^3
-    let big = make_cube([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    //let _ = write_obj(&big, "/mnt/v/cgar_meshes/big.obj");
+    let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    //let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/big_a.obj");
+    //let _ = write_obj(&big_b, "/mnt/v/cgar_meshes/big_b.obj");
 
     // 2) Smaller cube slicing off the top-far corner
-    let small = make_cube([0.5, 0.5, 0.5], [1.0, 1.0, 1.0]);
+    let small = make_cube([0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [1.0, 1.0, 1.0]);
 
     // 3) Perform boolean difference
-    let result = big.boolean(&small, BooleanOp::Difference);
+    let result_1 = big_a.boolean(&small, BooleanOp::Difference);
+    let result_2 = big_a.boolean(&big_b, BooleanOp::Difference);
 
-    assert_eq!(result.vertices.len(), 23);
-    assert_eq!(result.faces.len(), 25);
+    //let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
 
-    //let _ = write_obj(&result, "/mnt/v/cgar_meshes/test_corner_cube.obj");
+    assert_eq!(result_1.vertices.len(), 21);
+    assert_eq!(result_1.faces.len(), 25);
+
+    assert_eq!(result_2.vertices.len(), 22);
+    assert_eq!(result_2.faces.len(), 26);
 }

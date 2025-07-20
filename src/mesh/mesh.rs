@@ -71,6 +71,148 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
     }
 
+    /// Remove a vertex and update all references.
+    /// Removes any faces that use this vertex and updates indices in remaining faces.
+    /// Returns true if the vertex was successfully removed.
+    pub fn remove_vertex(&mut self, vertex_idx: usize) -> bool {
+        if vertex_idx >= self.vertices.len() {
+            return false; // Invalid index
+        }
+
+        // 1) Remove faces that use this vertex
+        let mut faces_to_remove = Vec::new();
+        for (face_idx, _) in self.faces.iter().enumerate() {
+            let face_verts = self.face_vertices(face_idx);
+            if face_verts.contains(&vertex_idx) {
+                faces_to_remove.push(face_idx);
+            }
+        }
+
+        // Remove faces in reverse order to maintain indices
+        for &face_idx in faces_to_remove.iter().rev() {
+            self.remove_face(face_idx);
+        }
+
+        // 2) Remove the vertex
+        self.vertices.remove(vertex_idx);
+
+        // 3) Update all vertex indices > vertex_idx (decrement by 1)
+        self.update_vertex_indices_after_removal(vertex_idx);
+
+        true
+    }
+
+    /// Remove a face and clean up associated half-edges
+    pub fn remove_face(&mut self, face_idx: usize) {
+        if face_idx >= self.faces.len() {
+            return; // Invalid index
+        }
+
+        // Get half-edges for this face before removal
+        let face_half_edges = self.face_half_edges(face_idx);
+
+        // Remove half-edges associated with this face
+        // Note: This is complex due to twin relationships, so we'll mark them for cleanup
+        for &he_idx in &face_half_edges {
+            // Clear face reference
+            if he_idx < self.half_edges.len() {
+                self.half_edges[he_idx].face = None;
+
+                // Update twin relationships
+                let twin_idx = self.half_edges[he_idx].twin;
+                if twin_idx != usize::MAX && twin_idx < self.half_edges.len() {
+                    self.half_edges[twin_idx].twin = usize::MAX;
+                }
+            }
+        }
+
+        // Remove from edge_map
+        for &he_idx in &face_half_edges {
+            if he_idx < self.half_edges.len() {
+                let vertex = self.half_edges[he_idx].vertex;
+                let prev_idx = self.half_edges[he_idx].prev;
+                if prev_idx < self.half_edges.len() {
+                    let prev_vertex = self.half_edges[prev_idx].vertex;
+                    self.edge_map.remove(&(prev_vertex, vertex));
+                }
+            }
+        }
+
+        // Remove the face
+        self.faces.remove(face_idx);
+
+        // Update face indices in half-edges
+        for he in &mut self.half_edges {
+            if let Some(ref mut face_ref) = he.face {
+                if *face_ref > face_idx {
+                    *face_ref -= 1;
+                }
+            }
+        }
+    }
+
+    /// Update all vertex indices after a vertex removal
+    fn update_vertex_indices_after_removal(&mut self, removed_idx: usize) {
+        // Update half-edges
+        for he in &mut self.half_edges {
+            if he.vertex > removed_idx {
+                he.vertex -= 1;
+            }
+        }
+
+        // Update vertex half-edge references
+        for (v_idx, vertex) in self.vertices.iter_mut().enumerate() {
+            if let Some(ref mut he_idx) = vertex.half_edge {
+                // Find a valid half-edge for this vertex (since indices may have shifted)
+                let mut found_valid = false;
+                for (he_idx_search, he) in self.half_edges.iter().enumerate() {
+                    if he.vertex == v_idx {
+                        *he_idx = he_idx_search;
+                        found_valid = true;
+                        break;
+                    }
+                }
+                if !found_valid {
+                    vertex.half_edge = None;
+                }
+            }
+        }
+
+        // Update edge_map
+        let old_edge_map = std::mem::take(&mut self.edge_map);
+        for ((from, to), he_idx) in old_edge_map {
+            let new_from = if from > removed_idx { from - 1 } else { from };
+            let new_to = if to > removed_idx { to - 1 } else { to };
+
+            // Only keep edges where both vertices still exist
+            if new_from != removed_idx && new_to != removed_idx {
+                self.edge_map.insert((new_from, new_to), he_idx);
+            }
+        }
+    }
+
+    /// Remove unused vertices and remap face indices
+    pub fn remove_unused_vertices(&mut self) {
+        // Find vertices that are actually referenced by faces
+        let mut used_vertices = std::collections::HashSet::new();
+        for face_idx in 0..self.faces.len() {
+            let face_verts = self.face_vertices(face_idx);
+            for &v_idx in &face_verts {
+                used_vertices.insert(v_idx);
+            }
+        }
+
+        // Remove unused vertices in reverse order (highest index first)
+        let mut unused_vertices: Vec<usize> = (0..self.vertices.len())
+            .filter(|idx| !used_vertices.contains(idx))
+            .collect();
+        unused_vertices.sort_by(|a, b| b.cmp(a)); // Reverse order
+
+        for &vertex_idx in &unused_vertices {
+            self.remove_vertex(vertex_idx);
+        }
+    }
+
     /// Compute the AABB of face `f`.
     pub fn face_aabb(&self, f: usize) -> Aabb<T, N, Point<T, N>>
     where
@@ -1783,9 +1925,6 @@ where
             }
         }
 
-        let elm = segments.remove(12);
-        segments.push(elm);
-
         let mut a_and_b_arr = [&mut a, &mut b];
 
         // 3) Split on both meshes
@@ -2015,6 +2154,9 @@ where
                         }
                     }
                 }
+
+                // 3) remove floating vertices
+                result.remove_unused_vertices();
             }
         }
 
