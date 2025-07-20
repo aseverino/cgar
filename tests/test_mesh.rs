@@ -821,3 +821,33 @@ fn difference_boolean() {
     assert_eq!(result_2.vertices.len(), 22);
     assert_eq!(result_2.faces.len(), 26);
 }
+
+#[test]
+fn intersection_boolean() {
+    // 1) Big unit cube [0,1]^3
+    let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+    // 3) Perform boolean difference
+    let result_1 = big_a.boolean(&big_b, BooleanOp::Intersection);
+
+    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
+
+    assert_eq!(result_1.vertices.len(), 16);
+    assert_eq!(result_1.faces.len(), 14);
+}
+
+#[test]
+fn union_boolean() {
+    // 1) Big unit cube [0,1]^3
+    let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+    // 3) Perform boolean difference
+    let result_1 = big_a.boolean(&big_b, BooleanOp::Union);
+
+    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
+
+    assert_eq!(result_1.vertices.len(), 28);
+    assert_eq!(result_1.faces.len(), 38);
+}

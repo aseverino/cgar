@@ -2108,6 +2108,8 @@ where
                         );
                     }
                 }
+
+                result.remove_unused_vertices();
             }
             BooleanOp::Intersection => {
                 // copy B verts
@@ -2128,6 +2130,8 @@ where
                         );
                     }
                 }
+
+                result.remove_unused_vertices();
             }
             BooleanOp::Difference => {
                 // result.build_boundary_loops();
