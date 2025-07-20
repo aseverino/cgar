@@ -27,6 +27,7 @@ use cgar::geometry::{Aabb, Point2, Point3};
 use cgar::mesh::mesh::{BooleanImpl, BooleanOp, Mesh};
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::numeric::cgar_rational::CgarRational;
+use cgar::operations::Abs;
 
 #[test]
 fn test_add_vertices_and_triangle_2() {
@@ -744,13 +745,12 @@ fn test_face_area_and_centroid_2d() {
 
     // Centroid: (1/3, 1/3)
     let cent = mesh.face_centroid(0);
-    assert_eq!(cent.len(), 2);
-    assert!((cent[0] - (1.0 / 3.0)).abs() < 1e-12);
-    assert!((cent[1] - (1.0 / 3.0)).abs() < 1e-12);
+    assert!((cent[0].0 - (1.0 / 3.0)).abs() < 1e-12);
+    assert!((cent[1].0 - (1.0 / 3.0)).abs() < 1e-12);
 
     // Area: 0.5
     let area = mesh.face_area(0);
-    assert!((area - 0.5).abs() < 1e-12);
+    assert!((area.0 - 0.5).abs() < 1e-12);
 }
 
 // at the bottom of mesh.rs, or in tests/mesh_boolean.rs:

@@ -197,6 +197,125 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         centroid
     }
 
+    pub fn face_area(&self, f: usize) -> T
+    where
+        T: Scalar,
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        match N {
+            2 => self.face_area_2d(f),
+            3 => self.face_area_3d(f),
+            _ => panic!("face_area only supports 2D and 3D"),
+        }
+    }
+
+    fn face_area_2d(&self, f: usize) -> T
+    where
+        T: Scalar,
+        Point<T, 2>: PointOps<T, 2, Vector = Vector<T, 2>>,
+        Vector<T, 2>: VectorOps<T, 2, Cross = T>, // Cross product is scalar in 2D
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let face_vertices = self.face_vertices(f);
+        if face_vertices.len() != 3 {
+            panic!("face_area only works for triangular faces");
+        }
+
+        let a = &self.vertices[face_vertices[0]].position;
+        let b = &self.vertices[face_vertices[1]].position;
+        let c = &self.vertices[face_vertices[2]].position;
+
+        let ab = b - a;
+        let ac = c - a;
+
+        let ab_2d = Vector::<T, 2>::from_vals([ab[0].clone(), ab[1].clone()]);
+        let ac_2d = Vector::<T, 2>::from_vals([ac[0].clone(), ac[1].clone()]);
+
+        let cross_product = ab_2d.cross(&ac_2d);
+        cross_product.abs() / T::from(2.0)
+    }
+
+    fn face_area_3d(&self, f: usize) -> T
+    where
+        T: Scalar,
+        Point<T, 3>: PointOps<T, 3, Vector = Vector<T, 3>>,
+        Vector<T, 3>: VectorOps<T, 3, Cross = Vector<T, 3>>, // Cross product is vector in 3D
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let face_vertices = self.face_vertices(f);
+        if face_vertices.len() != 3 {
+            panic!("face_area only works for triangular faces");
+        }
+
+        let a = &self.vertices[face_vertices[0]].position;
+        let b = &self.vertices[face_vertices[1]].position;
+        let c = &self.vertices[face_vertices[2]].position;
+
+        let ab = b - a;
+        let ac = c - a;
+
+        let ab_3d = Vector::<T, 3>::from_vals([ab[0].clone(), ab[1].clone(), ab[2].clone()]);
+        let ac_3d = Vector::<T, 3>::from_vals([ac[0].clone(), ac[1].clone(), ac[2].clone()]);
+
+        let cross_product = ab_3d.cross(&ac_3d);
+        cross_product.norm() / T::from(2.0)
+    }
+
+    /// Enumerate all outgoing half-edges from `v` exactly once,
+    /// in CCW order.  Works even on meshes with open boundaries,
+    /// *provided* you’ve first called `build_boundary_loops()`.
+    pub fn outgoing_half_edges(&self, v: usize) -> Vec<usize> {
+        let start = self.vertices[v]
+            .half_edge
+            .expect("vertex has no incident edges");
+        let mut result = Vec::new();
+        let mut h = start;
+        loop {
+            result.push(h);
+            let t = self.half_edges[h].twin;
+            // Now that every edge has a twin (real or ghost), we never hit usize::MAX
+            h = self.half_edges[t].next;
+            if h == start {
+                break;
+            }
+        }
+        result
+    }
+
+    /// Returns true if vertex `v` has any outgoing ghost edge (face == None).
+    pub fn is_boundary_vertex(&self, v: usize) -> bool {
+        self.outgoing_half_edges(v)
+            .into_iter()
+            .any(|he| self.half_edges[he].face.is_none())
+    }
+
+    // /// Returns all vertex indices that lie on at least one boundary loop.
+    pub fn boundary_vertices(&self) -> Vec<usize> {
+        (0..self.vertices.len())
+            .filter(|&v| self.is_boundary_vertex(v))
+            .collect()
+    }
+
+    /// Returns the one-ring neighbors of vertex `v`.
+    pub fn one_ring_neighbors(&self, v: usize) -> Vec<usize> {
+        self.outgoing_half_edges(v)
+            .iter()
+            .map(|&he_idx| self.half_edges[he_idx].vertex)
+            .collect()
+    }
+
+    /// Builds boundary loops for the mesh.
     pub fn build_boundary_loops(&mut self) {
         let mut seen = HashSet::new();
         let original_count = self.half_edges.len();
@@ -1655,7 +1774,7 @@ where
                         let diff: Point<T, 3> = &pa[0] - &pb[0];
                         if nA.dot(&diff.as_vector()).abs().is_zero() {
                             // **LIMIT COPLANAR OVERLAPS**
-                            let overlaps = tri_tri_overlap(&pa, &pb, &nA);
+                            let overlaps = tri_tri_overlap(&pa, &pb);
                             for (q0, q1) in overlaps {
                                 // Filter degenerate and duplicate segments
                                 if q0.distance_to(&q1) > T::from(EPS) {

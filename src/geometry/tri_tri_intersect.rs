@@ -42,7 +42,6 @@ use crate::{
 pub fn tri_tri_overlap<T: Scalar>(
     pa: &[Point<T, 3>; 3],
     pb: &[Point<T, 3>; 3],
-    normal: &Vector<T, 3>,
 ) -> Vec<(Point<T, 3>, Point<T, 3>)>
 where
     for<'a> &'a T: Add<&'a T, Output = T>
