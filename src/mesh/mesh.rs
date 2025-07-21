@@ -577,27 +577,20 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         loops
     }
 
-    pub fn point_in_mesh(&self, _tree: &AabbTree<T, 3, Point<T, 3>, usize>, p: &Point<T, 3>) -> bool
+    pub fn point_in_mesh(&self, tree: &AabbTree<T, 3, Point<T, 3>, usize>, p: &Point<T, 3>) -> bool
     where
-        T: Scalar,
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        // 0) First check if point is exactly ON the mesh surface
-        let distance_to_surface = self.point_to_mesh_distance(_tree, p);
-        if distance_to_surface.is_zero() {
-            return false; // Points ON the surface are not "inside"
-        }
-
         let mut inside_count = 0;
         let mut total_rays = 0;
 
-        let n_rays = 32;
+        let n_rays = 8; // ← Reduce from 32 to 8 rays
         for _ in 0..n_rays {
             let dir: Vector<T, 3> = random_unit_vector();
-            if let Some(is_inside) = self.cast_ray(p, &dir) {
+            if let Some(is_inside) = self.cast_ray(p, &dir, tree) {
                 if is_inside {
                     inside_count += 1;
                 }
@@ -605,23 +598,38 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
         }
 
-        // Majority vote: if most rays say "inside", then it's inside
         total_rays > 0 && inside_count > total_rays / 2
     }
 
-    fn cast_ray(&self, p: &Point<T, 3>, dir: &Vector<T, 3>) -> Option<bool>
+    fn cast_ray(
+        &self,
+        p: &Point<T, 3>,
+        dir: &Vector<T, 3>,
+        tree: &AabbTree<T, 3, Point<T, 3>, usize>,
+    ) -> Option<bool>
     where
-        T: Scalar,
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        let orig = p.coords();
         let mut hits: Vec<T> = Vec::new();
 
-        for fi in 0..self.faces.len() {
-            let vs_idxs = self.face_vertices(fi);
+        // Create ray AABB for tree query
+        let far_point = Point::<T, 3>::from_vals([
+            &p[0] + &(&dir[0] * &T::from(1000.0)),
+            &p[1] + &(&dir[1] * &T::from(1000.0)),
+            &p[2] + &(&dir[2] * &T::from(1000.0)),
+        ]);
+        let ray_aabb = Aabb::from_points(p, &far_point);
+
+        // Query tree for faces that intersect ray
+        let mut candidate_faces = Vec::new();
+        tree.query(&ray_aabb, &mut candidate_faces);
+
+        // Test only candidate faces (not all faces!)
+        for &fi in &candidate_faces {
+            let vs_idxs = self.face_vertices(*fi);
             let vs: [&Point<T, 3>; 3] = [
                 &Point::<T, 3>::from_vals([
                     self.vertices[vs_idxs[0]].position[0].clone(),
@@ -640,22 +648,19 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                 ]),
             ];
 
-            // Use Möller–Trumbore with better precision handling
-            if let Some(t) = self.ray_triangle_intersection(&orig, dir, vs) {
+            if let Some(t) = self.ray_triangle_intersection(&p.coords(), dir, vs) {
                 if t > T::from(1e-10) {
-                    // Ignore hits very close to ray origin
                     hits.push(t);
                 }
             }
         }
 
         if hits.is_empty() {
-            return None; // Ray didn't hit anything
+            return None;
         }
 
-        // Sort and remove near-duplicates more carefully
+        // Remove duplicates and count
         hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
         let mut filtered_hits = Vec::new();
         let mut last_t = None;
 
