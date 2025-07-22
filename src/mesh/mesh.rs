@@ -2437,157 +2437,10 @@ where
             fa += 1;
         }
 
-        // for fa in 0..a.faces.len() {
-        //     if a.faces[fa].half_edge == usize::MAX {
-        //         continue; // Skip invalid faces
-        //     }
-        //     let mut candidates = Vec::new();
-        //     tree_b_pre.query(&a.face_aabb(fa), &mut candidates);
-
-        //     let pa_idx = a.face_vertices(fa);
-        //     let pa_vec: Vec<Point<T, 3>> = pa_idx
-        //         .into_iter()
-        //         .map(|vi| a.vertices[vi].position.clone())
-        //         .collect();
-        //     let pa: [Point<T, 3>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
-
-        //     for &fb in &candidates {
-        //         if a.faces[fa].half_edge == usize::MAX {
-        //             continue; // Face may have been invalidated at this point
-        //         }
-        //         let pb_idx = b.face_vertices(*fb);
-        //         let pb_vec: Vec<Point<T, 3>> = pb_idx
-        //             .into_iter()
-        //             .map(|vi| b.vertices[vi].position.clone()) // ← FIX: Use b.vertices not a.vertices
-        //             .collect();
-        //         let pb: [Point<T, 3>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
-
-        //         // Before expensive triangle-triangle intersection:
-        //         let aabb_a = a.face_aabb(fa);
-        //         let aabb_b = b.face_aabb(*fb);
-
-        //         if !aabb_a.intersects(&aabb_b) {
-        //             continue; // Skip if bounding boxes don't even overlap
-        //         }
-
-        //         if let Some(s) = tri_tri_intersection(&pa, &pb) {
-        //             let segment_length = s.length();
-
-        //             // **Filter out degenerate/point intersections**
-        //             if segment_length.is_positive() {
-        //                 // segments.push(([fa, *fb], s));
-        //                 boolean_split(&mut a, fa, &s);
-        //             }
-        //             // ← Continue to next candidate, skip coplanar processing
-        //             continue;
-        //         }
-
-        //         let e1a = &pa[1] - &pa[0];
-        //         let e2a = &pa[2] - &pa[0];
-        //         let e1b = &pb[1] - &pb[0];
-        //         let e2b = &pb[2] - &pb[0];
-        //         let n_a = e1a.as_vector().cross(&e2a.as_vector());
-        //         let n_b = e1b.as_vector().cross(&e2b.as_vector());
-
-        //         // **Check if normals are parallel (coplanar candidates)**
-        //         let n_dot = n_a.dot(&n_b);
-        //         let n_norm_sq_a = n_a.dot(&n_a);
-        //         let n_norm_sq_b = n_b.dot(&n_b);
-
-        //         // Avoid division by zero
-        //         if n_norm_sq_a.is_zero() || n_norm_sq_b.is_zero() {
-        //             continue; // Degenerate triangle
-        //         }
-
-        //         let cos_angle = &n_dot / &(n_norm_sq_a.sqrt() * n_norm_sq_b.sqrt());
-
-        //         // **Only process if triangles are nearly coplanar**
-        //         if cos_angle.abs() > T::from(0.999) {
-        //             // ~2.5 degree tolerance
-        //             // Check if they're on the same plane
-        //             let diff: Point<T, 3> = &pa[0] - &pb[0];
-        //             let plane_distance = n_a.dot(&diff.as_vector()).abs() / n_norm_sq_a.sqrt();
-
-        //             if plane_distance < T::from(1e-6) {
-        //                 // **Now do coplanar intersection**
-        //                 if let Some(s) = tri_tri_intersection(&pa, &pb) {
-        //                     if s.length().is_positive() {
-        //                         // Check for duplicates
-        //                         let is_duplicate = segments.iter().any(|([_, _], existing)| {
-        //                             (s.a.distance_to(&existing.a).is_zero()
-        //                                 && s.b.distance_to(&existing.b).is_zero())
-        //                                 || (s.a.distance_to(&existing.b).is_zero()
-        //                                     && s.b.distance_to(&existing.a).is_zero())
-        //                         });
-
-        //                         if !is_duplicate {
-        //                             // segments.push(([fa, *fb], segment));
-        //                             boolean_split(&mut a, fa, &s);
-        //                         }
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
-
-        // let mut a_and_b_arr = [&mut a, &mut b];
-
-        // let mut i = 0;
-        // 3) Split on both meshes
-        // for (mesh_i, mesh) in a_and_b_arr.iter_mut().enumerate() {
-        //     for &(orig_f, ref s) in &segments {
-        //         // let fa_p_candidates = mesh.faces_containing_point(&s.a);
-        //         let va = mesh.split_or_find_vertex_on_face(orig_f[mesh_i], &s.a);
-        //         let vb = mesh.split_or_find_vertex_on_face(orig_f[mesh_i], &s.b);
-        //         mesh.add_edge_if_not_exists(va, vb);
-        //     }
-        // }
-
         a.faces.retain(|f| f.half_edge != usize::MAX);
 
         let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
         println!("GOT HERE");
-        //         let mut pi = None;
-        //         for &face in &fa_p_candidates {
-        //             pi = mesh.find_or_insert_vertex_on_face(face, &s.a);
-        //             if pi.is_some() {
-        //                 break;
-        //             }
-        //         }
-        //         let pi = pi.expect("no face contains p in A");
-
-        //         let fa_q_candidates = mesh.faces_containing_point(&s.b);
-        //         let mut qi = None;
-        //         for &face in &fa_q_candidates {
-        //             qi = mesh.find_or_insert_vertex_on_face(face, &s.b);
-        //             if qi.is_some() {
-        //                 break;
-        //             }
-        //         }
-        //         let qi = qi.expect("no face contains q in A");
-
-        //         // check if endpoints have an edge between them
-        //         if mesh.half_edge_between(pi, qi).is_some() {
-        //             continue; // Skip this segment if edge already exists
-        //         }
-
-        //         let mut shared_face = None;
-        //         for &face in &fa_p_candidates {
-        //             if mesh.face_vertices(face).contains(&qi) {
-        //                 shared_face = Some(face);
-        //                 break;
-        //             }
-        //         }
-        //         if let Some(face) = shared_face {
-        //             mesh.split_segment_by_indices(face, pi, qi, true);
-        //         } else {
-        //             mesh.carve_segment_across_faces(pi, qi);
-        //         }
-
-        //         remove_duplicate_faces(mesh);
-        //     }
-        // }
 
         a.build_boundary_loops();
         b.build_boundary_loops();
@@ -2674,11 +2527,6 @@ where
 
         println!("GOT HERE 5");
 
-        // let mut test_inside = 0;
-        // let mut test_boundary = 0;
-        // let mut test_added = 0;
-        // let mut i = 0;
-
         let mut b_f64 = Mesh::<CgarF64, 3>::new();
         copy_face_graph::<T, CgarF64>(&b, &mut b_f64);
 
@@ -2703,60 +2551,6 @@ where
 
         // Pre-compute bounds for fast rejection
         let b_bounds = b_f64.compute_mesh_bounds();
-
-        // Calculate dynamic rejection distance based on mesh B's size
-        // let mesh_diagonal = {
-        //     let min = mesh_bounds.min();
-        //     let max = mesh_bounds.max();
-        //     let diagonal_squared = (&max[0] - &min[0]) * (&max[0] - &min[0])
-        //         + (&max[1] - &min[1]) * (&max[1] - &min[1])
-        //         + (&max[2] - &min[2]) * (&max[2] - &min[2]);
-        //     diagonal_squared.sqrt()
-        // };
-
-        // // Use a percentage of the diagonal as rejection distance
-        // // This ensures we're conservative but still get speedup for distant points
-        // let rejection_distance = mesh_diagonal * (0.1).into(); // 10% of mesh diagonal
-
-        // // Batch classify
-        // let mut face_classifications = Vec::with_capacity(a.faces.len());
-
-        // for (fa, cen) in centroids.iter().enumerate() {
-        //     if point_far_from_bounds::<CgarF64>(cen, &mesh_bounds, &rejection_distance) {
-        //         // Fast path: assume outside
-        //         let keep = match op {
-        //             BooleanOp::Union => true,
-        //             BooleanOp::Intersection => false,
-        //             BooleanOp::Difference => true,
-        //         };
-        //         face_classifications.push(keep);
-        //     } else {
-        //         // Slow path: accurate classification
-        //         let inside_b = b_f64.point_in_mesh(&tree_b_f64, cen);
-        //         let keep = match op {
-        //             BooleanOp::Union => !inside_b,
-        //             BooleanOp::Intersection => inside_b,
-        //             BooleanOp::Difference => !inside_b, // Simplified for now
-        //         };
-        //         face_classifications.push(keep);
-        //     }
-        // }
-
-        // let face_vertices_list: Vec<Vec<Point<CgarF64, 3>>> = (0..a.faces.len())
-        //     .map(|fa| {
-        //         a.face_vertices(fa)
-        //             .iter()
-        //             .map(|&vi| {
-        //                 let v = &a.vertices[vi].position;
-        //                 Point::<CgarF64, 3>::from_vals([
-        //                     v[0].to_f64().unwrap(),
-        //                     v[1].to_f64().unwrap(),
-        //                     v[2].to_f64().unwrap(),
-        //                 ])
-        //             })
-        //             .collect()
-        //     })
-        //     .collect();
 
         let face_aabbs: Vec<Aabb<CgarF64, 3, Point<CgarF64, 3>>> = (0..a.faces.len())
             .map(|fa| {
