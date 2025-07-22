@@ -30,8 +30,9 @@ use crate::{
         util::EPS,
         vector::{Vector, VectorOps},
     },
+    io::obj::write_obj,
     numeric::{cgar_f64::CgarF64, scalar::Scalar},
-    operations::Zero,
+    operations::{Abs, Pow, Sqrt, Zero},
 };
 use num_traits::Float;
 use rand::prelude::*;
@@ -42,6 +43,7 @@ use std::{
     array::from_fn,
     collections::{HashMap, HashSet},
     ops::{Add, Div, Mul, Sub},
+    time::Instant,
 };
 use std::{convert::TryInto, f64::consts::PI};
 
@@ -59,6 +61,13 @@ pub struct Mesh<T: Scalar, const N: usize> {
     pub faces: Vec<Face>,
 
     pub edge_map: HashMap<(usize, usize), usize>,
+    vertex_spatial_hash: HashMap<(i64, i64, i64), Vec<usize>>,
+}
+
+pub struct SplitEdgeResult {
+    new_vertex: usize,
+    new_faces: Option<Vec<usize>>,
+    invalidated_faces: Option<Vec<usize>>,
 }
 
 impl<T: Scalar, const N: usize> Mesh<T, N> {
@@ -68,6 +77,30 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             half_edges: Vec::new(),
             faces: Vec::new(),
             edge_map: HashMap::new(),
+            vertex_spatial_hash: HashMap::new(),
+        }
+    }
+
+    fn average_face_area(&self) -> f64
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let mut total_area = 0.0;
+        let mut count = 0;
+        for f in 0..self.faces.len() {
+            let area = self.face_area(f).to_f64().unwrap();
+            total_area += area;
+            count += 1;
+        }
+        if count == 0 {
+            0.0
+        } else {
+            total_area / (count as f64)
         }
     }
 
@@ -192,24 +225,233 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     }
 
     /// Remove unused vertices and remap face indices
+    // pub fn remove_unused_vertices(&mut self) {
+    //     // Find vertices that are actually referenced by faces
+    //     let mut used_vertices = std::collections::HashSet::new();
+    //     for face_idx in 0..self.faces.len() {
+    //         let face_verts = self.face_vertices(face_idx);
+    //         for &v_idx in &face_verts {
+    //             used_vertices.insert(v_idx);
+    //         }
+    //     }
+
+    //     // Remove unused vertices in reverse order (highest index first)
+    //     let mut unused_vertices: Vec<usize> = (0..self.vertices.len())
+    //         .filter(|idx| !used_vertices.contains(idx))
+    //         .collect();
+    //     unused_vertices.sort_by(|a, b| b.cmp(a)); // Reverse order
+
+    //     for &vertex_idx in &unused_vertices {
+    //         self.remove_vertex(vertex_idx);
+    //     }
+    // }
     pub fn remove_unused_vertices(&mut self) {
-        // Find vertices that are actually referenced by faces
-        let mut used_vertices = std::collections::HashSet::new();
+        // 1. Find used vertices
+        let mut used = vec![false; self.vertices.len()];
         for face_idx in 0..self.faces.len() {
-            let face_verts = self.face_vertices(face_idx);
-            for &v_idx in &face_verts {
-                used_vertices.insert(v_idx);
+            for &v_idx in &self.face_vertices(face_idx) {
+                used[v_idx] = true;
             }
         }
 
-        // Remove unused vertices in reverse order (highest index first)
-        let mut unused_vertices: Vec<usize> = (0..self.vertices.len())
-            .filter(|idx| !used_vertices.contains(idx))
-            .collect();
-        unused_vertices.sort_by(|a, b| b.cmp(a)); // Reverse order
+        // 2. Build mapping from old to new indices
+        let mut old_to_new = vec![None; self.vertices.len()];
+        let mut new_vertices = Vec::new();
+        for (old_idx, vertex) in self.vertices.iter().enumerate() {
+            if used[old_idx] {
+                let new_idx = new_vertices.len();
+                new_vertices.push(vertex.clone());
+                old_to_new[old_idx] = Some(new_idx);
+            }
+        }
 
-        for &vertex_idx in &unused_vertices {
-            self.remove_vertex(vertex_idx);
+        // 3. Remap faces
+        let mut new_mesh = Mesh::new();
+        for v in &new_vertices {
+            new_mesh.add_vertex(v.position.clone());
+        }
+        for face_idx in 0..self.faces.len() {
+            let vs = self.face_vertices(face_idx);
+            let mapped: Vec<usize> = vs.iter().map(|&vi| old_to_new[vi].unwrap()).collect();
+            if mapped[0] != mapped[1] && mapped[1] != mapped[2] && mapped[2] != mapped[0] {
+                new_mesh.add_triangle(mapped[0], mapped[1], mapped[2]);
+            }
+        }
+        *self = new_mesh;
+    }
+
+    /// Finds an existing vertex at the given position on the specified face,
+    /// or splits an edge/face to insert a new vertex at that position.
+    /// Returns the vertex index.
+    pub fn split_or_find_vertex_on_face(
+        &mut self,
+        face: usize,
+        pos: &Point<T, N>,
+    ) -> Option<SplitEdgeResult>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        // println!("split_or_find_vertex_on_face");
+        let tolerance = T::from(1e-6);
+
+        // 1. Check if position matches an existing vertex on this face (still fast)
+        let face_vertices = self.face_vertices(face);
+        for &vi in &face_vertices {
+            if self.vertices[vi].position.distance_to(pos) < tolerance {
+                println!("Found existing vertex {} at position {:?}", vi, pos);
+                return Some(SplitEdgeResult {
+                    new_vertex: vi,
+                    new_faces: None,
+                    invalidated_faces: None,
+                });
+            }
+        }
+
+        // 2. Use spatial hash to find nearby vertices (much faster than full scan)
+        if let Some(existing_vi) = self.find_nearby_vertex(pos, tolerance.clone()) {
+            println!(
+                "Found existing vertex {} near position {:?}",
+                existing_vi, pos
+            );
+            return Some(SplitEdgeResult {
+                new_vertex: existing_vi,
+                new_faces: None,
+                invalidated_faces: None,
+            });
+        }
+
+        // 3. Check if position lies on an edge of this face
+        for &he in &self.face_half_edges(face) {
+            let src = self.half_edges[self.half_edges[he].prev].vertex;
+            let dst = self.half_edges[he].vertex;
+            let edge_start = &self.vertices[src].position;
+            let edge_end = &self.vertices[dst].position;
+
+            if point_on_segment(edge_start, edge_end, pos) {
+                if let Ok(split_edge_result) = self.split_edge(he, pos.clone()) {
+                    println!(
+                        "Inserted new vertex {} on edge ({}, {}) at position {:?}",
+                        split_edge_result.new_vertex, src, dst, pos
+                    );
+                    return Some(split_edge_result);
+                } else {
+                    println!(
+                        "Failed to split edge ({}, {}) at position {:?}",
+                        src, dst, pos
+                    );
+                    return Some(SplitEdgeResult {
+                        new_vertex: self.add_vertex(pos.clone()),
+                        new_faces: None,
+                        invalidated_faces: None,
+                    });
+                }
+            }
+        }
+
+        // 4. Position is inside the face - split the face into triangles
+        if let Some(new_vertex) = self.find_or_insert_vertex_on_face(face, pos) {
+            // println!("recursive!");
+            return Some(new_vertex);
+        }
+
+        for f in self.faces_containing_point(pos) {
+            if let Some(new_vertex) = self.find_or_insert_vertex_on_face(f, pos) {
+                return Some(new_vertex);
+            }
+        }
+        // .into_iter()
+        // .next()
+        // .and_then(|f| self.find_or_insert_vertex_on_face(f, pos))
+        // .unwrap_or_else(|| {
+        //     // If no suitable vertex found, add a new vertex at the position
+        //     println!(
+        //         "No suitable vertex found, adding new vertex at position {:?}",
+        //         pos
+        //     );
+        //     return SplitEdgeResult {
+        //         new_vertex: self.add_vertex(pos.clone()),
+        //         new_faces: None,
+        //         invalidated_faces: None,
+        //     };
+        // });
+
+        // 5. Fallback: just add the vertex
+        // println!("Fallback: Adding vertex at position {:?}", pos);
+        // return SplitEdgeResult {
+        //     new_vertex: self.add_vertex(pos.clone()),
+        //     new_faces: None,
+        //     invalidated_faces: None,
+        // };
+
+        println!(
+            "No suitable vertex found, adding new vertex at position {:?}",
+            pos
+        );
+
+        return None;
+    }
+
+    fn rebuild_spatial_hash(&mut self) {
+        self.vertex_spatial_hash.clear();
+        for (idx, vertex) in self.vertices.iter().enumerate() {
+            let hash_key = self.position_to_hash_key(&vertex.position);
+            self.vertex_spatial_hash
+                .entry(hash_key)
+                .or_insert_with(Vec::new)
+                .push(idx);
+        }
+    }
+
+    /// Adds an edge between two vertices if it doesn't already exist.
+    /// Returns true if a new edge was added, false if it already existed.
+    pub fn add_edge_if_not_exists(&mut self, vi0: usize, vi1: usize) -> bool
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        // Check if edge already exists
+        if self.half_edge_between(vi0, vi1).is_some() {
+            return false; // Edge already exists
+        }
+
+        // Find faces that contain both vertices
+        let mut shared_faces = Vec::new();
+        for face_idx in 0..self.faces.len() {
+            if self.faces[face_idx].half_edge == usize::MAX {
+                continue; // Skip invalidated faces
+            }
+            let face_verts = self.face_vertices(face_idx);
+            if face_verts.contains(&vi0) && face_verts.contains(&vi1) {
+                shared_faces.push(face_idx);
+            }
+        }
+
+        match shared_faces.len() {
+            0 => {
+                self.carve_segment_across_faces(vi0, vi1);
+                false
+            }
+            1 => {
+                // Vertices are on the same face - split the face
+                let face = shared_faces[0];
+                self.split_segment_by_indices(face, vi0, vi1, false);
+                true
+            }
+            _ => {
+                // Multiple shared faces - edge already exists implicitly
+                // This is typically an error case
+                eprintln!("Warning: Vertices share multiple faces");
+                false
+            }
         }
     }
 
@@ -232,8 +474,53 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
     pub fn add_vertex(&mut self, position: Point<T, N>) -> usize {
         let idx = self.vertices.len();
+
+        let hash_key = self.position_to_hash_key(&position);
+        self.vertex_spatial_hash
+            .entry(hash_key)
+            .or_insert_with(Vec::new)
+            .push(idx);
+
         self.vertices.push(Vertex::new(position));
         idx
+    }
+
+    /// Find existing vertex near position using spatial hash
+    fn find_nearby_vertex(&self, pos: &Point<T, N>, tolerance: T) -> Option<usize>
+    where
+        Point<T, N>: PointOps<T, N>,
+    {
+        let center_key = self.position_to_hash_key(pos);
+
+        // Check center cell and 26 neighboring cells (3x3x3 grid)
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let key = (center_key.0 + dx, center_key.1 + dy, center_key.2 + dz);
+
+                    if let Some(candidates) = self.vertex_spatial_hash.get(&key) {
+                        for &vi in candidates {
+                            if vi < self.vertices.len()
+                                && self.vertices[vi].position.distance_to(pos) < tolerance
+                            {
+                                return Some(vi);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Convert position to hash key (quantized to grid)
+    fn position_to_hash_key(&self, pos: &Point<T, N>) -> (i64, i64, i64) {
+        let grid_size = 1e-5; // Adjust based on your precision needs
+        (
+            (pos[0].to_f64().unwrap() / grid_size) as i64,
+            (pos[1].to_f64().unwrap() / grid_size) as i64,
+            (pos[2].to_f64().unwrap() / grid_size) as i64,
+        )
     }
 
     pub fn faces_containing_point(&self, p: &Point<T, N>) -> Vec<usize>
@@ -247,6 +534,9 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     {
         let mut result = Vec::new();
         for f in 0..self.faces.len() {
+            if self.faces[f].half_edge == usize::MAX {
+                continue; // Skip invalidated faces
+            }
             let vs = self.face_vertices(f);
             if vs.len() != 3 {
                 continue;
@@ -587,10 +877,28 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let mut inside_count = 0;
         let mut total_rays = 0;
 
-        let n_rays = 8; // ← Reduce from 32 to 8 rays
-        for _ in 0..n_rays {
-            let dir: Vector<T, 3> = random_unit_vector();
-            if let Some(is_inside) = self.cast_ray(p, &dir, tree) {
+        // let n_rays = 12;
+        // for _ in 0..n_rays {
+        //     let dir: Vector<T, 3> = random_unit_vector();
+        //     if let Some(is_inside) = self.cast_ray(p, &dir, tree) {
+        //         if is_inside {
+        //             inside_count += 1;
+        //         }
+        //         total_rays += 1;
+        //     }
+        // }
+
+        let rays = vec![
+            Vector::from_vals([T::one(), T::zero(), T::zero()]),
+            Vector::from_vals([T::zero(), T::one(), T::zero()]),
+            Vector::from_vals([T::zero(), T::zero(), T::one()]),
+            Vector::from_vals([T::from(-1.0), T::zero(), T::zero()]),
+            Vector::from_vals([T::zero(), T::from(-1.0), T::zero()]),
+            Vector::from_vals([T::zero(), T::zero(), T::from(-1.0)]),
+        ];
+
+        for r in rays {
+            if let Some(is_inside) = self.cast_ray(p, &r, tree) {
                 if is_inside {
                     inside_count += 1;
                 }
@@ -616,10 +924,11 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let mut hits: Vec<T> = Vec::new();
 
         // Create ray AABB for tree query
+        let far_multiplier = T::from(1000.0);
         let far_point = Point::<T, 3>::from_vals([
-            &p[0] + &(&dir[0] * &T::from(1000.0)),
-            &p[1] + &(&dir[1] * &T::from(1000.0)),
-            &p[2] + &(&dir[2] * &T::from(1000.0)),
+            &p[0] + &(&dir[0] * &far_multiplier),
+            &p[1] + &(&dir[1] * &far_multiplier),
+            &p[2] + &(&dir[2] * &far_multiplier),
         ]);
         let ray_aabb = Aabb::from_points(p, &far_point);
 
@@ -630,25 +939,13 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         // Test only candidate faces (not all faces!)
         for &fi in &candidate_faces {
             let vs_idxs = self.face_vertices(*fi);
-            let vs: [&Point<T, 3>; 3] = [
-                &Point::<T, 3>::from_vals([
-                    self.vertices[vs_idxs[0]].position[0].clone(),
-                    self.vertices[vs_idxs[0]].position[1].clone(),
-                    self.vertices[vs_idxs[0]].position[2].clone(),
-                ]),
-                &Point::<T, 3>::from_vals([
-                    self.vertices[vs_idxs[1]].position[0].clone(),
-                    self.vertices[vs_idxs[1]].position[1].clone(),
-                    self.vertices[vs_idxs[1]].position[2].clone(),
-                ]),
-                &Point::<T, 3>::from_vals([
-                    self.vertices[vs_idxs[2]].position[0].clone(),
-                    self.vertices[vs_idxs[2]].position[1].clone(),
-                    self.vertices[vs_idxs[2]].position[2].clone(),
-                ]),
-            ];
 
-            if let Some(t) = self.ray_triangle_intersection(&p.coords(), dir, vs) {
+            // Use references to existing vertex positions
+            let v0 = &self.vertices[vs_idxs[0]].position;
+            let v1 = &self.vertices[vs_idxs[1]].position;
+            let v2 = &self.vertices[vs_idxs[2]].position;
+
+            if let Some(t) = self.ray_triangle_intersection(&p.coords(), dir, [v0, v1, v2]) {
                 if t > T::from(1e-10) {
                     hits.push(t);
                 }
@@ -676,12 +973,106 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         Some(filtered_hits.len() % 2 == 1)
     }
 
+    // pub fn point_in_mesh(&self, _tree: &AabbTree<T, 3, Point<T, 3>, usize>, p: &Point<T, 3>) -> bool
+    // where
+    //     T: Scalar,
+    //     for<'a> &'a T: Sub<&'a T, Output = T>
+    //         + Mul<&'a T, Output = T>
+    //         + Add<&'a T, Output = T>
+    //         + Div<&'a T, Output = T>,
+    // {
+    //     // 0) First check if point is exactly ON the mesh surface
+    //     let distance_to_surface = self.point_to_mesh_distance(_tree, p);
+    //     if distance_to_surface.is_zero() {
+    //         return false; // Points ON the surface are not "inside"
+    //     }
+
+    //     let mut inside_count = 0;
+    //     let mut total_rays = 0;
+
+    //     let n_rays = 32;
+    //     for _ in 0..n_rays {
+    //         let dir: Vector<T, 3> = random_unit_vector();
+    //         if let Some(is_inside) = self.cast_ray(p, &dir) {
+    //             if is_inside {
+    //                 inside_count += 1;
+    //             }
+    //             total_rays += 1;
+    //         }
+    //     }
+
+    //     // Majority vote: if most rays say "inside", then it's inside
+    //     total_rays > 0 && inside_count > total_rays / 2
+    // }
+
+    // fn cast_ray(&self, p: &Point<T, 3>, dir: &Vector<T, 3>) -> Option<bool>
+    // where
+    //     T: Scalar,
+    //     for<'a> &'a T: Sub<&'a T, Output = T>
+    //         + Mul<&'a T, Output = T>
+    //         + Add<&'a T, Output = T>
+    //         + Div<&'a T, Output = T>,
+    // {
+    //     let orig = p.coords();
+    //     let mut hits: Vec<T> = Vec::new();
+
+    //     for fi in 0..self.faces.len() {
+    //         let vs_idxs = self.face_vertices(fi);
+    //         let vs: [&Point<T, 3>; 3] = [
+    //             &Point::<T, 3>::from_vals([
+    //                 self.vertices[vs_idxs[0]].position[0].clone(),
+    //                 self.vertices[vs_idxs[0]].position[1].clone(),
+    //                 self.vertices[vs_idxs[0]].position[2].clone(),
+    //             ]),
+    //             &Point::<T, 3>::from_vals([
+    //                 self.vertices[vs_idxs[1]].position[0].clone(),
+    //                 self.vertices[vs_idxs[1]].position[1].clone(),
+    //                 self.vertices[vs_idxs[1]].position[2].clone(),
+    //             ]),
+    //             &Point::<T, 3>::from_vals([
+    //                 self.vertices[vs_idxs[2]].position[0].clone(),
+    //                 self.vertices[vs_idxs[2]].position[1].clone(),
+    //                 self.vertices[vs_idxs[2]].position[2].clone(),
+    //             ]),
+    //         ];
+
+    //         // Use Möller–Trumbore with better precision handling
+    //         if let Some(t) = self.ray_triangle_intersection(&orig, dir, vs) {
+    //             if t > T::from(1e-10) {
+    //                 // Ignore hits very close to ray origin
+    //                 hits.push(t);
+    //             }
+    //         }
+    //     }
+
+    //     if hits.is_empty() {
+    //         return None; // Ray didn't hit anything
+    //     }
+
+    //     // Sort and remove near-duplicates more carefully
+    //     hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    //     let mut filtered_hits = Vec::new();
+    //     let mut last_t = None;
+
+    //     for t in hits {
+    //         if last_t.as_ref().map_or(true, |lt: &T| {
+    //             (t.clone() - lt.clone()).abs() > T::from(1e-8)
+    //         }) {
+    //             filtered_hits.push(t.clone());
+    //             last_t = Some(t);
+    //         }
+    //     }
+
+    //     Some(filtered_hits.len() % 2 == 1)
+    // }
+
     /// Robust ray-triangle intersection using Möller-Trumbore algorithm
     fn ray_triangle_intersection(
         &self,
         ray_origin: &[T; 3],
         ray_dir: &Vector<T, 3>,
-        triangle: [&Point<T, 3>; 3],
+        triangle: [&Point<T, N>; 3],
     ) -> Option<T>
     where
         T: Scalar,
@@ -886,26 +1277,47 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         Ok(())
     }
 
-    pub fn split_edge(&mut self, he: usize, pos: Point<T, N>) -> Result<usize, &'static str> {
+    pub fn split_edge(
+        &mut self,
+        he: usize,
+        pos: Point<T, N>,
+    ) -> Result<SplitEdgeResult, &'static str> {
+        //println!("split_edge: he={}", he);
         let prev = self.half_edges[he].prev;
         let u = self.half_edges[prev].vertex;
         let v = self.half_edges[he].vertex;
 
         // Check if we already have this position
         if pos == self.vertices[u].position {
-            return Ok(u);
+            return Ok(SplitEdgeResult {
+                new_vertex: u,
+                new_faces: None,
+                invalidated_faces: None,
+            });
         }
         if pos == self.vertices[v].position {
-            return Ok(v);
+            return Ok(SplitEdgeResult {
+                new_vertex: v,
+                new_faces: None,
+                invalidated_faces: None,
+            });
         }
 
         // Add new vertex
         let w = self.vertices.len();
+        self.vertex_spatial_hash
+            .entry(self.position_to_hash_key(&pos))
+            .or_default()
+            .push(w);
+
         self.vertices.push(Vertex::new(pos.clone()));
 
         // Find all faces containing edge u-v (or v-u)
         let mut affected_faces = Vec::new();
         for face_idx in 0..self.faces.len() {
+            if self.faces[face_idx].half_edge == usize::MAX {
+                continue; // Skip removed faces
+            }
             let vs = self.face_vertices(face_idx);
             for i in 0..vs.len() {
                 let curr = vs[i];
@@ -920,6 +1332,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         // For each affected face, replace it with two new faces
         let mut new_face_indices = Vec::new();
         let mut faces_to_remove = Vec::new();
+        let mut new_face_index = self.faces.len();
         for (face_idx, a, b, c) in affected_faces {
             faces_to_remove.push(face_idx);
 
@@ -927,17 +1340,19 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             self.faces[face_idx].half_edge = usize::MAX;
 
             // Add two new triangles: (a, w, c) and (w, b, c)
-            let f1 = self.faces.len();
-            let f2 = self.faces.len() + 1;
+            let f1 = new_face_index;
+            new_face_index += 1;
+            let f2 = new_face_index;
+            new_face_index += 1;
             new_face_indices.push((f1, [a, w, c]));
             new_face_indices.push((f2, [w, b, c]));
         }
 
         // Remove marked faces
-        self.faces.retain(|f| f.half_edge != usize::MAX);
+        // self.faces.retain(|f| f.half_edge != usize::MAX);
 
         // Add new faces and half-edges, updating connectivity
-        for (face_idx, verts) in new_face_indices {
+        for (face_idx, verts) in &new_face_indices {
             let base_idx = self.half_edges.len();
             let edge_vertices = [
                 (verts[0], verts[1]),
@@ -949,7 +1364,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             // Create the 3 new half-edges
             for (i, &(from, to)) in edge_vertices.iter().enumerate() {
                 let mut he = HalfEdge::new(to);
-                he.face = Some(face_idx);
+                he.face = Some(*face_idx);
                 let idx = base_idx + i;
 
                 // Find twin edge (to → from)
@@ -991,7 +1406,11 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         self.edge_map.remove(&(u, v));
         self.edge_map.remove(&(v, u));
 
-        Ok(w)
+        Ok(SplitEdgeResult {
+            new_vertex: w,
+            new_faces: Some(new_face_indices.iter().map(|(idx, _)| *idx).collect()),
+            invalidated_faces: Some(faces_to_remove),
+        })
     }
 
     /// Splits the interior edge `he` by inserting a new vertex at `pos`.
@@ -1095,7 +1514,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let q_pos = self.vertices[q_idx].position.clone();
 
         // CHECK FOR DEGENERATE SEGMENT FIRST
-        if p_pos.distance_to(&q_pos) < T::from(1e-10) {
+        if p_pos.distance_to(&q_pos) < T::from(EPS) {
             eprintln!("WARNING: Degenerate segment detected, skipping carve");
             return;
         }
@@ -1271,7 +1690,9 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
         if let Some((he, intersection_point)) = best_intersection {
             // Split the edge and advance
-            if let Ok(new_vertex_idx) = self.split_edge(he, intersection_point) {
+            if let Ok(split_edge_result) = self.split_edge(he, intersection_point) {
+                let new_vertex_idx = split_edge_result.new_vertex;
+                // TODO: Optimize
                 // IMPORTANT: After split_edge, half-edge indices may be invalid!
                 // Re-find faces containing the new vertex
                 let new_vertex_pos = self.vertices[new_vertex_idx].position.clone();
@@ -1527,7 +1948,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             // collect all faces except `face`
             let mut new_tris = Vec::with_capacity(self.faces.len() + 1);
             for f in 0..self.faces.len() {
-                if f != face {
+                if f != face && self.faces[f].half_edge != usize::MAX {
                     let fv = self.face_vertices(f);
                     new_tris.push([fv[0], fv[1], fv[2]]);
                 }
@@ -1676,7 +2097,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     /// You can optimize this later by using the tree to cull away distant faces.
     pub fn point_to_mesh_distance(
         &self,
-        _tree: &AabbTree<T, 3, Point<T, 3>, usize>,
+        tree: &AabbTree<T, 3, Point<T, 3>, usize>,
         p: &Point3<T>,
     ) -> T
     where
@@ -1685,9 +2106,29 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        let mut min_d2 = T::from(std::f64::INFINITY);
-        for fi in 0..self.faces.len() {
-            let vs = self.face_vertices(fi);
+        // Use a large but reasonable search radius
+        let search_radius = T::from(100.0); // Adjust based on your mesh scales
+
+        let search_aabb = Aabb::from_points(
+            &Point::<T, 3>::from_vals([
+                &p[0] - &search_radius,
+                &p[1] - &search_radius,
+                &p[2] - &search_radius,
+            ]),
+            &Point::<T, 3>::from_vals([
+                &p[0] + &search_radius,
+                &p[1] + &search_radius,
+                &p[2] + &search_radius,
+            ]),
+        );
+
+        let mut candidate_faces = Vec::new();
+        tree.query(&search_aabb, &mut candidate_faces);
+
+        let mut min_distance_squared: Option<T> = None;
+
+        for &fi in &candidate_faces {
+            let vs = self.face_vertices(*fi);
             let v0 = Point::<T, 3>::from_vals([
                 self.vertices[vs[0]].position[0].clone(),
                 self.vertices[vs[0]].position[1].clone(),
@@ -1705,14 +2146,22 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             ]);
 
             let d2 = distance_point_triangle_squared(&p, &v0, &v1, &v2);
-            min_d2 = min_d2.min(d2);
+
+            if min_distance_squared.is_none() || d2 < *min_distance_squared.as_ref().unwrap() {
+                min_distance_squared = Some(d2);
+            }
         }
-        min_d2.sqrt()
+
+        min_distance_squared.unwrap_or(T::zero()).sqrt()
     }
 
     /// Given a face and a target point, finds an existing vertex (if close)
     /// or splits the appropriate edge and returns the new vertex index.
-    pub fn find_or_insert_vertex_on_face(&mut self, face: usize, p: &Point<T, N>) -> Option<usize>
+    pub fn find_or_insert_vertex_on_face(
+        &mut self,
+        face: usize,
+        p: &Point<T, N>,
+    ) -> Option<SplitEdgeResult>
     where
         T: Scalar,
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
@@ -1727,7 +2176,11 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let face_vs = self.face_vertices(face);
         for &vi in &face_vs {
             if self.vertices[vi].position.distance_to(p).is_zero() {
-                return Some(vi);
+                return Some(SplitEdgeResult {
+                    new_vertex: vi,
+                    new_faces: None,
+                    invalidated_faces: None,
+                });
             }
         }
 
@@ -1740,8 +2193,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             // Is p on segment [ps, pd]?
             if point_on_segment(ps, pd, p) {
                 // Split edge and return new vertex index.
-                let new_vi = self.split_edge(he, p.clone()).unwrap();
-                return Some(new_vi);
+                let split_edge_result = self.split_edge(he, p.clone()).unwrap();
+                return Some(split_edge_result);
             }
         }
 
@@ -1753,37 +2206,22 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             // 3.a add new vertex
             let w = self.add_vertex(p.clone());
 
-            // 3.b remove old face by marking its half‐edge
+            // 3.b get the original face's half-edge before invalidation
+            let original_he = self.faces[face].half_edge;
+
+            // 3.c invalidate the original face
             self.faces[face].half_edge = usize::MAX;
 
-            // 3.c collect all other faces, rebuild this one into 3 triangles
-            let mut new_tris = Vec::new();
-            for f in 0..self.faces.len() {
-                if f != face {
-                    let fv = self.face_vertices(f);
-                    new_tris.push([fv[0], fv[1], fv[2]]);
-                }
-            }
-            // split (a,b,c) into (a,b,w), (b,c,w), (c,a,w)
-            new_tris.push([vs[0], vs[1], w]);
-            new_tris.push([vs[1], vs[2], w]);
-            new_tris.push([vs[2], vs[0], w]);
+            // 3.d create 3 new faces incrementally
+            let new_face_1 = self.add_triangle(vs[0], vs[1], w); // (a,b,w)
+            let new_face_2 = self.add_triangle(vs[1], vs[2], w); // (b,c,w)
+            let new_face_3 = self.add_triangle(vs[2], vs[0], w); // (c,a,w)
 
-            // rebuild mesh (vertices unchanged)
-            let old_positions = self
-                .vertices
-                .iter()
-                .map(|v| v.position.clone())
-                .collect::<Vec<_>>();
-            *self = Mesh::new();
-            for pos in old_positions {
-                self.add_vertex(pos);
-            }
-            for t in new_tris {
-                self.add_triangle(t[0], t[1], t[2]);
-            }
-
-            return Some(w);
+            return Some(SplitEdgeResult {
+                new_vertex: w,
+                new_faces: Some(vec![new_face_1, new_face_2, new_face_3]),
+                invalidated_faces: Some(vec![face]),
+            });
         }
 
         None
@@ -1799,6 +2237,46 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             return Some(he_idx);
         }
         None
+    }
+
+    pub fn compute_mesh_bounds(&self) -> Aabb<T, 3, Point<T, 3>>
+    where
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        if self.vertices.is_empty() {
+            // Return a degenerate AABB if no vertices
+            let origin = Point::<T, 3>::from_vals([T::zero(), T::zero(), T::zero()]);
+            return Aabb::from_points(&origin, &origin);
+        }
+
+        let first_vertex = &self.vertices[0].position;
+        let mut min_point = Point::<T, 3>::from_vals([
+            first_vertex[0].clone(),
+            first_vertex[1].clone(),
+            first_vertex[2].clone(),
+        ]);
+        let mut max_point = Point::<T, 3>::from_vals([
+            first_vertex[0].clone(),
+            first_vertex[1].clone(),
+            first_vertex[2].clone(),
+        ]);
+
+        for vertex in &self.vertices[1..] {
+            let pos = &vertex.position;
+            for i in 0..3 {
+                if pos[i] < min_point[i] {
+                    min_point[i] = pos[i].clone();
+                }
+                if pos[i] > max_point[i] {
+                    max_point[i] = pos[i].clone();
+                }
+            }
+        }
+
+        Aabb::from_points(&min_point, &max_point)
     }
 }
 
@@ -1855,6 +2333,7 @@ enum VertexSource {
 impl<T: Scalar> BooleanImpl<T> for Mesh<T, 3>
 where
     T: Scalar,
+    CgarF64: From<T>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -1869,8 +2348,14 @@ where
 
         // 2) Pre-split A against B, handling both proper and coplanar intersections
         let tree_b_pre = AabbTree::build((0..b.faces.len()).map(|i| (b.face_aabb(i), i)).collect());
-        let mut segments: Vec<(usize, usize, Segment<T, 3>)> = Vec::new();
-        for fa in 0..a.faces.len() {
+        let mut segments: Vec<([usize; 2], Segment<T, 3>)> = Vec::new();
+
+        let mut fa = 0;
+        while fa < a.faces.len() {
+            if a.faces[fa].half_edge == usize::MAX {
+                fa += 1;
+                continue; // Skip invalid faces
+            }
             let mut candidates = Vec::new();
             tree_b_pre.query(&a.face_aabb(fa), &mut candidates);
 
@@ -1882,104 +2367,232 @@ where
             let pa: [Point<T, 3>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
 
             for &fb in &candidates {
+                if a.faces[fa].half_edge == usize::MAX {
+                    continue; // Face may have been invalidated at this point
+                }
                 let pb_idx = b.face_vertices(*fb);
                 let pb_vec: Vec<Point<T, 3>> = pb_idx
                     .into_iter()
-                    .map(|vi| b.vertices[vi].position.clone()) // ← FIX: Use b.vertices not a.vertices
+                    .map(|vi| b.vertices[vi].position.clone())
                     .collect();
                 let pb: [Point<T, 3>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
 
-                // Try proper intersection first
+                // Before expensive triangle-triangle intersection:
+                let aabb_a = a.face_aabb(fa);
+                let aabb_b = b.face_aabb(*fb);
+
+                if !aabb_a.intersects(&aabb_b) {
+                    continue; // Skip if bounding boxes don't even overlap
+                }
+
                 if let Some(s) = tri_tri_intersection(&pa, &pb) {
                     let segment_length = s.length();
-                    // **FILTER DEGENERATE SEGMENTS**
+
+                    // **Filter out degenerate/point intersections**
                     if segment_length.is_positive() {
-                        segments.push((fa, *fb, s));
+                        boolean_split(&mut a, fa, &s);
                     }
-                } else {
-                    // **LIMIT COPLANAR PROCESSING**
-                    let e1a = &pa[1] - &pa[0];
-                    let e2a = &pa[2] - &pa[0];
-                    let e1b = &pb[1] - &pb[0];
-                    let e2b = &pb[2] - &pb[0];
-                    let n_a = e1a.as_vector().cross(&e2a.as_vector());
-                    let n_b = e1b.as_vector().cross(&e2b.as_vector());
+                    continue;
+                }
 
-                    if n_a.dot(&n_b).abs() > T::from_num_den(1, 1) {
-                        let diff: Point<T, 3> = &pa[0] - &pb[0];
-                        if n_a.dot(&diff.as_vector()).abs().is_zero() {
-                            // **COPLANAR CASE: Use tri_tri_intersection**
-                            if let Some(segment) = tri_tri_intersection(&pa, &pb) {
-                                if segment.length().is_positive() {
-                                    // Check if this segment already exists
-                                    let is_duplicate = segments.iter().any(|(_, _, existing)| {
-                                        (segment.a.distance_to(&existing.a).is_zero()
-                                            && segment.b.distance_to(&existing.b).is_zero())
-                                            || (segment.a.distance_to(&existing.b).is_zero()
-                                                && segment.b.distance_to(&existing.a).is_zero())
-                                    });
+                let e1a = &pa[1] - &pa[0];
+                let e2a = &pa[2] - &pa[0];
+                let e1b = &pb[1] - &pb[0];
+                let e2b = &pb[2] - &pb[0];
+                let n_a = e1a.as_vector().cross(&e2a.as_vector());
+                let n_b = e1b.as_vector().cross(&e2b.as_vector());
 
-                                    if !is_duplicate {
-                                        segments.push((fa, *fb, segment));
-                                    }
+                let n_dot = n_a.dot(&n_b);
+                let n_norm_sq_a = n_a.dot(&n_a);
+                let n_norm_sq_b = n_b.dot(&n_b);
+
+                if n_norm_sq_a.is_zero() || n_norm_sq_b.is_zero() {
+                    continue;
+                }
+
+                let cos_angle = &n_dot / &(n_norm_sq_a.sqrt() * n_norm_sq_b.sqrt());
+
+                if cos_angle.abs() > T::from(0.999) {
+                    let diff: Point<T, 3> = &pa[0] - &pb[0];
+                    let plane_distance = n_a.dot(&diff.as_vector()).abs() / n_norm_sq_a.sqrt();
+
+                    if plane_distance < T::from(1e-6) {
+                        if let Some(s) = tri_tri_intersection(&pa, &pb) {
+                            if s.length().is_positive() {
+                                let is_duplicate = segments.iter().any(|([_, _], existing)| {
+                                    (s.a.distance_to(&existing.a).is_zero()
+                                        && s.b.distance_to(&existing.b).is_zero())
+                                        || (s.a.distance_to(&existing.b).is_zero()
+                                            && s.b.distance_to(&existing.a).is_zero())
+                                });
+
+                                if !is_duplicate {
+                                    boolean_split(&mut a, fa, &s);
                                 }
                             }
                         }
                     }
                 }
             }
+            fa += 1;
         }
 
-        let mut a_and_b_arr = [&mut a, &mut b];
+        // for fa in 0..a.faces.len() {
+        //     if a.faces[fa].half_edge == usize::MAX {
+        //         continue; // Skip invalid faces
+        //     }
+        //     let mut candidates = Vec::new();
+        //     tree_b_pre.query(&a.face_aabb(fa), &mut candidates);
 
+        //     let pa_idx = a.face_vertices(fa);
+        //     let pa_vec: Vec<Point<T, 3>> = pa_idx
+        //         .into_iter()
+        //         .map(|vi| a.vertices[vi].position.clone())
+        //         .collect();
+        //     let pa: [Point<T, 3>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
+
+        //     for &fb in &candidates {
+        //         if a.faces[fa].half_edge == usize::MAX {
+        //             continue; // Face may have been invalidated at this point
+        //         }
+        //         let pb_idx = b.face_vertices(*fb);
+        //         let pb_vec: Vec<Point<T, 3>> = pb_idx
+        //             .into_iter()
+        //             .map(|vi| b.vertices[vi].position.clone()) // ← FIX: Use b.vertices not a.vertices
+        //             .collect();
+        //         let pb: [Point<T, 3>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
+
+        //         // Before expensive triangle-triangle intersection:
+        //         let aabb_a = a.face_aabb(fa);
+        //         let aabb_b = b.face_aabb(*fb);
+
+        //         if !aabb_a.intersects(&aabb_b) {
+        //             continue; // Skip if bounding boxes don't even overlap
+        //         }
+
+        //         if let Some(s) = tri_tri_intersection(&pa, &pb) {
+        //             let segment_length = s.length();
+
+        //             // **Filter out degenerate/point intersections**
+        //             if segment_length.is_positive() {
+        //                 // segments.push(([fa, *fb], s));
+        //                 boolean_split(&mut a, fa, &s);
+        //             }
+        //             // ← Continue to next candidate, skip coplanar processing
+        //             continue;
+        //         }
+
+        //         let e1a = &pa[1] - &pa[0];
+        //         let e2a = &pa[2] - &pa[0];
+        //         let e1b = &pb[1] - &pb[0];
+        //         let e2b = &pb[2] - &pb[0];
+        //         let n_a = e1a.as_vector().cross(&e2a.as_vector());
+        //         let n_b = e1b.as_vector().cross(&e2b.as_vector());
+
+        //         // **Check if normals are parallel (coplanar candidates)**
+        //         let n_dot = n_a.dot(&n_b);
+        //         let n_norm_sq_a = n_a.dot(&n_a);
+        //         let n_norm_sq_b = n_b.dot(&n_b);
+
+        //         // Avoid division by zero
+        //         if n_norm_sq_a.is_zero() || n_norm_sq_b.is_zero() {
+        //             continue; // Degenerate triangle
+        //         }
+
+        //         let cos_angle = &n_dot / &(n_norm_sq_a.sqrt() * n_norm_sq_b.sqrt());
+
+        //         // **Only process if triangles are nearly coplanar**
+        //         if cos_angle.abs() > T::from(0.999) {
+        //             // ~2.5 degree tolerance
+        //             // Check if they're on the same plane
+        //             let diff: Point<T, 3> = &pa[0] - &pb[0];
+        //             let plane_distance = n_a.dot(&diff.as_vector()).abs() / n_norm_sq_a.sqrt();
+
+        //             if plane_distance < T::from(1e-6) {
+        //                 // **Now do coplanar intersection**
+        //                 if let Some(s) = tri_tri_intersection(&pa, &pb) {
+        //                     if s.length().is_positive() {
+        //                         // Check for duplicates
+        //                         let is_duplicate = segments.iter().any(|([_, _], existing)| {
+        //                             (s.a.distance_to(&existing.a).is_zero()
+        //                                 && s.b.distance_to(&existing.b).is_zero())
+        //                                 || (s.a.distance_to(&existing.b).is_zero()
+        //                                     && s.b.distance_to(&existing.a).is_zero())
+        //                         });
+
+        //                         if !is_duplicate {
+        //                             // segments.push(([fa, *fb], segment));
+        //                             boolean_split(&mut a, fa, &s);
+        //                         }
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+
+        // let mut a_and_b_arr = [&mut a, &mut b];
+
+        // let mut i = 0;
         // 3) Split on both meshes
-        for &(_orig_fa, _orig_fb, ref s) in &segments {
-            for mesh in a_and_b_arr.iter_mut() {
-                let fa_p_candidates = mesh.faces_containing_point(&s.a);
+        // for (mesh_i, mesh) in a_and_b_arr.iter_mut().enumerate() {
+        //     for &(orig_f, ref s) in &segments {
+        //         // let fa_p_candidates = mesh.faces_containing_point(&s.a);
+        //         let va = mesh.split_or_find_vertex_on_face(orig_f[mesh_i], &s.a);
+        //         let vb = mesh.split_or_find_vertex_on_face(orig_f[mesh_i], &s.b);
+        //         mesh.add_edge_if_not_exists(va, vb);
+        //     }
+        // }
 
-                let mut pi = None;
-                for &face in &fa_p_candidates {
-                    pi = mesh.find_or_insert_vertex_on_face(face, &s.a);
-                    if pi.is_some() {
-                        break;
-                    }
-                }
-                let pi = pi.expect("no face contains p in A");
+        a.faces.retain(|f| f.half_edge != usize::MAX);
 
-                let fa_q_candidates = mesh.faces_containing_point(&s.b);
-                let mut qi = None;
-                for &face in &fa_q_candidates {
-                    qi = mesh.find_or_insert_vertex_on_face(face, &s.b);
-                    if qi.is_some() {
-                        break;
-                    }
-                }
-                let qi = qi.expect("no face contains q in A");
+        let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
+        println!("GOT HERE");
+        //         let mut pi = None;
+        //         for &face in &fa_p_candidates {
+        //             pi = mesh.find_or_insert_vertex_on_face(face, &s.a);
+        //             if pi.is_some() {
+        //                 break;
+        //             }
+        //         }
+        //         let pi = pi.expect("no face contains p in A");
 
-                // check if endpoints have an edge between them
-                if mesh.half_edge_between(pi, qi).is_some() {
-                    continue; // Skip this segment if edge already exists
-                }
+        //         let fa_q_candidates = mesh.faces_containing_point(&s.b);
+        //         let mut qi = None;
+        //         for &face in &fa_q_candidates {
+        //             qi = mesh.find_or_insert_vertex_on_face(face, &s.b);
+        //             if qi.is_some() {
+        //                 break;
+        //             }
+        //         }
+        //         let qi = qi.expect("no face contains q in A");
 
-                let mut shared_face = None;
-                for &face in &fa_p_candidates {
-                    if mesh.face_vertices(face).contains(&qi) {
-                        shared_face = Some(face);
-                        break;
-                    }
-                }
-                if let Some(face) = shared_face {
-                    mesh.split_segment_by_indices(face, pi, qi, true);
-                } else {
-                    mesh.carve_segment_across_faces(pi, qi);
-                }
+        //         // check if endpoints have an edge between them
+        //         if mesh.half_edge_between(pi, qi).is_some() {
+        //             continue; // Skip this segment if edge already exists
+        //         }
 
-                remove_duplicate_faces(mesh);
-            }
-        }
+        //         let mut shared_face = None;
+        //         for &face in &fa_p_candidates {
+        //             if mesh.face_vertices(face).contains(&qi) {
+        //                 shared_face = Some(face);
+        //                 break;
+        //             }
+        //         }
+        //         if let Some(face) = shared_face {
+        //             mesh.split_segment_by_indices(face, pi, qi, true);
+        //         } else {
+        //             mesh.carve_segment_across_faces(pi, qi);
+        //         }
+
+        //         remove_duplicate_faces(mesh);
+        //     }
+        // }
 
         a.build_boundary_loops();
         b.build_boundary_loops();
+
+        println!("GOT HERE 2");
 
         // 1. Remove duplicate vertices
         let mut vertex_dedup_map = std::collections::HashMap::new();
@@ -2003,6 +2616,8 @@ where
                 seen_positions.insert(pos_key, new_idx);
             }
         }
+
+        println!("GOT HERE 3");
 
         // 2. Rebuild mesh with deduplicated vertices
         let mut final_mesh = Mesh::new();
@@ -2039,6 +2654,8 @@ where
             }
         }
 
+        println!("GOT HERE 4");
+
         a = final_mesh;
 
         // 4) Build classification trees
@@ -2055,42 +2672,189 @@ where
             vid_map.insert((VertexSource::A, i), ni);
         }
 
-        let mut test_inside = 0;
-        let mut test_boundary = 0;
-        let mut test_added = 0;
-        // Classify A faces
-        for fa in 0..a.faces.len() {
-            // compute centroid
-            let c2 = a.face_centroid(fa);
-            let cen = c2.into();
-            let inside_b = b.point_in_mesh(&tree_b, &cen);
-            let distance_to_b = b.point_to_mesh_distance(&tree_b, &cen);
+        println!("GOT HERE 5");
 
-            let on_bnd = op == BooleanOp::Difference && distance_to_b.is_negative_or_zero();
-            let keep = match op {
-                BooleanOp::Union => !inside_b,
-                BooleanOp::Intersection => inside_b,
-                BooleanOp::Difference => {
-                    if inside_b {
-                        test_inside += 1;
-                        false // Always remove faces inside B
-                    } else if on_bnd {
-                        false
-                    } else {
-                        true // Keep faces outside B
-                    }
-                }
-            };
-            if keep {
+        // let mut test_inside = 0;
+        // let mut test_boundary = 0;
+        // let mut test_added = 0;
+        // let mut i = 0;
+
+        let mut b_f64 = Mesh::<CgarF64, 3>::new();
+        copy_face_graph::<T, CgarF64>(&b, &mut b_f64);
+
+        let tree_b_f64 = AabbTree::<CgarF64, 3, Point<CgarF64, 3>, usize>::build(
+            (0..b_f64.faces.len())
+                .map(|i| (b_f64.face_aabb(i), i))
+                .collect::<Vec<(Aabb<CgarF64, 3, Point<CgarF64, 3>>, usize)>>(),
+        );
+
+        let start = Instant::now();
+        let centroids: Vec<Point3<CgarF64>> = (0..a.faces.len())
+            .map(|fa| {
+                let c2 = a.face_centroid(fa);
+                Point3::<CgarF64>::from_vals([
+                    c2.coords()[0].to_f64().unwrap(),
+                    c2.coords()[1].to_f64().unwrap(),
+                    c2.coords()[2].to_f64().unwrap(),
+                ])
+            })
+            .collect();
+        println!("Centroid computation took: {:?}", start.elapsed());
+
+        // Pre-compute bounds for fast rejection
+        let b_bounds = b_f64.compute_mesh_bounds();
+
+        // Calculate dynamic rejection distance based on mesh B's size
+        // let mesh_diagonal = {
+        //     let min = mesh_bounds.min();
+        //     let max = mesh_bounds.max();
+        //     let diagonal_squared = (&max[0] - &min[0]) * (&max[0] - &min[0])
+        //         + (&max[1] - &min[1]) * (&max[1] - &min[1])
+        //         + (&max[2] - &min[2]) * (&max[2] - &min[2]);
+        //     diagonal_squared.sqrt()
+        // };
+
+        // // Use a percentage of the diagonal as rejection distance
+        // // This ensures we're conservative but still get speedup for distant points
+        // let rejection_distance = mesh_diagonal * (0.1).into(); // 10% of mesh diagonal
+
+        // // Batch classify
+        // let mut face_classifications = Vec::with_capacity(a.faces.len());
+
+        // for (fa, cen) in centroids.iter().enumerate() {
+        //     if point_far_from_bounds::<CgarF64>(cen, &mesh_bounds, &rejection_distance) {
+        //         // Fast path: assume outside
+        //         let keep = match op {
+        //             BooleanOp::Union => true,
+        //             BooleanOp::Intersection => false,
+        //             BooleanOp::Difference => true,
+        //         };
+        //         face_classifications.push(keep);
+        //     } else {
+        //         // Slow path: accurate classification
+        //         let inside_b = b_f64.point_in_mesh(&tree_b_f64, cen);
+        //         let keep = match op {
+        //             BooleanOp::Union => !inside_b,
+        //             BooleanOp::Intersection => inside_b,
+        //             BooleanOp::Difference => !inside_b, // Simplified for now
+        //         };
+        //         face_classifications.push(keep);
+        //     }
+        // }
+
+        // let face_vertices_list: Vec<Vec<Point<CgarF64, 3>>> = (0..a.faces.len())
+        //     .map(|fa| {
+        //         a.face_vertices(fa)
+        //             .iter()
+        //             .map(|&vi| {
+        //                 let v = &a.vertices[vi].position;
+        //                 Point::<CgarF64, 3>::from_vals([
+        //                     v[0].to_f64().unwrap(),
+        //                     v[1].to_f64().unwrap(),
+        //                     v[2].to_f64().unwrap(),
+        //                 ])
+        //             })
+        //             .collect()
+        //     })
+        //     .collect();
+
+        let face_aabbs: Vec<Aabb<CgarF64, 3, Point<CgarF64, 3>>> = (0..a.faces.len())
+            .map(|fa| {
+                let aabb = a.face_aabb(fa);
+                Aabb::<CgarF64, 3, Point<CgarF64, 3>>::from_points(
+                    &Point::<CgarF64, 3>::from_vals([
+                        aabb.min()[0].to_f64().unwrap(),
+                        aabb.min()[1].to_f64().unwrap(),
+                        aabb.min()[2].to_f64().unwrap(),
+                    ]),
+                    &Point::<CgarF64, 3>::from_vals([
+                        aabb.max()[0].to_f64().unwrap(),
+                        aabb.max()[1].to_f64().unwrap(),
+                        aabb.max()[2].to_f64().unwrap(),
+                    ]),
+                )
+            })
+            .collect();
+
+        let start = Instant::now();
+        let face_classifications = fast_bulk_classification::<CgarF64>(
+            &centroids,
+            &face_aabbs,
+            &b_f64,
+            &tree_b_f64,
+            &b_bounds,
+            &op,
+            false,
+        );
+
+        println!("Batch classification took: {:?}", start.elapsed());
+
+        // Apply classifications
+        for (fa, keep) in face_classifications.iter().enumerate() {
+            if *keep {
                 let vs = a.face_vertices(fa);
                 result.add_triangle(
                     vid_map[&(VertexSource::A, vs[0])],
                     vid_map[&(VertexSource::A, vs[1])],
                     vid_map[&(VertexSource::A, vs[2])],
                 );
-                test_added += 1;
             }
         }
+
+        // // Classify A faces
+        // for fa in 0..a.faces.len() {
+        //     println!("Processing A face {}/{}", i, a.faces.len());
+        //     i += 1;
+        //     // compute centroid
+        //     let c2 = a.face_centroid(fa);
+        //     let cen = Point3::<CgarF64>::from_vals([
+        //         c2.coords()[0].to_f64().unwrap(),
+        //         c2.coords()[1].to_f64().unwrap(),
+        //         c2.coords()[2].to_f64().unwrap(),
+        //     ]);
+
+        //     let start = Instant::now();
+        //     let inside_b = b_f64.point_in_mesh(&tree_b_f64, &cen);
+        //     let duration = start.elapsed();
+        //     println!("Point in mesh took: {:?}", duration);
+
+        //     let distance_to_b = if op == BooleanOp::Difference && !inside_b {
+        //         // Only compute distance for faces that might be on boundary
+        //         let start = Instant::now();
+        //         let ret = b_f64.point_to_mesh_distance(&tree_b_f64, &cen);
+        //         let duration = start.elapsed();
+        //         println!("Distance to mesh took: {:?}", duration);
+        //         ret
+        //     } else {
+        //         (1.0).into() // Dummy
+        //     };
+
+        //     let on_bnd = op == BooleanOp::Difference && distance_to_b.is_negative_or_zero();
+        //     let keep = match op {
+        //         BooleanOp::Union => !inside_b,
+        //         BooleanOp::Intersection => inside_b,
+        //         BooleanOp::Difference => {
+        //             if inside_b {
+        //                 test_inside += 1;
+        //                 false // Always remove faces inside B
+        //             } else if on_bnd {
+        //                 false
+        //             } else {
+        //                 true // Keep faces outside B
+        //             }
+        //         }
+        //     };
+        //     if keep {
+        //         let vs = a.face_vertices(fa);
+        //         result.add_triangle(
+        //             vid_map[&(VertexSource::A, vs[0])],
+        //             vid_map[&(VertexSource::A, vs[1])],
+        //             vid_map[&(VertexSource::A, vs[2])],
+        //         );
+        //         test_added += 1;
+        //     }
+        // }
+        println!("GOT HERE 6");
 
         // 6b) Handle B according to op
         match op {
@@ -2139,35 +2903,144 @@ where
                 result.remove_unused_vertices();
             }
             BooleanOp::Difference => {
-                // result.build_boundary_loops();
-                // 6b) Add B’s interior faces (flipped for outward normals)
-                // 1) copy B’s vertices into result
+                // 1) Copy B’s vertices into result
                 for (i, v) in b.vertices.iter().enumerate() {
                     let ni = result.add_vertex(v.position.clone());
                     vid_map.insert((VertexSource::B, i), ni);
                 }
-                // 2) classify B–faces: keep those whose centroids lie inside A
-                for fb in 0..b.faces.len() {
-                    let cen: Point<T, 3> = b.face_centroid(fb).into();
-                    // inside‐test
-                    if a.point_in_mesh(&tree_a, &cen) {
-                        // distance to A’s surface
-                        let dist = a.point_to_mesh_distance(&tree_a, &cen);
-                        if dist.is_positive() {
-                            let vs = b.face_vertices(fb);
-                            result.add_triangle(
-                                vid_map[&(VertexSource::B, vs[2])],
-                                vid_map[&(VertexSource::B, vs[1])],
-                                vid_map[&(VertexSource::B, vs[0])],
-                            );
-                        }
+                println!("GOT HERE 6.1");
+
+                // Convert mesh A to CgarF64 for robust classification
+                let mut a_f64 = Mesh::<CgarF64, 3>::new();
+                copy_face_graph::<T, CgarF64>(&a, &mut a_f64);
+                println!("GOT HERE 6.2");
+
+                let tree_a_f64 = AabbTree::<CgarF64, 3, Point<CgarF64, 3>, usize>::build(
+                    (0..a_f64.faces.len())
+                        .map(|i| (a_f64.face_aabb(i), i))
+                        .collect::<Vec<(Aabb<CgarF64, 3, Point<CgarF64, 3>>, usize)>>(),
+                );
+                println!("GOT HERE 6.3");
+
+                // Prepare centroids and AABBs for B faces
+                let b_centroids: Vec<Point3<CgarF64>> = (0..b.faces.len())
+                    .map(|fb| {
+                        let c2 = b.face_centroid(fb);
+                        Point3::<CgarF64>::from_vals([
+                            c2.coords()[0].to_f64().unwrap(),
+                            c2.coords()[1].to_f64().unwrap(),
+                            c2.coords()[2].to_f64().unwrap(),
+                        ])
+                    })
+                    .collect();
+
+                let b_face_aabbs: Vec<Aabb<CgarF64, 3, Point<CgarF64, 3>>> = (0..b.faces.len())
+                    .map(|fb| {
+                        let aabb = b.face_aabb(fb);
+                        Aabb::<CgarF64, 3, Point<CgarF64, 3>>::from_points(
+                            &Point::<CgarF64, 3>::from_vals([
+                                aabb.min()[0].to_f64().unwrap(),
+                                aabb.min()[1].to_f64().unwrap(),
+                                aabb.min()[2].to_f64().unwrap(),
+                            ]),
+                            &Point::<CgarF64, 3>::from_vals([
+                                aabb.max()[0].to_f64().unwrap(),
+                                aabb.max()[1].to_f64().unwrap(),
+                                aabb.max()[2].to_f64().unwrap(),
+                            ]),
+                        )
+                    })
+                    .collect();
+
+                let a_bounds = a_f64.compute_mesh_bounds();
+
+                let b_face_classifications = fast_bulk_classification::<CgarF64>(
+                    &b_centroids,
+                    &b_face_aabbs,
+                    &a_f64,
+                    &tree_a_f64,
+                    &a_bounds,
+                    &op,
+                    true,
+                );
+
+                println!("GOT HERE 6.4");
+
+                for (fb, keep) in b_face_classifications.iter().enumerate() {
+                    if *keep {
+                        let vs = b.face_vertices(fb);
+                        // Flip for outward normals
+                        result.add_triangle(
+                            vid_map[&(VertexSource::B, vs[2])],
+                            vid_map[&(VertexSource::B, vs[1])],
+                            vid_map[&(VertexSource::B, vs[0])],
+                        );
                     }
                 }
 
+                println!("GOT HERE 6.5");
+
                 // 3) remove floating vertices
                 result.remove_unused_vertices();
+
+                println!("GOT HERE 6.6");
+
+                // result.build_boundary_loops();
+                // 6b) Add B’s interior faces (flipped for outward normals)
+                // 1) copy B’s vertices into result
+                // for (i, v) in b.vertices.iter().enumerate() {
+                //     let ni = result.add_vertex(v.position.clone());
+                //     vid_map.insert((VertexSource::B, i), ni);
+                // }
+                // println!("GOT HERE 6.1");
+
+                // let mut a_f64 = Mesh::<CgarF64, 3>::new();
+                // copy_face_graph::<T, CgarF64>(&a, &mut a_f64);
+                // println!("GOT HERE 6.2");
+
+                // let tree_a_f64 = AabbTree::<CgarF64, 3, Point<CgarF64, 3>, usize>::build(
+                //     (0..a_f64.faces.len())
+                //         .map(|i| (a_f64.face_aabb(i), i))
+                //         .collect::<Vec<(Aabb<CgarF64, 3, Point<CgarF64, 3>>, usize)>>(),
+                // );
+                // println!("GOT HERE 6.3");
+
+                // // 2) classify B–faces: keep those whose centroids lie inside A
+                // for fb in 0..b.faces.len() {
+                //     println!("Processing B face {}/{}", fb, b.faces.len());
+                //     let start = Instant::now();
+                //     let cen: Point<T, 3> = b.face_centroid(fb).into();
+                //     let cen_f64 = Point3::<CgarF64>::from_vals([
+                //         cen.coords()[0].to_f64().unwrap(),
+                //         cen.coords()[1].to_f64().unwrap(),
+                //         cen.coords()[2].to_f64().unwrap(),
+                //     ]);
+                //     println!("Time to compute centroid: {:?}", start.elapsed());
+                //     let start = Instant::now();
+                //     // inside‐test
+                //     if a_f64.point_in_mesh(&tree_a_f64, &cen_f64) {
+                //         println!("Time to test point in mesh: {:?}", start.elapsed());
+                //         // distance to A’s surface
+                //         let start = Instant::now();
+                //         let dist = a_f64.point_to_mesh_distance(&tree_a_f64, &cen_f64);
+                //         println!("Time to compute distance: {:?}", start.elapsed());
+                //         if dist.is_positive() {
+                //             let vs = b.face_vertices(fb);
+                //             result.add_triangle(
+                //                 vid_map[&(VertexSource::B, vs[2])],
+                //                 vid_map[&(VertexSource::B, vs[1])],
+                //                 vid_map[&(VertexSource::B, vs[0])],
+                //             );
+                //         }
+                //     }
+                // }
+
+                // // 3) remove floating vertices
+                // result.remove_unused_vertices();
             }
         }
+
+        println!("GOT HERE 7");
 
         // for union & intersection we still want to remove accidental duplicates,
         // but for difference we must *not* strip away our outer hull:
@@ -2420,4 +3293,362 @@ where
 
     let proj = Point::from(&a.as_vector() + &ab_by_t);
     (p - &proj).as_vector().dot(&(p - &proj).as_vector())
+}
+
+fn boolean_split<T: Scalar>(mesh: &mut Mesh<T, 3>, fa: usize, s: &Segment<T, 3>)
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    //println!("boolean_split");
+    let split_edge_result_a = mesh.split_or_find_vertex_on_face(fa, &s.a);
+    if split_edge_result_a.is_none() {
+        return;
+    }
+    let split_edge_result_a = split_edge_result_a.expect("Failed to split edge");
+    let mut split_edge_result_b = None;
+
+    println!(
+        "Invalidated faces: {:?}",
+        split_edge_result_a.invalidated_faces
+    );
+
+    if let Some(new_faces) = split_edge_result_a.new_faces {
+        if new_faces.len() > 100 {
+            panic!("Too many new faces created: {}", new_faces.len());
+        }
+        println!("New faces created: {:?}", new_faces);
+        for f in new_faces {
+            if mesh.faces[f].half_edge == usize::MAX {
+                continue; // Skip invalidated faces
+            }
+            split_edge_result_b = mesh.split_or_find_vertex_on_face(f, &s.b);
+            if split_edge_result_b.is_some() {
+                break;
+            }
+        }
+    } else {
+        println!("No new faces created, trying to split edge B directly.");
+        split_edge_result_b = mesh.split_or_find_vertex_on_face(fa, &s.b);
+        if split_edge_result_b.is_none() {
+            println!("Failed to split edge B directly.");
+            return; // If we can't split edge B, we can't continue
+        }
+    }
+
+    if let Some(split_edge_result_b) = split_edge_result_b {
+        // Add edge only if it doesn't already exist
+        mesh.add_edge_if_not_exists(
+            split_edge_result_a.new_vertex,
+            split_edge_result_b.new_vertex,
+        );
+    }
+}
+
+pub fn copy_face_graph<T1: Scalar, T2: Scalar>(mesh_a: &Mesh<T1, 3>, mesh_b: &mut Mesh<T2, 3>)
+where
+    T1: Scalar + Into<T2>,
+    T2: Scalar,
+    Point<T1, 3>: PointOps<T1, 3, Vector = Vector<T1, 3>>,
+    Point<T2, 3>: PointOps<T2, 3, Vector = Vector<T2, 3>>,
+{
+    for v in &mesh_a.vertices {
+        let converted_point = Point::<T2, 3>::from_vals([
+            v.position[0].clone().into(),
+            v.position[1].clone().into(),
+            v.position[2].clone().into(),
+        ]);
+        mesh_b.add_vertex(converted_point);
+    }
+    for f in 0..mesh_a.faces.len() {
+        let vs = mesh_a.face_vertices(f);
+        mesh_b.add_triangle(vs[0], vs[1], vs[2]);
+    }
+}
+
+/// Check if a point is far from the mesh bounds
+pub fn point_far_from_bounds<T: Scalar>(
+    point: &Point<T, 3>,
+    bounds: &Aabb<T, 3, Point<T, 3>>,
+    threshold_distance: &T,
+) -> bool
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    // Compute distance from point to AABB
+    let mut distance_squared = T::zero();
+
+    for i in 0..3 {
+        let coord = &point[i];
+        let min_bound = &bounds.min()[i];
+        let max_bound = &bounds.max()[i];
+
+        if coord < min_bound {
+            let diff = min_bound - coord;
+            distance_squared += &(&diff * &diff);
+        } else if coord > max_bound {
+            let diff = coord - max_bound;
+            distance_squared += &(&diff * &diff);
+        }
+        // If coord is within [min_bound, max_bound], distance contribution is 0
+    }
+
+    let distance = distance_squared.sqrt();
+    distance > *threshold_distance
+}
+
+fn fast_bulk_classification<T: Scalar>(
+    centroids: &[Point<T, 3>],
+    face_aabbs: &Vec<Aabb<CgarF64, 3, Point<CgarF64, 3>>>, // Add this argument
+    mesh: &Mesh<T, 3>,
+    tree: &AabbTree<T, 3, Point<T, 3>, usize>,
+    bounds: &Aabb<CgarF64, 3, Point<CgarF64, 3>>,
+    op: &BooleanOp,
+    is_b: bool,
+) -> Vec<bool>
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    // Compute bounding box diagonal
+    let min = bounds.min();
+    let max = bounds.max();
+    let diag = (&(&max[0] - &min[0]).abs().pow(2)
+        + &(&max[1] - &min[1]).abs().pow(2)
+        + (&max[2] - &min[2]).abs().pow(2))
+    .sqrt();
+
+    // Compute average face area
+    let avg_area = mesh.average_face_area();
+    // Estimate average face "width" (sqrt of area)
+    let avg_width = avg_area.sqrt();
+
+    println!("Average face width: {}", avg_width);
+
+    // Target: average face covers ~2 grid cells per axis
+    let grid_size = if avg_width > 0.0 {
+        ((diag.0 / avg_width) * 2.0).ceil() as usize
+    } else {
+        1
+    };
+
+    let grid_size = grid_size.clamp(1, 256);
+
+    println!("Adaptive grid size: {}", grid_size);
+
+    let mut grid_classifications = HashMap::new();
+    let mut face_classifications = Vec::with_capacity(centroids.len());
+
+    for (i, centroid) in centroids.iter().enumerate() {
+        println!("Processing face {} of {}", i, centroids.len());
+        let face_aabb = &face_aabbs[i];
+        if let Some(cell) = face_aabb_in_single_grid_cell::<CgarF64>(face_aabb, bounds, grid_size) {
+            // println!("Face {} is fully inside grid cell {:?}", i, cell);
+            // Face is fully inside one grid cell
+            if let Some(&classification) = grid_classifications.get(&cell) {
+                println!("Skipped!");
+                face_classifications.push(classification);
+            } else {
+                let cell_center = grid_cell_center(&cell, bounds, grid_size);
+                let inside_b = mesh.point_in_mesh(tree, &cell_center);
+                let keep = match op {
+                    BooleanOp::Union => !inside_b,
+                    BooleanOp::Intersection => inside_b,
+                    BooleanOp::Difference => {
+                        if is_b {
+                            // For B faces: keep if inside A and not on boundary
+                            if inside_b {
+                                let ret = mesh.point_to_mesh_distance(tree, &centroid);
+                                ret.is_positive()
+                            } else {
+                                false
+                            }
+                        } else {
+                            // For A faces: keep if outside B and not on boundary
+                            if inside_b {
+                                false
+                            } else {
+                                let ret = mesh.point_to_mesh_distance(tree, &centroid);
+                                ret.is_positive()
+                            }
+                        }
+                    }
+                };
+                grid_classifications.insert(cell, keep);
+                face_classifications.push(keep);
+            }
+        } else {
+            println!("crosses borders");
+            // println!("Face {} crosses grid cell boundaries", i);
+            // Face crosses grid border, classify individually
+            let inside_b = mesh.point_in_mesh(tree, centroid);
+            // println!("Centroid {} inside B: {}", i, inside_b);
+            let keep = match op {
+                BooleanOp::Union => !inside_b,
+                BooleanOp::Intersection => inside_b,
+                BooleanOp::Difference => {
+                    if is_b {
+                        // For B faces: keep if inside A and not on boundary
+                        if inside_b {
+                            let ret = mesh.point_to_mesh_distance(tree, &centroid);
+                            ret.is_positive()
+                        } else {
+                            false
+                        }
+                    } else {
+                        // For A faces: keep if outside B and not on boundary
+                        if inside_b {
+                            false
+                        } else {
+                            let ret = mesh.point_to_mesh_distance(tree, &centroid);
+                            ret.is_positive()
+                        }
+                    }
+                }
+            };
+            face_classifications.push(keep);
+        }
+    }
+
+    println!("finished!");
+
+    face_classifications
+}
+
+fn face_in_single_grid_cell<T: Scalar>(
+    face_vertices: &[Point<T, 3>],
+    bounds: &Aabb<T, 3, Point<T, 3>>,
+    grid_size: usize,
+) -> Option<(usize, usize, usize)> {
+    let mut cell = None;
+    for v in face_vertices {
+        let c = map_point_to_grid_cell(v, bounds, grid_size);
+        if let Some(existing) = cell {
+            if existing != c {
+                return None; // Face crosses grid border
+            }
+        } else {
+            cell = Some(c);
+        }
+    }
+    cell // All vertices in the same cell
+}
+
+fn map_point_to_grid_cell<T: Scalar>(
+    point: &Point<T, 3>,
+    bounds: &Aabb<T, 3, Point<T, 3>>,
+    grid_size: usize,
+) -> (usize, usize, usize) {
+    let size = T::from(grid_size as f64);
+    let min = bounds.min();
+    let max = bounds.max();
+
+    let x = if max[0] == min[0] {
+        grid_size / 2
+    } else {
+        ((point[0].clone() - min[0].clone()) / (max[0].clone() - min[0].clone()) * size.clone())
+            .to_f64()
+            .unwrap()
+            .clamp(0.0, (grid_size - 1) as f64) as usize
+    };
+    let y = if max[1] == min[1] {
+        grid_size / 2
+    } else {
+        ((point[1].clone() - min[1].clone()) / (max[1].clone() - min[1].clone()) * size.clone())
+            .to_f64()
+            .unwrap()
+            .clamp(0.0, (grid_size - 1) as f64) as usize
+    };
+    let z = if max[2] == min[2] {
+        grid_size / 2
+    } else {
+        ((point[2].clone() - min[2].clone()) / (max[2].clone() - min[2].clone()) * size.clone())
+            .to_f64()
+            .unwrap()
+            .clamp(0.0, (grid_size - 1) as f64) as usize
+    };
+
+    (x, y, z)
+}
+
+fn grid_cell_center<T: Scalar>(
+    grid_cell: &(usize, usize, usize),
+    bounds: &Aabb<CgarF64, 3, Point<CgarF64, 3>>,
+    grid_size: usize,
+) -> Point<T, 3>
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    let (gx, gy, gz) = *grid_cell;
+    let grid_size_t = CgarF64::from(grid_size as f64);
+    let half = CgarF64::from(0.5);
+
+    let min = bounds.min();
+    let max = bounds.max();
+
+    let world_x = if max[0] == min[0] {
+        min[0].clone()
+    } else {
+        let norm_x = &(&CgarF64::from(gx as f64) + &half) / &grid_size_t;
+        &min[0] + &(&norm_x * &(&max[0] - &min[0]))
+    };
+    let world_y = if max[1] == min[1] {
+        min[1].clone()
+    } else {
+        let norm_y = &(&CgarF64::from(gy as f64) + &half) / &grid_size_t;
+        &min[1] + &(&norm_y * &(&max[1] - &min[1]))
+    };
+    let world_z = if max[2] == min[2] {
+        min[2].clone()
+    } else {
+        let norm_z = &(&CgarF64::from(gz as f64) + &half) / &grid_size_t;
+        &min[2] + &(&norm_z * &(&max[2] - &min[2]))
+    };
+
+    Point::<T, 3>::from_vals([world_x, world_y, world_z])
+}
+
+fn single_ray_test<T: Scalar>(
+    mesh: &Mesh<T, 3>,
+    tree: &AabbTree<T, 3, Point<T, 3>, usize>,
+    point: &Point<T, 3>,
+) -> bool
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    // Use a deterministic ray direction to avoid randomness
+    let dir = Vector::<T, 3>::from_vals([T::from(1.0), T::from(0.0), T::from(0.0)]);
+
+    if let Some(is_inside) = mesh.cast_ray(point, &dir, tree) {
+        is_inside
+    } else {
+        false // Default to outside if ray misses everything
+    }
+}
+
+fn face_aabb_in_single_grid_cell<T: Scalar>(
+    face_aabb: &Aabb<T, 3, Point<T, 3>>,
+    bounds: &Aabb<T, 3, Point<T, 3>>,
+    grid_size: usize,
+) -> Option<(usize, usize, usize)> {
+    let min_cell = map_point_to_grid_cell(&face_aabb.min(), bounds, grid_size);
+    let max_cell = map_point_to_grid_cell(&face_aabb.max(), bounds, grid_size);
+    if min_cell == max_cell {
+        Some(min_cell)
+    } else {
+        None
+    }
 }

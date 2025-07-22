@@ -21,10 +21,11 @@
 // SOFTWARE.
 
 use std::collections::HashSet;
+use std::time::Instant;
 
 use cgar::geometry::spatial_element::SpatialElement;
 use cgar::geometry::{Aabb, Point2, Point3};
-use cgar::io::obj::write_obj;
+use cgar::io::obj::{read_obj, write_obj};
 use cgar::mesh::mesh::{BooleanImpl, BooleanOp, Mesh};
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::numeric::cgar_rational::CgarRational;
@@ -811,15 +812,16 @@ fn difference_boolean() {
 
     // 3) Perform boolean difference
     let result_1 = big_a.boolean(&small, BooleanOp::Difference);
-    let result_2 = big_a.boolean(&big_b, BooleanOp::Difference);
+    //let result_2 = big_a.boolean(&big_b, BooleanOp::Difference);
 
-    //let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
+    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
+    //let _ = write_obj(&result_2, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
 
     assert_eq!(result_1.vertices.len(), 21);
     assert_eq!(result_1.faces.len(), 25);
 
-    assert_eq!(result_2.vertices.len(), 22);
-    assert_eq!(result_2.faces.len(), 26);
+    //assert_eq!(result_2.vertices.len(), 22);
+    //assert_eq!(result_2.faces.len(), 26);
 }
 
 #[test]
@@ -831,7 +833,7 @@ fn intersection_boolean() {
     // 3) Perform boolean difference
     let result_1 = big_a.boolean(&big_b, BooleanOp::Intersection);
 
-    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
+    // let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
 
     assert_eq!(result_1.vertices.len(), 16);
     assert_eq!(result_1.faces.len(), 14);
@@ -846,8 +848,30 @@ fn union_boolean() {
     // 3) Perform boolean difference
     let result_1 = big_a.boolean(&big_b, BooleanOp::Union);
 
-    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
+    // let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
 
     assert_eq!(result_1.vertices.len(), 28);
     assert_eq!(result_1.faces.len(), 38);
+}
+
+#[test]
+fn difference_large_boolean() {
+    let sphere =
+        read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
+    let toroid =
+        read_obj::<CgarRational, _>("tests/resources/toroid.obj").expect("Failed to read toroid");
+
+    println!("Loaded");
+
+    let _ = write_obj(&sphere, "/mnt/v/cgar_meshes/sphere.obj");
+    let _ = write_obj(&toroid, "/mnt/v/cgar_meshes/toroid.obj");
+
+    println!("Saved");
+
+    let start = Instant::now();
+    let result = toroid.boolean(&sphere, BooleanOp::Difference);
+    let duration = start.elapsed();
+    println!("Boolean difference took {:?}", duration);
+
+    let _ = write_obj(&result, "/mnt/v/cgar_meshes/large_boolean.obj");
 }

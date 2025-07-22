@@ -179,15 +179,11 @@ impl PartialOrd for CgarRational {
 
 impl Hash for CgarRational {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // get references to the internally reduced numerator & denominator
-        let num = self.0.numer();
-        let den = self.0.denom();
-        // serialize each to a decimal string (exact, no loss)
-        // you could also use `to_string_radix(16)` if you prefer hex.
-        num.to_string().hash(state);
-        // you might want a separator so that 12/3 and 1/23 don’t collide:
+        let num_bytes = self.0.numer().to_digits::<u8>(rug::integer::Order::MsfBe);
+        let den_bytes = self.0.denom().to_digits::<u8>(rug::integer::Order::MsfBe);
+        state.write(&num_bytes);
         state.write_u8(b'/');
-        den.to_string().hash(state);
+        state.write(&den_bytes);
     }
 }
 
