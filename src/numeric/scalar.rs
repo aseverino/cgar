@@ -46,6 +46,7 @@ pub trait Scalar:
     + Debug
     + Abs
     + Pow
+    + Round
     + Sqrt
     + Zero
     + One
@@ -69,4 +70,13 @@ pub trait Scalar:
     }
 
     fn from_num_den(num: i32, den: i32) -> Self;
+
+    fn tolerance() -> Self;
+
+    // CGAL-style: separate thresholds for different purposes
+    fn point_merge_threshold() -> Self;
+
+    fn edge_degeneracy_threshold() -> Self;
+
+    fn area_degeneracy_threshold() -> Self;
 }

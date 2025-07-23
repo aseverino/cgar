@@ -40,6 +40,23 @@ impl Scalar for CgarRational {
     fn from_num_den(num: i32, den: i32) -> Self {
         CgarRational(Rational::from((num, den)))
     }
+
+    fn tolerance() -> Self {
+        return 0.into(); // no tolerance for exact rational numbers
+    }
+
+    // CGAL-style: separate thresholds for different purposes
+    fn point_merge_threshold() -> Self {
+        CgarRational::from_num_den(1, 1000000) // Merge points closer than this
+    }
+
+    fn edge_degeneracy_threshold() -> Self {
+        CgarRational::from_num_den(1, 100000) // Remove edges shorter than this
+    }
+
+    fn area_degeneracy_threshold() -> Self {
+        CgarRational::from_num_den(1, 10000000) // Remove faces smaller than this
+    }
 }
 
 impl<'a, 'b> Add<&'b CgarRational> for &'a CgarRational {
@@ -230,6 +247,13 @@ impl Sqrt for CgarRational {
 impl crate::operations::Pow for CgarRational {
     fn pow(&self, exp: i32) -> Self {
         CgarRational(self.0.clone().pow(exp))
+    }
+}
+
+impl crate::operations::Round for CgarRational {
+    fn round(&self) -> Self {
+        let rounded = self.0.to_f64().round();
+        CgarRational::from(rounded)
     }
 }
 

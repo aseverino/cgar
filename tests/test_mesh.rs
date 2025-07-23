@@ -24,7 +24,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use cgar::geometry::spatial_element::SpatialElement;
-use cgar::geometry::{Aabb, Point2, Point3};
+use cgar::geometry::{Aabb, Point2, Point3, Vector3};
 use cgar::io::obj::{read_obj, write_obj};
 use cgar::mesh::mesh::{BooleanImpl, BooleanOp, Mesh};
 use cgar::numeric::cgar_f64::CgarF64;
@@ -803,7 +803,7 @@ fn make_cube(origin: [f64; 3], min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3>
 fn difference_boolean() {
     // 1) Big unit cube [0,1]^3
     let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    // let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     //let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/big_a.obj");
     //let _ = write_obj(&big_b, "/mnt/v/cgar_meshes/big_b.obj");
 
@@ -858,20 +858,38 @@ fn union_boolean() {
 fn difference_large_boolean() {
     let sphere =
         read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
+    let mut other_sphere =
+        read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
+
+    println!("Loaded");
+
+    // translate the second sphere to create a difference
+    let translation = Point3::from_vals([0.5, 0.5, 0.5]);
+    for v in other_sphere.vertices.iter_mut() {
+        v.position = &v.position + &translation;
+    }
+
+    let start = Instant::now();
+    let result = other_sphere.boolean(&sphere, BooleanOp::Difference);
+    let duration = start.elapsed();
+    println!("Boolean difference took {:?}", duration);
+
+    let _ = write_obj(&result, "/mnt/v/cgar_meshes/large_boolean.obj");
+}
+
+#[test]
+fn difference_large_torus_boolean() {
+    let sphere =
+        read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
     let toroid =
         read_obj::<CgarRational, _>("tests/resources/toroid.obj").expect("Failed to read toroid");
 
     println!("Loaded");
-
-    let _ = write_obj(&sphere, "/mnt/v/cgar_meshes/sphere.obj");
-    let _ = write_obj(&toroid, "/mnt/v/cgar_meshes/toroid.obj");
-
-    println!("Saved");
 
     let start = Instant::now();
     let result = toroid.boolean(&sphere, BooleanOp::Difference);
     let duration = start.elapsed();
     println!("Boolean difference took {:?}", duration);
 
-    let _ = write_obj(&result, "/mnt/v/cgar_meshes/large_boolean.obj");
+    let _ = write_obj(&result, "/mnt/v/cgar_meshes/large_torus_boolean.obj");
 }

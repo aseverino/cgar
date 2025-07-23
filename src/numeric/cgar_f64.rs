@@ -25,7 +25,7 @@ use num_traits::ToPrimitive;
 use crate::{
     geometry::util::EPS,
     numeric::{cgar_rational::CgarRational, scalar::Scalar},
-    operations::{Abs, Pow, Sqrt},
+    operations::{Abs, Pow, Round, Sqrt},
 };
 
 use std::{
@@ -39,6 +39,23 @@ pub struct CgarF64(pub f64);
 impl Scalar for CgarF64 {
     fn from_num_den(num: i32, den: i32) -> Self {
         CgarF64(num as f64 / den as f64)
+    }
+
+    fn tolerance() -> Self {
+        return Self(EPS);
+    }
+
+    // CGAL-style: separate thresholds for different purposes
+    fn point_merge_threshold() -> Self {
+        CgarF64(1e-6)
+    }
+
+    fn edge_degeneracy_threshold() -> Self {
+        CgarF64(1e-5)
+    }
+
+    fn area_degeneracy_threshold() -> Self {
+        CgarF64(1e-10) // Remove faces smaller than this
     }
 }
 
@@ -239,6 +256,12 @@ impl Sqrt for CgarF64 {
 impl Pow for CgarF64 {
     fn pow(&self, exp: i32) -> Self {
         CgarF64(self.0.powi(exp))
+    }
+}
+
+impl Round for CgarF64 {
+    fn round(&self) -> Self {
+        CgarF64(self.0.round())
     }
 }
 

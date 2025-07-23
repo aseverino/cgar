@@ -298,10 +298,17 @@ where
         }
     }
 
-    // 6) Return as before
-    match uniq.len() {
-        2 => Some(Segment::new(&uniq[0], &uniq[1])),
-        1 => Some(Segment::new(&uniq[0], &uniq[0])),
+    // 6) Make sure both points are on T1
+    let on_a: Vec<_> = uniq
+        .iter()
+        .filter(|this_p| point_in_tri(this_p, &p[2], &p[0], &p[1]))
+        .cloned()
+        .collect();
+
+    // 7) Return
+    match on_a.len() {
+        2 => Some(Segment::new(&on_a[0], &on_a[1])),
+        1 => Some(Segment::new(&on_a[0], &on_a[0])),
         _ => None,
     }
 }

@@ -20,16 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod abs;
-pub mod one;
-pub mod pow;
-pub mod round;
-pub mod sqrt;
-pub mod zero;
-
-pub use abs::Abs;
-pub use one::One;
-pub use pow::Pow;
-pub use round::Round;
-pub use sqrt::Sqrt;
-pub use zero::Zero;
+pub trait Round {
+    fn round(&self) -> Self;
+}
