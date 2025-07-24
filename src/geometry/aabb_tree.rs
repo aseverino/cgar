@@ -51,53 +51,87 @@ where
         + Div<&'a T, Output = T>,
 {
     /// Build an AABB‐tree over `(aabb, data)` pairs via recursive median split.
-    pub fn build(items: Vec<(Aabb<T, N, P>, D)>) -> Self
+    pub fn build(mut items: Vec<(Aabb<T, N, P>, D)>) -> Self
     where
         T: Scalar + From<CgarRational>,
     {
-        fn recurse<T: Scalar, const N: usize, P: SpatialElement<T, N>, D>(
-            mut items: Vec<(Aabb<T, N, P>, D)>,
-        ) -> AabbTree<T, N, P, D>
-        where
-            T: Scalar + From<CgarRational>,
-            for<'a> &'a T: Add<&'a T, Output = T>
-                + Sub<&'a T, Output = T>
-                + Mul<&'a T, Output = T>
-                + Div<&'a T, Output = T>,
-        {
-            // compute bounding box of all items
-            let mut node_aabb = items[0].0.clone();
-            for (aabb, _) in &items[1..] {
-                node_aabb = node_aabb.union(aabb);
-            }
+        if items.is_empty() {
+            panic!("Cannot build tree from empty items");
+        }
 
-            if items.len() == 1 {
-                let (a, d) = items.pop().unwrap();
-                return AabbTree::Leaf {
-                    aabb: a,
-                    data: Arc::new(d),
-                };
-            }
+        // Single-pass global bounds computation + axis selection
+        let mut global_min = items[0].0.min().coords().clone();
+        let mut global_max = items[0].0.max().coords().clone();
 
-            // split along longest axis at median
-            let axis = node_aabb.longest_axis();
-            items.sort_by(|(a1, _), (a2, _)| {
-                a1.center(axis)
-                    .partial_cmp(&a2.center(axis))
-                    .unwrap_or(Ordering::Equal)
-            });
-            let mid = items.len() / 2;
-            let right = items.split_off(mid);
-            let left = items;
-
-            AabbTree::Node {
-                aabb: node_aabb,
-                left: Box::new(recurse(left)),
-                right: Box::new(recurse(right)),
+        for (aabb, _) in &items[1..] {
+            let min_coords = aabb.min().coords();
+            let max_coords = aabb.max().coords();
+            for i in 0..N {
+                if min_coords[i] < global_min[i] {
+                    global_min[i] = min_coords[i].clone();
+                }
+                if max_coords[i] > global_max[i] {
+                    global_max[i] = max_coords[i].clone();
+                }
             }
         }
 
-        recurse(items)
+        // Find longest axis without creating AABB object
+        let longest_axis = (0..N)
+            .max_by(|&i, &j| {
+                (&global_max[i] - &global_min[i])
+                    .partial_cmp(&(&global_max[j] - &global_min[j]))
+                    .unwrap_or(Ordering::Equal)
+            })
+            .unwrap_or(0);
+
+        // Sort by precomputed centers to avoid repeated computation
+        items.sort_unstable_by(|(a1, _), (a2, _)| {
+            a1.center(longest_axis)
+                .partial_cmp(&a2.center(longest_axis))
+                .unwrap_or(Ordering::Equal)
+        });
+
+        Self::build_binary_tree(&mut items[..])
+    }
+
+    /// Build balanced binary tree using simple median split
+    fn build_binary_tree(items: &mut [(Aabb<T, N, P>, D)]) -> Self
+    where
+        T: Scalar + From<CgarRational>,
+    {
+        if items.len() == 1 {
+            let (aabb, data) = std::mem::replace(&mut items[0], unsafe { std::mem::zeroed() });
+            return AabbTree::Leaf {
+                aabb,
+                data: Arc::new(data),
+            };
+        }
+
+        // Simple median split - no recomputation needed since items are pre-sorted
+        let mid = items.len() / 2;
+        let (left_items, right_items) = items.split_at_mut(mid);
+
+        // Build children first
+        let left_child = Box::new(Self::build_binary_tree(left_items));
+        let right_child = Box::new(Self::build_binary_tree(right_items));
+
+        // Compute node AABB from children (only 1 union operation)
+        let node_aabb = left_child.aabb().union(right_child.aabb());
+
+        AabbTree::Node {
+            aabb: node_aabb,
+            left: left_child,
+            right: right_child,
+        }
+    }
+
+    /// Get AABB of this node/leaf
+    fn aabb(&self) -> &Aabb<T, N, P> {
+        match self {
+            AabbTree::Leaf { aabb, .. } => aabb,
+            AabbTree::Node { aabb, .. } => aabb,
+        }
     }
 
     /// Collect all `&D` whose AABB intersects `query`.
