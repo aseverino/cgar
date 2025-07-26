@@ -262,7 +262,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
         }
 
-        println!("Aqui1");
         // 4. Position is inside the face - split the face into triangles
         if let Some(split_edge_result) = self.find_or_insert_vertex_on_face(aabb_tree, face, pos) {
             // // println!("recursive!");
@@ -270,7 +269,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
 
         for f in self.faces_containing_point_aabb(aabb_tree, pos) {
-            println!("Aqui2");
             if let Some(split_edge_result) = self.find_or_insert_vertex_on_face(aabb_tree, f, pos) {
                 return Some(split_edge_result);
             }
@@ -595,8 +593,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             *aabb_tree = self.build_face_tree_fast();
             return self.faces_containing_point_aabb(aabb_tree, p);
         }
-
-        println!("RECONSTRUCTION NOT NEEDED");
 
         result
     }
@@ -1233,7 +1229,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        println!("Splitting edge at position: {:?}", pos);
         let he_ab = find_valid_half_edge(self, he);
         let he_ba = find_valid_half_edge(self, self.half_edges[he_ab].twin);
         let he_ca = find_valid_half_edge(self, self.half_edges[he_ab].prev);
@@ -2141,7 +2136,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let b = &self.vertices[vs[1]].position;
         let c = &self.vertices[vs[2]].position;
         if point_in_or_on_triangle(p, a, b, c) {
-            println!("Point is inside the triangle, splitting... RARE CASE *********************");
+            // println!("Point is inside the triangle, splitting... RARE CASE *********************");
 
             let a = vs[0];
             let b = vs[1];
@@ -2412,13 +2407,21 @@ where
     fn boolean(&self, other: &Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
         let mut a = self.clone();
         let mut b = other.clone();
+
+        let start = Instant::now();
         a.build_boundary_loops();
         b.build_boundary_loops();
+        println!("Boundary loops built in {:.2?}", start.elapsed());
 
         // 1. Collect ALL intersection segments
-        let mut intersection_segments = Vec::new();
-        let tree_b = AabbTree::build((0..b.faces.len()).map(|i| (b.face_aabb(i), i)).collect());
+        let mut intersection_segments_a = Vec::new();
+        let mut intersection_segments_b = Vec::new();
+        let start = Instant::now();
+        let mut tree_a = a.build_face_tree_fast();
+        let mut tree_b = b.build_face_tree_fast();
+        println!("Total AABB computation: {:.2?}", start.elapsed());
 
+        let start = Instant::now();
         for fa in 0..a.faces.len() {
             let mut candidates = Vec::new();
             tree_b.query(&a.face_aabb(fa), &mut candidates);
@@ -2456,7 +2459,7 @@ where
                         &Point::<T, N>::from_vals(from_fn(|i| s.b[i].clone())),
                     );
                     if segment_n.length().is_positive() {
-                        intersection_segments.push(IntersectionSegment::new(
+                        intersection_segments_a.push(IntersectionSegment::new(
                             segment_n,
                             [fa, usize::MAX],
                             [*fb, usize::MAX],
@@ -2465,53 +2468,131 @@ where
                 }
             }
         }
-
-        filter_coplanar_intersections(&mut intersection_segments, &a, &b);
-
-        // 2. Link intersection segments into chains/graphs
-        let chain_roots = link_intersection_segments(&mut intersection_segments);
+        println!(
+            "A Intersection segments collected in {:.2?}",
+            start.elapsed()
+        );
 
         let start = Instant::now();
-        let mut tree = self.build_face_tree_fast();
-        println!("Total AABB computation: {:.2?}", start.elapsed());
+        for fb in 0..b.faces.len() {
+            let mut candidates = Vec::new();
+            tree_a.query(&b.face_aabb(fb), &mut candidates);
+
+            let pa_idx = b.face_vertices(fb);
+            let pa_vec: Vec<Point<T, 3>> = pa_idx
+                .into_iter()
+                .map(|vi| {
+                    Point::<T, 3>::from_vals([
+                        b.vertices[vi].position[0].clone(),
+                        b.vertices[vi].position[1].clone(),
+                        b.vertices[vi].position[2].clone(),
+                    ])
+                })
+                .collect();
+            let pa: [Point<T, 3>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
+
+            for &fa in &candidates {
+                let pb_idx = a.face_vertices(*fa);
+                let pb_vec: Vec<Point<T, 3>> = pb_idx
+                    .into_iter()
+                    .map(|vi| {
+                        Point::<T, 3>::from_vals([
+                            a.vertices[vi].position[0].clone(),
+                            a.vertices[vi].position[1].clone(),
+                            a.vertices[vi].position[2].clone(),
+                        ])
+                    })
+                    .collect();
+                let pb: [Point<T, 3>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
+
+                if let Some(s) = tri_tri_intersection(&pa, &pb) {
+                    let segment_n = Segment::<T, N>::new(
+                        &Point::<T, N>::from_vals(from_fn(|i| s.a[i].clone())),
+                        &Point::<T, N>::from_vals(from_fn(|i| s.b[i].clone())),
+                    );
+                    if segment_n.length().is_positive() {
+                        intersection_segments_b.push(IntersectionSegment::new(
+                            segment_n,
+                            [fb, usize::MAX],
+                            [*fa, usize::MAX],
+                        ));
+                    }
+                }
+            }
+        }
+        println!(
+            "A Intersection segments collected in {:.2?}",
+            start.elapsed()
+        );
+
+        let start = Instant::now();
+        filter_coplanar_intersections(&mut intersection_segments_a, &a, &b);
+        filter_coplanar_intersections(&mut intersection_segments_b, &b, &a);
+        println!("Coplanar intersections filtered in {:.2?}", start.elapsed());
+
+        // 2. Link intersection segments into chains/graphs
+        let start = Instant::now();
+        let chain_roots_a = link_intersection_segments(&mut intersection_segments_a);
+        let chain_roots_b = link_intersection_segments(&mut intersection_segments_b);
+        println!(
+            "Intersection segments linked into chains in {:.2?}",
+            start.elapsed()
+        );
 
         // 3. Split faces along intersection curves
-        let chains = split_mesh_along_intersection_curves(
+        let start = Instant::now();
+        let chains_a = split_mesh_along_intersection_curves(
             &mut a,
-            &mut tree,
-            &mut intersection_segments,
-            &chain_roots,
+            &mut tree_a,
+            &mut intersection_segments_a,
+            &chain_roots_a,
+        );
+        println!(
+            "A Faces split along intersection curves in {:.2?}",
+            start.elapsed()
+        );
+
+        let start = Instant::now();
+        let chains_b = split_mesh_along_intersection_curves(
+            &mut b,
+            &mut tree_b,
+            &mut intersection_segments_b,
+            &chain_roots_b,
+        );
+        println!(
+            "B Faces split along intersection curves in {:.2?}",
+            start.elapsed()
         );
 
         // a.faces.retain(|f| f.half_edge != usize::MAX);
 
-        let mut test = a.clone();
+        // let mut test = a.clone();
         // 4. Rebuild and cleanup
 
         // let _ = write_obj(&test, "/mnt/v/cgar_meshes/a.obj");
 
-        for i in &chains[0] {
-            // let intersection = &intersection_segments[*i];
-            // for f in intersection.faces_a {
-            //     // println!("Face index: {}, half-edge {}", f, test.faces[f].half_edge);
-            //     let f = find_valid_face(&test, f, &intersection.segment.a, true);
-            //     if f.is_none() {
-            //         // println!("Face not found in test mesh");
-            //         continue;
-            //     }
-            //     test.faces[f.unwrap()].half_edge = usize::MAX; // Invalidate face
-            // }
+        // for i in &chains[0] {
+        // let intersection = &intersection_segments[*i];
+        // for f in intersection.faces_a {
+        //     // println!("Face index: {}, half-edge {}", f, test.faces[f].half_edge);
+        //     let f = find_valid_face(&test, f, &intersection.segment.a, true);
+        //     if f.is_none() {
+        //         // println!("Face not found in test mesh");
+        //         continue;
+        //     }
+        //     test.faces[f.unwrap()].half_edge = usize::MAX; // Invalidate face
+        // }
 
-            let intersection = &intersection_segments[*i];
-            // println!("{}: {:?}", i, intersection);
-            // println!("------------------------------");
-        }
+        // let intersection = &intersection_segments[*i];
+        // println!("{}: {:?}", i, intersection);
+        // println!("------------------------------");
+        // }
 
-        remove_invalidated_faces(&mut test);
-        test.remove_unused_vertices();
+        // remove_invalidated_faces(&mut test);
+        // test.remove_unused_vertices();
         // test.build_boundary_loops();
 
-        let _ = write_obj(&test, "/mnt/v/cgar_meshes/a_2.obj");
+        // let _ = write_obj(&test, "/mnt/v/cgar_meshes/a_2.obj");
 
         // 5. Build trees for classification
         // let tree_a = AabbTree::build((0..a.faces.len()).map(|i| (a.face_aabb(i), i)).collect());
@@ -2529,7 +2610,7 @@ where
 
         // Classify A faces using topological method
         let a_classifications =
-            classify_faces_inside_intersection_loops(&a, &b, &intersection_segments, &chains);
+            classify_faces_inside_intersection_loops(&a, &b, &intersection_segments_a, &chains_a);
 
         // remove_invalidated_faces(&mut a);
 
@@ -2560,8 +2641,8 @@ where
                 let b_classifications = classify_faces_inside_intersection_loops(
                     &b,
                     &a,
-                    &intersection_segments,
-                    &chains,
+                    &intersection_segments_b,
+                    &chains_b,
                 );
                 for (fb, keep) in b_classifications.iter().enumerate() {
                     if *keep {
@@ -2585,8 +2666,8 @@ where
                 let b_classifications = classify_faces_inside_intersection_loops(
                     &b,
                     &a,
-                    &intersection_segments,
-                    &chains,
+                    &intersection_segments_b,
+                    &chains_b,
                 );
                 for (fb, keep) in b_classifications.iter().enumerate() {
                     if *keep {
@@ -2607,19 +2688,23 @@ where
                 }
 
                 let b_op = BooleanOp::Intersection; // Keep faces inside A, but flip them
-                // let b_classifications =
-                //     classify_faces_inside_intersection_loops(&b, &intersection_segments, &chains);
-                // for (fb, keep) in b_classifications.iter().enumerate() {
-                //     if *keep {
-                //         let vs = b.face_vertices(fb);
-                //         // Flip face orientation for caps
-                //         result.add_triangle(
-                //             vid_map[&(VertexSource::B, vs[2])],
-                //             vid_map[&(VertexSource::B, vs[1])],
-                //             vid_map[&(VertexSource::B, vs[0])],
-                //         );
-                //     }
-                // }
+                let b_classifications = classify_faces_inside_intersection_loops(
+                    &b,
+                    &a,
+                    &intersection_segments_b,
+                    &chains_b,
+                );
+                for (fb, keep) in b_classifications.iter().enumerate() {
+                    if *keep {
+                        let vs = b.face_vertices(fb);
+                        // Flip face orientation for caps
+                        result.add_triangle(
+                            vid_map[&(VertexSource::B, vs[2])],
+                            vid_map[&(VertexSource::B, vs[1])],
+                            vid_map[&(VertexSource::B, vs[0])],
+                        );
+                    }
+                }
             }
         }
 
@@ -3858,11 +3943,6 @@ fn remove_invalidated_faces<T: Scalar, const N: usize>(mesh: &mut Mesh<T, N>) {
             let new_idx = new_faces.len();
             face_mapping[old_idx] = Some(new_idx);
             new_faces.push(face.clone());
-        } else {
-            println!(
-                "Removing invalidated face {} with half_edge {}",
-                old_idx, face.half_edge
-            );
         }
     }
 
