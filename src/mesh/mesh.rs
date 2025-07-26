@@ -2502,40 +2502,6 @@ where
             start.elapsed()
         );
 
-        // a.faces.retain(|f| f.half_edge != usize::MAX);
-
-        // let mut test = a.clone();
-        // 4. Rebuild and cleanup
-
-        // let _ = write_obj(&test, "/mnt/v/cgar_meshes/a.obj");
-
-        // for i in &chains[0] {
-        // let intersection = &intersection_segments[*i];
-        // for f in intersection.faces_a {
-        //     // println!("Face index: {}, half-edge {}", f, test.faces[f].half_edge);
-        //     let f = find_valid_face(&test, f, &intersection.segment.a, true);
-        //     if f.is_none() {
-        //         // println!("Face not found in test mesh");
-        //         continue;
-        //     }
-        //     test.faces[f.unwrap()].half_edge = usize::MAX; // Invalidate face
-        // }
-
-        // let intersection = &intersection_segments[*i];
-        // println!("{}: {:?}", i, intersection);
-        // println!("------------------------------");
-        // }
-
-        // remove_invalidated_faces(&mut test);
-        // test.remove_unused_vertices();
-        // test.build_boundary_loops();
-
-        // let _ = write_obj(&test, "/mnt/v/cgar_meshes/a_2.obj");
-
-        // 5. Build trees for classification
-        // let tree_a = AabbTree::build((0..a.faces.len()).map(|i| (a.face_aabb(i), i)).collect());
-        // let tree_b = AabbTree::build((0..b.faces.len()).map(|i| (b.face_aabb(i), i)).collect());
-
         // 6. Create result mesh
         let mut result = Mesh::new();
         let mut vid_map = HashMap::new();
@@ -3116,6 +3082,31 @@ where
         || (first_end.distance_to(last_start) < tolerance)
         || (first_end.distance_to(last_end) < tolerance)
 }
+// fn link_intersection_segments<T: Scalar, const N: usize>(
+//     intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
+// ) -> Vec<usize>
+// where
+//     Point<T, N>: PointOps<T, N>,
+//     Segment<T, N>: SegmentOps<T, N>,
+//     for<'a> &'a T: Sub<&'a T, Output = T>
+//         + Mul<&'a T, Output = T>
+//         + Add<&'a T, Output = T>
+//         + Div<&'a T, Output = T>,
+// {
+//     // println!("=== MANIFOLD BOUNDARY EXTRACTION ===");
+//     // println!("Input segments: {}", intersection_segments.len());
+
+//     if intersection_segments.is_empty() {
+//         return Vec::new();
+//     }
+
+//     // 1. Deduplicate segments
+//     deduplicate_segments_improved(intersection_segments);
+
+//     // 2. Extract boundary loops using manifold topology principles
+//     extract_manifold_boundary_loops(intersection_segments)
+// }
+
 fn link_intersection_segments<T: Scalar, const N: usize>(
     intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
 ) -> Vec<usize>
@@ -3127,353 +3118,299 @@ where
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    // println!("=== MANIFOLD BOUNDARY EXTRACTION ===");
-    // println!("Input segments: {}", intersection_segments.len());
+    if intersection_segments.is_empty() {
+        return Vec::new();
+    }
+
+    // 1. Pre-filter degenerate segments (single pass)
+    let tolerance = T::edge_degeneracy_threshold();
+    intersection_segments.retain(|seg| seg.segment.length() > tolerance);
 
     if intersection_segments.is_empty() {
         return Vec::new();
     }
 
-    // 1. Deduplicate segments
-    deduplicate_segments_improved(intersection_segments);
+    // 2. Build optimized adjacency using spatial grid
+    let adjacency = build_spatial_adjacency(intersection_segments);
 
-    // 2. Extract boundary loops using manifold topology principles
-    extract_manifold_boundary_loops(intersection_segments)
+    // 3. Extract manifold loops using iterative union-find
+    extract_loops_union_find(&adjacency, intersection_segments)
 }
 
-fn extract_manifold_boundary_loops<T: Scalar, const N: usize>(
-    intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
+/// Build adjacency using spatial grid partitioning (O(n) average case)
+fn build_spatial_adjacency<T: Scalar, const N: usize>(
+    segments: &[IntersectionSegment<T, N>],
+) -> Vec<Vec<usize>>
+where
+    Point<T, N>: PointOps<T, N>,
+{
+    let tolerance = T::point_merge_threshold();
+    let grid_size = tolerance.to_f64().unwrap();
+
+    // Use integer-based spatial hashing for performance
+    let mut spatial_grid: HashMap<(i64, i64, i64), Vec<(usize, bool)>> =
+        HashMap::with_capacity(segments.len() * 2);
+
+    // Pre-allocate adjacency lists
+    let mut adjacency = vec![Vec::with_capacity(4); segments.len()];
+
+    // Single pass: populate grid and find connections
+    for (seg_idx, seg) in segments.iter().enumerate() {
+        let endpoints = [&seg.segment.a, &seg.segment.b];
+
+        for (endpoint_idx, point) in endpoints.iter().enumerate() {
+            let grid_key = quantize_point_fast(point, grid_size);
+
+            // Check existing points in same and adjacent cells
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        let neighbor_key = (grid_key.0 + dx, grid_key.1 + dy, grid_key.2 + dz);
+
+                        if let Some(neighbors) = spatial_grid.get(&neighbor_key) {
+                            for &(other_seg, other_endpoint) in neighbors {
+                                if other_seg != seg_idx
+                                    && points_are_close(
+                                        point,
+                                        get_segment_endpoint(segments, other_seg, other_endpoint),
+                                        &tolerance,
+                                    )
+                                {
+                                    adjacency[seg_idx].push(other_seg);
+                                    adjacency[other_seg].push(seg_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Add current point to grid
+            spatial_grid
+                .entry(grid_key)
+                .or_insert_with(|| Vec::with_capacity(2))
+                .push((seg_idx, endpoint_idx == 0));
+        }
+    }
+
+    // Remove duplicates using fast sort + dedup
+    for adj_list in &mut adjacency {
+        if adj_list.len() > 1 {
+            adj_list.sort_unstable();
+            adj_list.dedup();
+        }
+    }
+
+    adjacency
+}
+
+/// Fast integer-based point quantization
+#[inline]
+fn quantize_point_fast<T: Scalar, const N: usize>(
+    point: &Point<T, N>,
+    grid_size: f64,
+) -> (i64, i64, i64)
+where
+    Point<T, N>: PointOps<T, N>,
+{
+    let inv_grid = 1.0 / grid_size;
+    (
+        (point[0].to_f64().unwrap() * inv_grid) as i64,
+        (point[1].to_f64().unwrap() * inv_grid) as i64,
+        if N >= 3 {
+            (point[2].to_f64().unwrap() * inv_grid) as i64
+        } else {
+            0
+        },
+    )
+}
+
+/// Fast point distance check
+#[inline]
+fn points_are_close<T: Scalar, const N: usize>(
+    p1: &Point<T, N>,
+    p2: &Point<T, N>,
+    tolerance: &T,
+) -> bool
+where
+    Point<T, N>: PointOps<T, N>,
+{
+    p1.distance_to(p2) <= *tolerance
+}
+
+/// Get segment endpoint efficiently
+#[inline]
+fn get_segment_endpoint<T: Scalar, const N: usize>(
+    segments: &[IntersectionSegment<T, N>],
+    seg_idx: usize,
+    is_start: bool,
+) -> &Point<T, N> {
+    if is_start {
+        &segments[seg_idx].segment.a
+    } else {
+        &segments[seg_idx].segment.b
+    }
+}
+
+/// Extract loops using Union-Find for optimal performance
+fn extract_loops_union_find<T: Scalar, const N: usize>(
+    adjacency: &[Vec<usize>],
+    segments: &mut [IntersectionSegment<T, N>],
 ) -> Vec<usize>
 where
     Point<T, N>: PointOps<T, N>,
     Segment<T, N>: SegmentOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
 {
-    let tolerance = T::tolerance();
-
-    // Build adjacency map using quantized endpoints
-    let (adjacency_map, point_to_segments, point_map) =
-        build_adjacency_map(intersection_segments, tolerance.clone());
-
-    // Find all manifold loops using graph theory
-    let loops = find_all_manifold_loops(
-        &adjacency_map,
-        &point_to_segments,
-        &point_map,
-        intersection_segments,
-        tolerance.clone(),
-    );
-
-    // Select the best loops based on geometric criteria
-    let selected_loops = select_best_boundary_loops(loops, intersection_segments);
-
-    let mut loop_roots = Vec::new();
-    for loop_segments in selected_loops {
-        if loop_segments.len() < 3 {
-            continue;
-        }
-        // 1) order segments so seg[i].b == seg[i+1].a
-        let mut ordered = Vec::with_capacity(loop_segments.len());
-        let mut rem = loop_segments.clone();
-        ordered.push(rem.remove(0));
-
-        while !rem.is_empty() {
-            let last = *ordered.last().unwrap();
-            let last_b = &intersection_segments[last].segment.b;
-            let mut found = false;
-            for i in 0..rem.len() {
-                let idx = rem[i];
-                let seg = &intersection_segments[idx].segment;
-                if last_b.distance_to(&seg.a) <= tolerance.clone() {
-                    ordered.push(idx);
-                    rem.remove(i);
-                    found = true;
-                    break;
-                }
-                if last_b.distance_to(&seg.b) <= tolerance.clone() {
-                    // flip this segment’s endpoints
-                    let seg_mut = &mut intersection_segments[idx].segment;
-                    std::mem::swap(&mut seg_mut.a, &mut seg_mut.b);
-                    ordered.push(idx);
-                    rem.remove(i);
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                break;
-            }
-        }
-        // 2) link each in a closed cycle
-        let n = ordered.len();
-
-        // println!("Ordered loop segments len: {}", n);
-
-        for (i, &idx) in ordered.iter().enumerate() {
-            let prev = ordered[(i + n - 1) % n];
-            let next = ordered[(i + 1) % n];
-            intersection_segments[idx].links = vec![prev, next];
-        }
-        loop_roots.push(ordered[0]);
+    let n = adjacency.len();
+    if n == 0 {
+        return Vec::new();
     }
 
-    // println!("Selected {} manifold loops", loop_roots.len());
+    // Union-Find for connected components
+    let mut parent = (0..n).collect::<Vec<_>>();
+    let mut rank = vec![0; n];
+
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]]; // Path compression
+            x = parent[x];
+        }
+        x
+    }
+
+    fn union(parent: &mut [usize], rank: &mut [usize], x: usize, y: usize) {
+        let px = find(parent, x);
+        let py = find(parent, y);
+
+        if px != py {
+            if rank[px] < rank[py] {
+                parent[px] = py;
+            } else if rank[px] > rank[py] {
+                parent[py] = px;
+            } else {
+                parent[py] = px;
+                rank[px] += 1;
+            }
+        }
+    }
+
+    // Build connected components
+    for (seg_idx, neighbors) in adjacency.iter().enumerate() {
+        for &neighbor in neighbors {
+            union(&mut parent, &mut rank, seg_idx, neighbor);
+        }
+    }
+
+    // Group segments by component
+    let mut components: HashMap<usize, Vec<usize>> = HashMap::new();
+    for seg_idx in 0..n {
+        let root = find(&mut parent, seg_idx);
+        components.entry(root).or_default().push(seg_idx);
+    }
+
+    // Extract valid loops and build links
+    let mut loop_roots = Vec::new();
+    let tolerance = T::tolerance();
+
+    for (_, component) in components {
+        if component.len() < 3 {
+            continue; // Too small for a loop
+        }
+
+        // Order segments in component to form chain
+        if let Some(ordered) = order_segments_optimized(&component, segments, &tolerance) {
+            // Build bidirectional links
+            let n_ordered = ordered.len();
+            for (i, &seg_idx) in ordered.iter().enumerate() {
+                let prev_idx = ordered[(i + n_ordered - 1) % n_ordered];
+                let next_idx = ordered[(i + 1) % n_ordered];
+                segments[seg_idx].links = vec![prev_idx, next_idx];
+            }
+            loop_roots.push(ordered[0]);
+        }
+    }
+
     loop_roots
 }
 
-fn build_adjacency_map<T: Scalar, const N: usize>(
-    segments: &Vec<IntersectionSegment<T, N>>,
-    tolerance: T,
-) -> (
-    HashMap<usize, Vec<(usize, usize)>>,
-    HashMap<usize, Vec<usize>>,
-    HashMap<String, usize>,
-)
-where
-    Point<T, N>: PointOps<T, N>,
-{
-    let mut point_map = HashMap::new();
-    let mut point_counter = 0;
-
-    // Quantize all endpoints to create a point-to-index mapping
-    for (seg_idx, seg) in segments.iter().enumerate() {
-        let _a_idx = get_or_create_point_index(
-            &mut point_map,
-            &mut point_counter,
-            &seg.segment.a,
-            tolerance.clone(),
-        );
-        let _b_idx = get_or_create_point_index(
-            &mut point_map,
-            &mut point_counter,
-            &seg.segment.b,
-            tolerance.clone(),
-        );
-    }
-
-    // Build segment adjacency map: segment_idx -> [(neighbor_seg_idx, shared_point_idx)]
-    let mut adjacency_map: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
-    let mut point_to_segments: HashMap<usize, Vec<usize>> = HashMap::new();
-
-    for (seg_idx, seg) in segments.iter().enumerate() {
-        let a_idx = find_point_index(&point_map, &seg.segment.a, tolerance.clone()).unwrap();
-        let b_idx = find_point_index(&point_map, &seg.segment.b, tolerance.clone()).unwrap();
-
-        point_to_segments.entry(a_idx).or_default().push(seg_idx);
-        point_to_segments.entry(b_idx).or_default().push(seg_idx);
-    }
-
-    // Build adjacency relationships
-    for (point_idx, connected_segments) in &point_to_segments {
-        for i in 0..connected_segments.len() {
-            for j in (i + 1)..connected_segments.len() {
-                let seg_i = connected_segments[i];
-                let seg_j = connected_segments[j];
-
-                adjacency_map
-                    .entry(seg_i)
-                    .or_default()
-                    .push((seg_j, *point_idx));
-                adjacency_map
-                    .entry(seg_j)
-                    .or_default()
-                    .push((seg_i, *point_idx));
-            }
-        }
-    }
-
-    (adjacency_map, point_to_segments, point_map)
-}
-
-fn find_all_manifold_loops<T: Scalar, const N: usize>(
-    adjacency_map: &HashMap<usize, Vec<(usize, usize)>>,
-    point_to_segments: &HashMap<usize, Vec<usize>>,
-    point_map: &HashMap<String, usize>,
-    segments: &Vec<IntersectionSegment<T, N>>,
-    tolerance: T,
-) -> Vec<Vec<usize>>
-where
-    Point<T, N>: PointOps<T, N>,
-    Segment<T, N>: SegmentOps<T, N>,
-{
-    let mut loops = Vec::new();
-    let mut used_segments = HashSet::new();
-
-    // Process each unused segment as a potential loop start
-    for start_seg in 0..segments.len() {
-        if used_segments.contains(&start_seg) {
-            continue;
-        }
-
-        if let Some(loop_segments) = trace_manifold_loop(
-            start_seg,
-            adjacency_map,
-            point_to_segments,
-            point_map,
-            segments,
-            &used_segments,
-            tolerance.clone(),
-        ) {
-            // Mark segments as used
-            for &seg_idx in &loop_segments {
-                used_segments.insert(seg_idx);
-            }
-            loops.push(loop_segments);
-        }
-    }
-
-    // println!("Found {} potential manifold loops", loops.len());
-    loops
-}
-
-fn trace_manifold_loop<T: Scalar, const N: usize>(
-    start_seg: usize,
-    adjacency_map: &HashMap<usize, Vec<(usize, usize)>>,
-    _point_to_segments: &HashMap<usize, Vec<usize>>,
-    point_map: &HashMap<String, usize>,
-    segments: &Vec<IntersectionSegment<T, N>>,
-    used_segments: &HashSet<usize>,
-    tolerance: T,
+/// Optimized segment ordering using adjacency traversal
+fn order_segments_optimized<T: Scalar, const N: usize>(
+    component: &[usize],
+    segments: &mut [IntersectionSegment<T, N>],
+    tolerance: &T,
 ) -> Option<Vec<usize>>
 where
     Point<T, N>: PointOps<T, N>,
     Segment<T, N>: SegmentOps<T, N>,
 {
-    if used_segments.contains(&start_seg) {
-        return None;
+    if component.len() < 2 {
+        return Some(component.to_vec());
     }
 
-    // Get the two endpoints of the starting segment
-    let start_point_a =
-        find_point_index(point_map, &segments[start_seg].segment.a, tolerance.clone())?;
-    let start_point_b =
-        find_point_index(point_map, &segments[start_seg].segment.b, tolerance.clone())?;
+    let mut ordered = Vec::with_capacity(component.len());
+    let mut remaining: HashSet<usize> = component.iter().copied().collect();
 
-    // Try tracing from both endpoints to find the longest valid loop
-    let loop_a = trace_from_endpoint(
-        start_seg,
-        start_point_b,
-        start_point_a,
-        adjacency_map,
-        point_map,
-        segments,
-        used_segments,
-        tolerance.clone(),
-    );
-    let loop_b = trace_from_endpoint(
-        start_seg,
-        start_point_a,
-        start_point_b,
-        adjacency_map,
-        point_map,
-        segments,
-        used_segments,
-        tolerance.clone(),
-    );
+    // Start with first segment
+    let start_seg = component[0];
+    ordered.push(start_seg);
+    remaining.remove(&start_seg);
 
-    // Return the longer valid loop
-    match (loop_a, loop_b) {
-        (Some(a), Some(b)) => Some(if a.len() > b.len() { a } else { b }),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    }
-}
+    // Greedily connect segments
+    while !remaining.is_empty() && ordered.len() < component.len() {
+        let last_seg = *ordered.last().unwrap();
+        let last_endpoint = &segments[last_seg].segment.b;
 
-fn trace_from_endpoint<T: Scalar, const N: usize>(
-    start_seg: usize,
-    current_point: usize,
-    target_point: usize,
-    adjacency_map: &HashMap<usize, Vec<(usize, usize)>>,
-    point_map: &HashMap<String, usize>,
-    segments: &Vec<IntersectionSegment<T, N>>,
-    used_segments: &HashSet<usize>,
-    tolerance: T,
-) -> Option<Vec<usize>>
-where
-    Point<T, N>: PointOps<T, N>,
-    Segment<T, N>: SegmentOps<T, N>,
-{
-    let mut path = vec![start_seg];
-    let mut visited_segments = HashSet::new();
-    visited_segments.insert(start_seg);
+        // Find best matching segment
+        let mut best_match = None;
+        let mut best_distance = tolerance.clone();
 
-    let mut current_seg = start_seg;
-    let mut current_endpoint = current_point;
+        for &candidate in &remaining {
+            let seg = &segments[candidate];
 
-    let max_iterations = segments.len() * 2;
-    let mut iterations = 0;
+            // Check both orientations
+            let dist_a = last_endpoint.distance_to(&seg.segment.a);
+            let dist_b = last_endpoint.distance_to(&seg.segment.b);
 
-    loop {
-        iterations += 1;
-        if iterations > max_iterations {
-            break; // Safety break
+            if dist_a <= best_distance {
+                best_distance = dist_a.clone();
+                best_match = Some((candidate, false)); // Don't flip
+            }
+
+            if dist_b <= best_distance {
+                best_distance = dist_b.clone();
+                best_match = Some((candidate, true)); // Flip
+            }
         }
 
-        // Find next segment connected to current endpoint
-        let next_candidates = if let Some(neighbors) = adjacency_map.get(&current_seg) {
-            neighbors
-                .iter()
-                .filter(|(seg_idx, point_idx)| {
-                    *point_idx == current_endpoint
-                        && !visited_segments.contains(seg_idx)
-                        && !used_segments.contains(seg_idx)
-                })
-                .map(|(seg_idx, _)| *seg_idx)
-                .collect::<Vec<_>>()
+        if let Some((next_seg, should_flip)) = best_match {
+            if should_flip {
+                // Flip segment orientation
+                let seg = &mut segments[next_seg];
+                std::mem::swap(&mut seg.segment.a, &mut seg.segment.b);
+            }
+
+            ordered.push(next_seg);
+            remaining.remove(&next_seg);
         } else {
-            Vec::new()
-        };
-
-        if next_candidates.is_empty() {
-            break; // No more connections
-        }
-
-        // For manifold loops, prefer segments with exactly 2 connections (typical for loops)
-        let next_seg = if next_candidates.len() == 1 {
-            next_candidates[0]
-        } else {
-            // Choose the segment that forms the best geometric continuation
-            *next_candidates.iter().min_by_key(|&&seg_idx| {
-                // Prefer segments with fewer total connections (more likely to be on boundary)
-                adjacency_map
-                    .get(&seg_idx)
-                    .map_or(0, |neighbors| neighbors.len())
-            })?
-        };
-
-        visited_segments.insert(next_seg);
-        path.push(next_seg);
-
-        // Find the other endpoint of the next segment
-        let next_seg_data = &segments[next_seg];
-        let next_point_a =
-            find_point_index(point_map, &next_seg_data.segment.a, tolerance.clone())?;
-        let next_point_b =
-            find_point_index(point_map, &next_seg_data.segment.b, tolerance.clone())?;
-
-        current_endpoint = if next_point_a == current_endpoint {
-            next_point_b
-        } else {
-            next_point_a
-        };
-
-        current_seg = next_seg;
-
-        // Check for loop closure
-        if current_endpoint == target_point && path.len() >= 3 {
-            // println!("Found manifold loop with {} segments", path.len());
-            return Some(path);
+            break; // No valid connection found
         }
     }
 
-    // Return partial path if it's reasonably long
-    if path.len() >= 3 {
-        // println!("Found partial manifold path with {} segments", path.len());
-        Some(path)
+    // Verify closure for complete loops
+    if ordered.len() >= 3 {
+        let first_start = &segments[ordered[0]].segment.a;
+        let last_end = &segments[*ordered.last().unwrap()].segment.b;
+
+        if first_start.distance_to(last_end) <= *tolerance {
+            Some(ordered)
+        } else {
+            // Return partial chain if reasonably long
+            if ordered.len() >= component.len() / 2 {
+                Some(ordered)
+            } else {
+                None
+            }
+        }
     } else {
         None
     }
