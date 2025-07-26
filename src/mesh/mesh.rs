@@ -42,7 +42,7 @@ use core::panic;
 use std::{
     array::from_fn,
     collections::{HashMap, HashSet, VecDeque},
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Sub},
     time::Instant,
 };
 use std::{convert::TryInto, f64::consts::PI};
@@ -140,7 +140,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         for (old_idx, vertex) in self.vertices.iter().enumerate() {
             if used[old_idx] {
                 let new_idx = new_vertices.len();
-                new_vertices.push(vertex.clone());
+                new_vertices.push(vertex);
                 old_to_new[old_idx] = Some(new_idx);
             }
         }
@@ -242,7 +242,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                     });
                 }
 
-                if let Ok(split_edge_result) = self.split_edge(aabb_tree, he, &pos.clone()) {
+                if let Ok(split_edge_result) = self.split_edge(aabb_tree, he, &pos) {
                     // println!(
                     //     "Inserted new vertex {} on edge ({}, {}) at position {:?}",
                     //     split_edge_result.new_vertex, src, dst, pos
@@ -646,6 +646,10 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     pub fn face_centroid(&self, f: usize) -> Vector<T, N>
     where
         Vector<T, N>: VectorOps<T, N>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
     {
         let face_vertices = self.face_vertices(f);
         let n = T::from(face_vertices.len() as f64);
@@ -660,7 +664,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
 
         for coord in centroid.coords_mut().iter_mut() {
-            *coord = coord.clone() / n.clone();
+            *coord = &*coord / &n;
         }
 
         centroid
@@ -987,19 +991,20 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
         // Remove duplicates and count
         hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let mut filtered_hits = Vec::new();
+        let mut filtered_hits = 0;
         let mut last_t = None;
 
         for t in hits {
-            if last_t.as_ref().map_or(true, |lt: &T| {
-                (t.clone() - lt.clone()).abs() > T::tolerance()
-            }) {
-                filtered_hits.push(t.clone());
+            if last_t
+                .as_ref()
+                .map_or(true, |lt: &T| (&t - &lt).abs() > T::tolerance())
+            {
+                filtered_hits += 1;
                 last_t = Some(t);
             }
         }
 
-        Some(filtered_hits.len() % 2 == 1)
+        Some(filtered_hits % 2 == 1)
     }
 
     /// Robust ray-triangle intersection using Möller-Trumbore algorithm
@@ -1781,8 +1786,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        let p_pos = intersection_segments[segment_idx].segment.a.clone();
-        let q_pos = intersection_segments[segment_idx].segment.b.clone();
+        let p_pos = &intersection_segments[segment_idx].segment.a;
+        let q_pos = &intersection_segments[segment_idx].segment.b;
 
         let mut best_intersection = None;
         let mut best_t = T::one();
@@ -1817,10 +1822,9 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             );
             if let Ok(split_edge_result) = self.split_edge(aabb_tree, he, &intersection_point) {
                 let new_vertex_idx = split_edge_result.new_vertex;
-                let new_vertex_pos = self.vertices[new_vertex_idx].position.clone();
+                let new_vertex_pos = &self.vertices[new_vertex_idx].position;
                 println!("Running faces_containing_point_aabb");
-                let mut containing_faces =
-                    self.faces_containing_point_aabb(aabb_tree, &new_vertex_pos);
+                let containing_faces = self.faces_containing_point_aabb(aabb_tree, new_vertex_pos);
                 if let Some(&new_face_b) = containing_faces.get(0) {
                     println!("Found intersection at vertex: {}", new_vertex_idx);
                     // 1) extract old endpoint & face_b
@@ -2126,7 +2130,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             // Is p on segment [ps, pd]?
             if point_on_segment(ps, pd, p) {
                 // Split edge and return new vertex index.
-                let split_edge_result = self.split_edge(aabb_tree, he, &p.clone()).unwrap();
+                let split_edge_result = self.split_edge(aabb_tree, he, &p).unwrap();
                 return Some(split_edge_result);
             }
         }
@@ -2372,7 +2376,8 @@ where
 
     // allow on‐edge within small epsilon
     let e = T::tolerance();
-    u >= -e.clone() && v >= -e.clone() && u + v <= T::one() + e
+    let neg_e = e.clone().neg();
+    u >= neg_e && v >= neg_e && u + v <= T::one() + e
 }
 
 pub trait BooleanImpl<T>
@@ -2513,8 +2518,13 @@ where
         }
 
         // Classify A faces using topological method
+        let start = Instant::now();
         let a_classifications =
             classify_faces_inside_intersection_loops(&a, &b, &intersection_segments_a, &chains_a);
+        println!(
+            "A faces classified inside intersection loops in {:.2?}",
+            start.elapsed()
+        );
 
         // remove_invalidated_faces(&mut a);
 
@@ -2592,6 +2602,7 @@ where
                 }
 
                 let b_op = BooleanOp::Intersection; // Keep faces inside A, but flip them
+                let start = Instant::now();
                 let b_classifications = classify_faces_inside_intersection_loops(
                     &b,
                     &a,
@@ -2609,6 +2620,10 @@ where
                         );
                     }
                 }
+                println!(
+                    "B faces classified inside intersection loops in {:.2?}",
+                    start.elapsed()
+                );
             }
         }
 
@@ -2705,16 +2720,16 @@ where
         let t = (&d4 - &d3) / ((&d4 - &d3) + (&d5 - &d6));
         // B + t*(C–B)
         let proj = Point::from_vals([
-            &b[0] + &((&c[0] - &b[0]) * t.clone()),
-            &b[1] + &((&c[1] - &b[1]) * t.clone()),
-            &b[2] + &((&c[2] - &b[2]) * t),
+            &b[0] + &(&(&c[0] - &b[0]) * &t),
+            &b[1] + &(&(&c[1] - &b[1]) * &t),
+            &b[2] + &(&(&c[2] - &b[2]) * &t),
         ]);
         let diff = Point::from_vals([&p[0] - &proj[0], &p[1] - &proj[1], &p[2] - &proj[2]]);
         return &diff[0] * &diff[0] + &diff[1] * &diff[1] + &diff[2] * &diff[2];
     }
 
     // project p onto the plane
-    let t_plane = ap.dot(&n) / nn2.clone();
+    let t_plane = &ap.dot(&n) / &nn2;
     let proj = Point::from(&p.clone().as_vector() - &n.scale(&t_plane));
 
     // compute barycentrics of 'proj' in triangle {a,b,c}
@@ -2727,12 +2742,12 @@ where
     let dot02 = v0.dot(&v2.as_vector());
     let dot12 = v1.dot(&v2.as_vector());
     let inv_denom = T::one() / (&dot00 * &dot11 - &dot01 * &dot01);
-    let u = (&dot11 * &dot02 - &dot01 * &dot12) * inv_denom.clone();
-    let v = (&dot00 * &dot12 - &dot01 * &dot02) * inv_denom;
+    let u = &(&dot11 * &dot02 - &dot01 * &dot12) * &inv_denom;
+    let v = &(&dot00 * &dot12 - &dot01 * &dot02) * &inv_denom;
 
     if u >= T::zero() && v >= T::zero() && u + v <= T::one() {
         let d_plane = ap.dot(&n);
-        return d_plane.clone() * d_plane / nn2;
+        return &d_plane * &d_plane / nn2;
     }
 
     // if we get here, that means numerical jitter kicked us out of face region
@@ -2924,11 +2939,11 @@ where
 {
     let tolerance = T::point_merge_threshold(); // Use point-specific threshold
 
-    let forward_match = seg1.a.distance_to(&seg2.a) <= tolerance.clone()
-        && seg1.b.distance_to(&seg2.b) <= tolerance.clone();
+    let forward_match =
+        seg1.a.distance_to(&seg2.a) <= tolerance && seg1.b.distance_to(&seg2.b) <= tolerance;
 
-    let reverse_match = seg1.a.distance_to(&seg2.b) <= tolerance.clone()
-        && seg1.b.distance_to(&seg2.a) <= tolerance;
+    let reverse_match =
+        seg1.a.distance_to(&seg2.b) <= tolerance && seg1.b.distance_to(&seg2.a) <= tolerance;
 
     forward_match || reverse_match
 }
@@ -4417,6 +4432,10 @@ fn is_manifold_boundary_loop<T: Scalar, const N: usize>(
 ) -> bool
 where
     Point<T, N>: PointOps<T, N>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     if loop_segments.len() < 3 {
         return false;
@@ -4448,7 +4467,10 @@ where
 fn quantize_point<T: Scalar, const N: usize>(point: &Point<T, N>) -> String
 where
     Point<T, N>: PointOps<T, N>,
-    T: Clone,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
 {
     let tolerance = T::point_merge_threshold(); // Use point-specific threshold
 
@@ -4461,7 +4483,7 @@ where
     let quantized_coords: Vec<i64> = (0..N)
         .map(|i| {
             let coord = &point[i];
-            let ratio = coord.clone() / tolerance.clone();
+            let ratio = coord / &tolerance;
             let ratio_f64 = ratio.to_f64().unwrap();
             ratio_f64.round() as i64
         })
@@ -4717,8 +4739,8 @@ where
     //     min_split_distance.to_f64().unwrap()
     // );
 
-    edge_length > &min_edge_length.clone()
-        && split_point_distance > &min_split_distance.clone()
+    edge_length > &min_edge_length
+        && split_point_distance > &min_split_distance
         && (edge_length - &split_point_distance) > min_split_distance
 }
 
@@ -4792,8 +4814,8 @@ where
     }
 
     let inv_denom = T::one() / denom;
-    let u = (&dot11 * &dot02 - &dot01 * &dot12) * inv_denom.clone();
-    let v = (&dot00 * &dot12 - &dot01 * &dot02) * inv_denom;
+    let u = &(&dot11 * &dot02 - &dot01 * &dot12) * &inv_denom;
+    let v = &(&dot00 * &dot12 - &dot01 * &dot02) * &inv_denom;
 
     // **OPTIMIZED: Tolerance-based boundary check**
     let eps = T::tolerance();
