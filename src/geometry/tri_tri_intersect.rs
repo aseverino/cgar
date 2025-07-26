@@ -27,7 +27,7 @@ use std::{
 
 use crate::{
     geometry::{
-        Point2, Point3, Segment3, Vector3,
+        Point2,
         point::{Point, PointOps},
         segment::Segment,
         spatial_element::SpatialElement,
@@ -134,16 +134,22 @@ where
 }
 
 /// Project a 3D triangle onto `axis`, returning (min,max).
-fn project_3d_triangle<T>(axis: &Vector3<T>, a: &Point3<T>, b: &Point3<T>, c: &Point3<T>) -> (T, T)
+fn project_3d_triangle<T: Scalar, const N: usize>(
+    axis: &Vector<T, N>,
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    c: &Point<T, N>,
+) -> (T, T)
 where
-    T: Scalar,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    let p = |p: &Point3<T>| {
-        let v: Vector3<T> = p.as_vector().into();
+    let p = |p: &Point<T, N>| {
+        let v: Vector<T, N> = p.as_vector().into();
         v.dot(axis)
     };
     let p0 = p(a);
@@ -167,13 +173,14 @@ where
     (min, max)
 }
 
-fn coplanar_tri_tri_intersection<T>(
-    p: &[Point3<T>; 3],
-    q: &[Point3<T>; 3],
-    n: &Vector3<T>,
-) -> Option<Segment3<T>>
+fn coplanar_tri_tri_intersection<T: Scalar, const N: usize>(
+    p: &[&Point<T, N>; 3],
+    q: &[&Point<T, N>; 3],
+    n: &Vector<T, N>,
+) -> Option<Segment<T, N>>
 where
-    T: Scalar,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -182,20 +189,20 @@ where
     let (i0, i1, drop) = coplanar_axes(n);
 
     // 2) build 2D points
-    let to2d = |p: &Point3<T>| project_to_2d(p, i0, i1);
+    let to2d = |p: &Point<T, N>| project_to_2d(p, i0, i1);
     let t1 = [to2d(&p[2]), to2d(&p[0]), to2d(&p[1])];
     let t2 = [to2d(&q[2]), to2d(&q[0]), to2d(&q[1])];
 
     // 3) collect vertices of one triangle inside the other
-    let mut pts: Vec<Point3<T>> = Vec::new();
+    let mut pts: Vec<Point<T, N>> = Vec::new();
     for point in &t1 {
         if point_in_tri_2d(point, &t2) {
-            pts.push(back_project_to_3d(point, i0, i1, drop, &p[2]));
+            pts.push(back_project_to_3d(point, i0, i1, drop, p[2]));
         }
     }
     for point in &t2 {
         if point_in_tri_2d(point, &t1) {
-            pts.push(back_project_to_3d(point, i0, i1, drop, &q[2]));
+            pts.push(back_project_to_3d(point, i0, i1, drop, q[2]));
         }
     }
 
@@ -221,7 +228,7 @@ where
 
     // 5) dedupe
     let mut set = HashSet::new();
-    let mut uniq: Vec<Point3<T>> = Vec::new();
+    let mut uniq: Vec<Point<T, N>> = Vec::new();
     for p in pts {
         if set.insert(p.clone()) {
             uniq.push(p)
@@ -239,17 +246,21 @@ where
 /// Computes the segment where triangles T1=(p0,p1,p2) and T2=(q0,q1,q2) intersect.
 /// Returns `None` if they don’t intersect, or `Some((a,b))` where `a` and `b` are
 /// the two endpoints of the intersection segment (possibly `a==b` if they touch at a point).
-pub fn tri_tri_intersection<T>(p: &[Point3<T>; 3], q: &[Point3<T>; 3]) -> Option<Segment3<T>>
+pub fn tri_tri_intersection<T: Scalar, const N: usize>(
+    p: &[&Point<T, N>; 3],
+    q: &[&Point<T, N>; 3],
+) -> Option<Segment<T, N>>
 where
-    T: Scalar,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
     // 1) Build plane of T2: n2·x + d2 = 0
-    let v01 = (&q[0] - &q[2]).as_vector();
-    let v02 = (&q[1] - &q[2]).as_vector();
+    let v01 = (q[0] - q[2]).as_vector();
+    let v02 = (q[1] - q[2]).as_vector();
     let n2 = v01.cross(&v02);
     let d2 = -n2.dot(&q[2].as_vector().into());
 
@@ -275,8 +286,8 @@ where
     }
 
     // 3) Build plane of T1:
-    let u01 = (&p[0] - &p[2]).as_vector();
-    let u02 = (&p[1] - &p[2]).as_vector();
+    let u01 = (p[0] - p[2]).as_vector();
+    let u02 = (p[1] - p[2]).as_vector();
     let n1 = u01.cross(&u02);
     let d1 = -n1.dot(&p[2].as_vector().into());
 
@@ -315,9 +326,15 @@ where
 
 /// Intersect the segment [a,b] against plane (n·x + d = 0).
 /// Returns `Some(Point3)` if it crosses or touches, else `None`.
-fn intersect_edge_plane<T>(a: &Point3<T>, b: &Point3<T>, n: &Point3<T>, d: &T) -> Option<Point3<T>>
+fn intersect_edge_plane<T: Scalar, const N: usize>(
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    n: &Point<T, N>,
+    d: &T,
+) -> Option<Point<T, N>>
 where
-    T: Scalar,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -353,9 +370,15 @@ where
 
 /// Returns true if `p` lies inside triangle `(a,b,c)` on the plane with normal `n`.
 /// We use barycentric coordinates in 3D.
-fn point_in_tri<T>(p: &Point3<T>, a: &Point3<T>, b: &Point3<T>, c: &Point3<T>) -> bool
+fn point_in_tri<T: Scalar, const N: usize>(
+    p: &Point<T, N>,
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    c: &Point<T, N>,
+) -> bool
 where
-    T: Scalar,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -383,7 +406,7 @@ where
 }
 
 /// Given a normal, return the indices of the two axes to keep (largest dropped).
-fn coplanar_axes<T: Scalar>(n: &Vector3<T>) -> (usize, usize, usize) {
+fn coplanar_axes<T: Scalar, const N: usize>(n: &Vector<T, N>) -> (usize, usize, usize) {
     let na = [n[0].abs(), n[1].abs(), n[2].abs()];
     let (i0, i1, drop) = if na[0] > na[1] && na[0] > na[2] {
         (1, 2, 0)
@@ -396,22 +419,22 @@ fn coplanar_axes<T: Scalar>(n: &Vector3<T>) -> (usize, usize, usize) {
 }
 
 /// Project a 3D point onto a 2D plane using the provided axes.
-fn project_to_2d<T: Scalar>(p: &Point3<T>, i0: usize, i1: usize) -> Point2<T> {
+fn project_to_2d<T: Scalar, const N: usize>(p: &Point<T, N>, i0: usize, i1: usize) -> Point2<T> {
     Point2::from_vals([p[i0].clone(), p[i1].clone()])
 }
 
 /// Back-project a 2D point into 3D, using a reference 3D point for the dropped axis.
-fn back_project_to_3d<T: Scalar>(
+fn back_project_to_3d<T: Scalar, const N: usize>(
     p: &Point2<T>,
     i0: usize,
     i1: usize,
     drop: usize,
-    reference: &Point3<T>,
-) -> Point3<T>
+    reference: &Point<T, N>,
+) -> Point<T, N>
 where
-    Point3<T>: SpatialElement<T, 3>,
+    Point<T, N>: SpatialElement<T, N>,
 {
-    let mut coords = Point3::zero();
+    let mut coords = Point::<T, N>::zero();
     coords[i0] = p.coords[0].clone();
     coords[i1] = p.coords[1].clone();
     coords[drop] = reference[drop].clone();

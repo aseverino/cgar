@@ -2427,31 +2427,19 @@ where
             tree_b.query(&a.face_aabb(fa), &mut candidates);
 
             let pa_idx = a.face_vertices(fa);
-            let pa_vec: Vec<Point<T, 3>> = pa_idx
+            let pa_vec: Vec<&Point<T, N>> = pa_idx
                 .into_iter()
-                .map(|vi| {
-                    Point::<T, 3>::from_vals([
-                        a.vertices[vi].position[0].clone(),
-                        a.vertices[vi].position[1].clone(),
-                        a.vertices[vi].position[2].clone(),
-                    ])
-                })
+                .map(|vi| &a.vertices[vi].position)
                 .collect();
-            let pa: [Point<T, 3>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
+            let pa: [&Point<T, N>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
 
             for &fb in &candidates {
                 let pb_idx = b.face_vertices(*fb);
-                let pb_vec: Vec<Point<T, 3>> = pb_idx
+                let pb_vec: Vec<&Point<T, N>> = pb_idx
                     .into_iter()
-                    .map(|vi| {
-                        Point::<T, 3>::from_vals([
-                            b.vertices[vi].position[0].clone(),
-                            b.vertices[vi].position[1].clone(),
-                            b.vertices[vi].position[2].clone(),
-                        ])
-                    })
+                    .map(|vi| &b.vertices[vi].position)
                     .collect();
-                let pb: [Point<T, 3>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
+                let pb: [&Point<T, N>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
 
                 if let Some(s) = tri_tri_intersection(&pa, &pb) {
                     let segment_n = Segment::<T, N>::new(
@@ -2460,74 +2448,24 @@ where
                     );
                     if segment_n.length().is_positive() {
                         intersection_segments_a.push(IntersectionSegment::new(
-                            segment_n,
+                            segment_n.clone(),
                             [fa, usize::MAX],
                             [*fb, usize::MAX],
                         ));
-                    }
-                }
-            }
-        }
-        println!(
-            "A Intersection segments collected in {:.2?}",
-            start.elapsed()
-        );
-
-        let start = Instant::now();
-        for fb in 0..b.faces.len() {
-            let mut candidates = Vec::new();
-            tree_a.query(&b.face_aabb(fb), &mut candidates);
-
-            let pa_idx = b.face_vertices(fb);
-            let pa_vec: Vec<Point<T, 3>> = pa_idx
-                .into_iter()
-                .map(|vi| {
-                    Point::<T, 3>::from_vals([
-                        b.vertices[vi].position[0].clone(),
-                        b.vertices[vi].position[1].clone(),
-                        b.vertices[vi].position[2].clone(),
-                    ])
-                })
-                .collect();
-            let pa: [Point<T, 3>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
-
-            for &fa in &candidates {
-                let pb_idx = a.face_vertices(*fa);
-                let pb_vec: Vec<Point<T, 3>> = pb_idx
-                    .into_iter()
-                    .map(|vi| {
-                        Point::<T, 3>::from_vals([
-                            a.vertices[vi].position[0].clone(),
-                            a.vertices[vi].position[1].clone(),
-                            a.vertices[vi].position[2].clone(),
-                        ])
-                    })
-                    .collect();
-                let pb: [Point<T, 3>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
-
-                if let Some(s) = tri_tri_intersection(&pa, &pb) {
-                    let segment_n = Segment::<T, N>::new(
-                        &Point::<T, N>::from_vals(from_fn(|i| s.a[i].clone())),
-                        &Point::<T, N>::from_vals(from_fn(|i| s.b[i].clone())),
-                    );
-                    if segment_n.length().is_positive() {
                         intersection_segments_b.push(IntersectionSegment::new(
                             segment_n,
-                            [fb, usize::MAX],
-                            [*fa, usize::MAX],
+                            [*fb, usize::MAX],
+                            [fa, usize::MAX],
                         ));
                     }
                 }
             }
         }
-        println!(
-            "A Intersection segments collected in {:.2?}",
-            start.elapsed()
-        );
+        println!("Intersection segments collected in {:.2?}", start.elapsed());
 
         let start = Instant::now();
-        filter_coplanar_intersections(&mut intersection_segments_a, &a, &b);
-        filter_coplanar_intersections(&mut intersection_segments_b, &b, &a);
+        filter_coplanar_intersections(&mut intersection_segments_a);
+        filter_coplanar_intersections(&mut intersection_segments_b);
         println!("Coplanar intersections filtered in {:.2?}", start.elapsed());
 
         // 2. Link intersection segments into chains/graphs
@@ -2897,8 +2835,6 @@ where
 
 fn filter_coplanar_intersections<T: Scalar, const N: usize>(
     segments: &mut Vec<IntersectionSegment<T, N>>,
-    _mesh_a: &Mesh<T, N>,
-    _mesh_b: &Mesh<T, N>,
 ) where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
@@ -2908,27 +2844,12 @@ fn filter_coplanar_intersections<T: Scalar, const N: usize>(
         + Div<&'a T, Output = T>,
 {
     let tolerance = T::tolerance();
-    let initial_count = segments.len();
 
     // Only filter truly degenerate segments
     segments.retain(|seg| {
         let length = seg.segment.length();
-        if length < tolerance {
-            // println!(
-            //     "Filtered degenerate segment: {:?} -> {:?}",
-            //     seg.segment.a, seg.segment.b
-            // );
-            false
-        } else {
-            true
-        }
+        if length < tolerance { false } else { true }
     });
-
-    // println!(
-    //     "Filtered intersections: {} -> {} segments",
-    //     initial_count,
-    //     segments.len()
-    // );
 }
 
 fn traverse_chain<T: Scalar, const N: usize>(
