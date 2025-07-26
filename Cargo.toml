@@ -7,3 +7,10 @@ edition = "2024"
 num-traits = "0.2.19"
 rand = "0.9.1"
 rug = "1.24"
+
+[profile.release]
+opt-level = 3          # Maximum optimization
+lto = true             # Link-time optimization
+codegen-units = 1      # Better optimization at cost of compile time
+panic = 'abort'        # Smaller binaries, faster execution
+strip = true           # Remove debug symbols
