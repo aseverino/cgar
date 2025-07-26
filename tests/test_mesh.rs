@@ -856,6 +856,7 @@ fn union_boolean() {
 
 #[test]
 fn difference_large_boolean() {
+    unsafe { std::env::set_var("RUST_LIB_BACKTRACE", "1") };
     let sphere =
         read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
     let mut other_sphere =

@@ -57,6 +57,10 @@ impl Scalar for CgarF64 {
     fn area_degeneracy_threshold() -> Self {
         CgarF64(1e-10) // Remove faces smaller than this
     }
+
+    fn query_tolerance() -> Self {
+        CgarF64(1e-10)
+    }
 }
 
 impl<'a, 'b> Add<&'b CgarF64> for &'a CgarF64 {

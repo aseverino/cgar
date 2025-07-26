@@ -79,4 +79,6 @@ pub trait Scalar:
     fn edge_degeneracy_threshold() -> Self;
 
     fn area_degeneracy_threshold() -> Self;
+
+    fn query_tolerance() -> Self;
 }

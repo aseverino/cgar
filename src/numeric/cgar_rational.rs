@@ -57,6 +57,10 @@ impl Scalar for CgarRational {
     fn area_degeneracy_threshold() -> Self {
         CgarRational::from_num_den(1, 10000000) // Remove faces smaller than this
     }
+
+    fn query_tolerance() -> Self {
+        CgarRational::from_num_den(1, 100000)
+    }
 }
 
 impl<'a, 'b> Add<&'b CgarRational> for &'a CgarRational {

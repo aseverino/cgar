@@ -27,6 +27,7 @@ pub struct HalfEdge {
     pub next: usize,
     pub prev: usize,
     pub twin: usize,
+    pub removed: bool, // marks if the half-edge is removed
 }
 
 impl HalfEdge {
@@ -37,6 +38,7 @@ impl HalfEdge {
             next: usize::MAX,
             prev: usize::MAX,
             twin: usize::MAX,
+            removed: false,
         }
     }
 }

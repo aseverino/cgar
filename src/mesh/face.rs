@@ -23,10 +23,14 @@
 #[derive(Clone, Debug)]
 pub struct Face {
     pub half_edge: usize, // one of the edges bounding the face
+    pub removed: bool,
 }
 
 impl Face {
     pub fn new(half_edge: usize) -> Self {
-        Self { half_edge }
+        Self {
+            half_edge,
+            removed: false,
+        }
     }
 }
