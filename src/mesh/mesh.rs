@@ -241,6 +241,214 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         get_face_vertices_safe(self, f)
     }
 
+    /// Remove duplicate vertices and update all references
+    /// Returns the number of vertices removed
+    pub fn remove_duplicate_vertices(&mut self) -> usize
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        if self.vertices.is_empty() {
+            return 0;
+        }
+
+        let tolerance = T::point_merge_threshold();
+        let initial_count = self.vertices.len();
+
+        // Build spatial hash for efficient duplicate detection
+        let mut spatial_groups: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+
+        for (vertex_idx, vertex) in self.vertices.iter().enumerate() {
+            let hash_key = self.position_to_hash_key(&vertex.position);
+            spatial_groups.entry(hash_key).or_default().push(vertex_idx);
+        }
+
+        // Find duplicates within each spatial group
+        let mut vertex_mapping = (0..self.vertices.len()).collect::<Vec<_>>();
+        let mut duplicates = HashSet::new();
+
+        for group in spatial_groups.values() {
+            if group.len() < 2 {
+                continue;
+            }
+
+            // Check all pairs within the group
+            for i in 0..group.len() {
+                if duplicates.contains(&group[i]) {
+                    continue;
+                }
+
+                for j in (i + 1)..group.len() {
+                    if duplicates.contains(&group[j]) {
+                        continue;
+                    }
+
+                    let pos_i = &self.vertices[group[i]].position;
+                    let pos_j = &self.vertices[group[j]].position;
+
+                    if pos_i.distance_to(pos_j) <= tolerance {
+                        // Mark j as duplicate of i
+                        vertex_mapping[group[j]] = group[i];
+                        duplicates.insert(group[j]);
+                    }
+                }
+            }
+        }
+
+        if duplicates.is_empty() {
+            return 0;
+        }
+
+        // Create compacted vertex list and final mapping
+        let mut new_vertices = Vec::new();
+        let mut old_to_new = vec![usize::MAX; self.vertices.len()];
+
+        for (old_idx, vertex) in self.vertices.iter().enumerate() {
+            if !duplicates.contains(&old_idx) {
+                let new_idx = new_vertices.len();
+                old_to_new[old_idx] = new_idx;
+                new_vertices.push(vertex.clone());
+            }
+        }
+
+        // Update mapping for duplicates to point to their canonical vertex's new index
+        for &duplicate_idx in &duplicates {
+            let canonical_idx = vertex_mapping[duplicate_idx];
+            old_to_new[duplicate_idx] = old_to_new[canonical_idx];
+        }
+
+        // Update all half-edge vertex references
+        for half_edge in &mut self.half_edges {
+            if half_edge.removed {
+                continue;
+            }
+
+            let old_vertex = half_edge.vertex;
+            if old_vertex < old_to_new.len() {
+                if let Some(&new_vertex) = old_to_new.get(old_vertex) {
+                    if new_vertex != usize::MAX {
+                        half_edge.vertex = new_vertex;
+                    }
+                }
+            }
+        }
+
+        // Update vertex half-edge references
+        for vertex in &mut new_vertices {
+            if let Some(he_idx) = vertex.half_edge {
+                // Verify the half-edge still exists and is valid
+                if he_idx >= self.half_edges.len() || self.half_edges[he_idx].removed {
+                    vertex.half_edge = None;
+                }
+            }
+        }
+
+        // Rebuild edge map with new vertex indices
+        let mut new_edge_map = HashMap::new();
+        for (&(old_v1, old_v2), &he_idx) in &self.edge_map {
+            if old_v1 < old_to_new.len() && old_v2 < old_to_new.len() {
+                let new_v1 = old_to_new[old_v1];
+                let new_v2 = old_to_new[old_v2];
+
+                if new_v1 != usize::MAX && new_v2 != usize::MAX && new_v1 != new_v2 {
+                    // Only keep edges that don't become self-loops
+                    new_edge_map.insert((new_v1, new_v2), he_idx);
+                }
+            }
+        }
+
+        // Rebuild spatial hash with new vertex indices
+        let mut new_spatial_hash: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+        for (vertex_idx, vertex) in new_vertices.iter().enumerate() {
+            let hash_key = self.position_to_hash_key(&vertex.position);
+            new_spatial_hash
+                .entry(hash_key)
+                .or_default()
+                .push(vertex_idx);
+        }
+
+        // Update mesh data structures
+        self.vertices = new_vertices;
+        self.edge_map = new_edge_map;
+        self.vertex_spatial_hash = new_spatial_hash;
+
+        // Remove any degenerate faces that may have been created
+        // self.remove_degenerate_faces();
+
+        initial_count - self.vertices.len()
+    }
+
+    /// Remove faces that have become degenerate due to vertex merging
+    fn remove_degenerate_faces(&mut self)
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let mut faces_to_remove = Vec::new();
+
+        for (face_idx, face) in self.faces.iter().enumerate() {
+            if face.removed {
+                continue;
+            }
+
+            if let Some(face_vertices) = self.face_vertices_safe(face_idx) {
+                // Check for duplicate vertices in face
+                let mut unique_vertices = HashSet::new();
+                let mut is_degenerate = false;
+
+                for &vertex in &face_vertices {
+                    if !unique_vertices.insert(vertex) {
+                        is_degenerate = true;
+                        break;
+                    }
+                }
+
+                // Check for insufficient vertices
+                if face_vertices.len() < 3 || is_degenerate {
+                    faces_to_remove.push(face_idx);
+                    continue;
+                }
+
+                // Check for geometric degeneracy
+                if face_vertices.len() == 3 {
+                    let v0 = &self.vertices[face_vertices[0]].position;
+                    let v1 = &self.vertices[face_vertices[1]].position;
+                    let v2 = &self.vertices[face_vertices[2]].position;
+
+                    if !is_triangle_non_degenerate(v0, v1, v2) {
+                        faces_to_remove.push(face_idx);
+                    }
+                }
+            } else {
+                faces_to_remove.push(face_idx);
+            }
+        }
+
+        // Mark degenerate faces as removed
+        for &face_idx in &faces_to_remove {
+            self.faces[face_idx].removed = true;
+        }
+
+        // Remove associated half-edges
+        for &face_idx in &faces_to_remove {
+            if let Some(half_edges) = get_face_half_edges_iterative(self, face_idx) {
+                for &he_idx in &half_edges {
+                    if he_idx < self.half_edges.len() {
+                        self.half_edges[he_idx].removed = true;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn remove_unused_vertices(&mut self) {
         // 1. Find used vertices
         let mut used = vec![false; self.vertices.len()];
@@ -2419,7 +2627,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         point_in_or_on_triangle(point, v0, v1, v2)
     }
 
-    pub fn filter_coplanar_intersections(segments: &mut Vec<IntersectionSegment<T, N>>)
+    pub fn filter_degenerate_segments(segments: &mut Vec<IntersectionSegment<T, N>>)
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,

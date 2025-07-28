@@ -223,8 +223,8 @@ where
         println!("Intersection segments collected in {:.2?}", start.elapsed());
 
         let start = Instant::now();
-        Mesh::filter_coplanar_intersections(&mut intersection_segments_a);
-        Mesh::filter_coplanar_intersections(&mut intersection_segments_b);
+        Mesh::filter_degenerate_segments(&mut intersection_segments_a);
+        Mesh::filter_degenerate_segments(&mut intersection_segments_b);
         println!("Coplanar intersections filtered in {:.2?}", start.elapsed());
 
         for seg_idx in 0..intersection_segments_a.len() {
@@ -360,6 +360,7 @@ where
             }
         }
 
+        result.remove_duplicate_vertices();
         result.remove_unused_vertices();
         result.remove_invalidated_faces();
         // result.build_boundary_loops();
