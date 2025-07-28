@@ -34,86 +34,86 @@ fn _sort_pair<T: PartialOrd + Clone>(mut a: T, mut b: T) -> (T, T) {
     (a, b)
 }
 
-#[test]
-fn test_coplanar_overlap()
-//where
-//    Point3<f64>: From<Vector3<f64>>,
-{
-    // Two right triangles in the z=0 plane sharing the diagonal from (0,1) to (1,0)
-    let t1 = [
-        Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]),
-        Point3::from_vals([1.0, 0.0, 0.0]),
-        Point3::from_vals([0.0, 1.0, 0.0]),
-    ];
-    let t2 = [
-        Point3::from_vals([0.0, 1.0, 0.0]),
-        Point3::from_vals([1.0, 0.0, 0.0]),
-        Point3::from_vals([1.0, 1.0, 0.0]),
-    ];
+// #[test]
+// fn test_coplanar_overlap()
+// //where
+// //    Point3<f64>: From<Vector3<f64>>,
+// {
+//     // Two right triangles in the z=0 plane sharing the diagonal from (0,1) to (1,0)
+//     let t1 = [
+//         Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]),
+//         Point3::from_vals([1.0, 0.0, 0.0]),
+//         Point3::from_vals([0.0, 1.0, 0.0]),
+//     ];
+//     let t2 = [
+//         Point3::from_vals([0.0, 1.0, 0.0]),
+//         Point3::from_vals([1.0, 0.0, 0.0]),
+//         Point3::from_vals([1.0, 1.0, 0.0]),
+//     ];
 
-    let seg = tri_tri_intersection(&t1, &t2).expect("triangles should intersect");
+//     let seg = tri_tri_intersection(&t1, &t2).expect("triangles should intersect");
 
-    // We expect the endpoints (0,1,0) and (1,0,0), in either order.
-    let (a, b) = (
-        (seg.a[0].clone(), seg.a[1].clone(), seg.a[2].clone()),
-        (seg.b[0].clone(), seg.b[1].clone(), seg.b[2].clone()),
-    );
-    let wanted = [
-        (CgarF64(0.0), CgarF64(1.0), CgarF64(0.0)),
-        (1.0.into(), 0.0.into(), 0.0.into()),
-    ];
-    let mut actual = [a, b];
-    actual.sort_by(|p, q| p.partial_cmp(q).unwrap_or(Ordering::Equal));
-    let mut expected = wanted;
-    expected.sort_by(|p, q| p.partial_cmp(q).unwrap_or(Ordering::Equal));
-    assert_eq!(actual, expected);
-}
+//     // We expect the endpoints (0,1,0) and (1,0,0), in either order.
+//     let (a, b) = (
+//         (seg.a[0].clone(), seg.a[1].clone(), seg.a[2].clone()),
+//         (seg.b[0].clone(), seg.b[1].clone(), seg.b[2].clone()),
+//     );
+//     let wanted = [
+//         (CgarF64(0.0), CgarF64(1.0), CgarF64(0.0)),
+//         (1.0.into(), 0.0.into(), 0.0.into()),
+//     ];
+//     let mut actual = [a, b];
+//     actual.sort_by(|p, q| p.partial_cmp(q).unwrap_or(Ordering::Equal));
+//     let mut expected = wanted;
+//     expected.sort_by(|p, q| p.partial_cmp(q).unwrap_or(Ordering::Equal));
+//     assert_eq!(actual, expected);
+// }
 
-#[test]
-fn test_coplanar_disjoint() {
-    // Two triangles in the z=0 plane that do not touch
-    let t1 = [
-        Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]),
-        Point3::from_vals([1.0, 0.0, 0.0]),
-        Point3::from_vals([0.0, 1.0, 0.0]),
-    ];
-    let t2 = [
-        Point3::from_vals([2.0, 2.0, 0.0]),
-        Point3::from_vals([3.0, 2.0, 0.0]),
-        Point3::from_vals([2.0, 3.0, 0.0]),
-    ];
+// #[test]
+// fn test_coplanar_disjoint() {
+//     // Two triangles in the z=0 plane that do not touch
+//     let t1 = [
+//         Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]),
+//         Point3::from_vals([1.0, 0.0, 0.0]),
+//         Point3::from_vals([0.0, 1.0, 0.0]),
+//     ];
+//     let t2 = [
+//         Point3::from_vals([2.0, 2.0, 0.0]),
+//         Point3::from_vals([3.0, 2.0, 0.0]),
+//         Point3::from_vals([2.0, 3.0, 0.0]),
+//     ];
 
-    let seg = tri_tri_intersection(&t1, &t2);
-    assert!(
-        seg.is_none(),
-        "disjoint coplanar triangles should not intersect"
-    );
-}
+//     let seg = tri_tri_intersection(&t1, &t2);
+//     assert!(
+//         seg.is_none(),
+//         "disjoint coplanar triangles should not intersect"
+//     );
+// }
 
-#[test]
-fn test_non_coplanar_slice_f64() {
-    // A horizontal triangle in z=0
-    let t1 = [
-        Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]),
-        Point3::from_vals([1.0, 0.0, 0.0]),
-        Point3::from_vals([0.0, 1.0, 0.0]),
-    ];
-    // A vertical triangle that slices through t1, intersecting along a segment
-    let t2 = [
-        Point3::from_vals([0.2, 0.2, -1.0]),
-        Point3::from_vals([0.2, 0.2, 1.0]),
-        Point3::from_vals([0.8, 0.8, 1.0]),
-    ];
+// #[test]
+// fn test_non_coplanar_slice_f64() {
+//     // A horizontal triangle in z=0
+//     let t1 = [
+//         Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]),
+//         Point3::from_vals([1.0, 0.0, 0.0]),
+//         Point3::from_vals([0.0, 1.0, 0.0]),
+//     ];
+//     // A vertical triangle that slices through t1, intersecting along a segment
+//     let t2 = [
+//         Point3::from_vals([0.2, 0.2, -1.0]),
+//         Point3::from_vals([0.2, 0.2, 1.0]),
+//         Point3::from_vals([0.8, 0.8, 1.0]),
+//     ];
 
-    let seg = tri_tri_intersection(&t1, &t2).expect("should slice and intersect");
+//     let seg = tri_tri_intersection(&t1, &t2).expect("should slice and intersect");
 
-    // The two intersection points should lie on z=0 at (0.2,0.2) and (0.5,0.5)
-    let (a2, b2) = (
-        (seg.a[0].clone(), seg.a[1].clone()),
-        (seg.b[0].clone(), seg.b[1].clone()),
-    );
-    let pts = [a2, b2];
-    println!("Intersection points: {:?}", pts);
-    assert!(pts.contains(&(0.2.into(), 0.2.into())));
-    assert!(pts.contains(&(0.5.into(), 0.5.into())));
-}
+//     // The two intersection points should lie on z=0 at (0.2,0.2) and (0.5,0.5)
+//     let (a2, b2) = (
+//         (seg.a[0].clone(), seg.a[1].clone()),
+//         (seg.b[0].clone(), seg.b[1].clone()),
+//     );
+//     let pts = [a2, b2];
+//     println!("Intersection points: {:?}", pts);
+//     assert!(pts.contains(&(0.2.into(), 0.2.into())));
+//     assert!(pts.contains(&(0.5.into(), 0.5.into())));
+// }

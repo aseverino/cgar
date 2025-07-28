@@ -23,10 +23,11 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
+use cgar::boolean::boolean::{BooleanImpl, BooleanOp};
 use cgar::geometry::spatial_element::SpatialElement;
 use cgar::geometry::{Aabb, Point2, Point3, Vector3};
 use cgar::io::obj::{read_obj, write_obj};
-use cgar::mesh::mesh::{BooleanImpl, BooleanOp, Mesh};
+use cgar::mesh::mesh::Mesh;
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::numeric::cgar_rational::CgarRational;
 use cgar::operations::Abs;
