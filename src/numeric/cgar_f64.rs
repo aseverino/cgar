@@ -45,6 +45,11 @@ impl Scalar for CgarF64 {
         return Self(EPS);
     }
 
+    fn tolerance_squared() -> Self {
+        let tol = Self::tolerance();
+        CgarF64(tol.0 * tol.0)
+    }
+
     // CGAL-style: separate thresholds for different purposes
     fn point_merge_threshold() -> Self {
         CgarF64(1e-6)
@@ -60,6 +65,16 @@ impl Scalar for CgarF64 {
 
     fn query_tolerance() -> Self {
         CgarF64(1e-10)
+    }
+
+    fn query_tolerance_squared() -> Self {
+        let tol = Self::query_tolerance();
+        CgarF64(tol.0 * tol.0)
+    }
+
+    fn point_merge_threshold_squared() -> Self {
+        let tol = Self::point_merge_threshold();
+        CgarF64(tol.0 * tol.0)
     }
 }
 

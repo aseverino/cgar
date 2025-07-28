@@ -23,6 +23,7 @@
 use std::{
     collections::HashSet,
     ops::{Add, Div, Mul, Sub},
+    time::Instant,
 };
 
 use crate::{
@@ -149,7 +150,7 @@ where
         + Div<&'a T, Output = T>,
 {
     let p = |p: &Point<T, N>| {
-        let v: Vector<T, N> = p.as_vector().into();
+        let v: Vector<T, N> = p.as_vector();
         v.dot(axis)
     };
     let p0 = p(a);
@@ -207,16 +208,8 @@ where
     }
 
     // 4) edge-edge intersections in 2D
-    let edges1 = [
-        (t1[0].clone(), t1[1].clone()),
-        (t1[1].clone(), t1[2].clone()),
-        (t1[2].clone(), t1[0].clone()),
-    ];
-    let edges2 = [
-        (t2[0].clone(), t2[1].clone()),
-        (t2[1].clone(), t2[2].clone()),
-        (t2[2].clone(), t2[0].clone()),
-    ];
+    let edges1 = [(&t1[0], &t1[1]), (&t1[1], &t1[2]), (&t1[2], &t1[0])];
+    let edges2 = [(&t2[0], &t2[1]), (&t2[1], &t2[2]), (&t2[2], &t2[0])];
     for (a, b) in &edges1 {
         for (c, d) in &edges2 {
             if let Some(s) = segment_intersect_2d(a, b, c, d) {
@@ -262,12 +255,12 @@ where
     let v01 = (q[0] - q[2]).as_vector();
     let v02 = (q[1] - q[2]).as_vector();
     let n2 = v01.cross(&v02);
-    let d2 = -n2.dot(&q[2].as_vector().into());
+    let d2 = -n2.dot(&q[2].as_vector());
 
     // signed distances of p-verts to T2’s plane
-    let d_p0 = &n2.dot(&p[2].as_vector().into()) + &d2;
-    let d_p1 = &n2.dot(&p[0].as_vector().into()) + &d2;
-    let d_p2 = &n2.dot(&p[1].as_vector().into()) + &d2;
+    let d_p0 = &n2.dot(&p[2].as_vector()) + &d2;
+    let d_p1 = &n2.dot(&p[0].as_vector()) + &d2;
+    let d_p2 = &n2.dot(&p[1].as_vector()) + &d2;
 
     //  → Fall back for strictly co-planar
     if d_p0 == T::zero() && d_p1 == T::zero() && d_p2 == T::zero() {
@@ -278,7 +271,7 @@ where
     // 2) Now do the regular non-coplanar plane‐edge clipping:
     let mut pts = Vec::new();
     for (a, b) in [(&p[2], &p[0]), (&p[0], &p[1]), (&p[1], &p[2])] {
-        if let Some(ip) = intersect_edge_plane(&a, &b, &n2.clone().into(), &d2) {
+        if let Some(ip) = intersect_edge_plane(&a, &b, &n2.0, &d2) {
             if point_in_tri(&ip, &q[2], &q[0], &q[1]) {
                 pts.push(ip);
             }
@@ -289,11 +282,11 @@ where
     let u01 = (p[0] - p[2]).as_vector();
     let u02 = (p[1] - p[2]).as_vector();
     let n1 = u01.cross(&u02);
-    let d1 = -n1.dot(&p[2].as_vector().into());
+    let d1 = -n1.dot(&p[2].as_vector());
 
     // 4) Clip edges of T2 against T1’s plane:
     for (a, b) in [(&q[2], &q[0]), (&q[0], &q[1]), (&q[1], &q[2])] {
-        if let Some(ip) = intersect_edge_plane(&a, &b, &n1.clone().into(), &d1) {
+        if let Some(ip) = intersect_edge_plane(&a, &b, &n1.0, &d1) {
             if point_in_tri(&ip, &p[2], &p[0], &p[1]) {
                 pts.push(ip);
             }

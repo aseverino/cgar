@@ -45,6 +45,11 @@ impl Scalar for CgarRational {
         return 0.into(); // no tolerance for exact rational numbers
     }
 
+    fn tolerance_squared() -> Self {
+        let tol = Self::tolerance();
+        &tol * &tol
+    }
+
     // CGAL-style: separate thresholds for different purposes
     fn point_merge_threshold() -> Self {
         CgarRational::from_num_den(1, 1000000) // Merge points closer than this
@@ -60,6 +65,16 @@ impl Scalar for CgarRational {
 
     fn query_tolerance() -> Self {
         CgarRational::from_num_den(1, 100000)
+    }
+
+    fn query_tolerance_squared() -> Self {
+        let tol = Self::query_tolerance();
+        &tol * &tol
+    }
+
+    fn point_merge_threshold_squared() -> Self {
+        let tol = Self::point_merge_threshold();
+        &tol * &tol
     }
 }
 

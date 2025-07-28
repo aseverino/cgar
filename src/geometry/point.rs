@@ -40,6 +40,7 @@ pub trait PointOps<T: Scalar, const N: usize>: Sized {
     type Vector: VectorOps<T, N>;
 
     fn distance_to(&self, other: &Self) -> T;
+    fn distance_squared_to(&self, other: &Self) -> T;
     fn sub(&self, other: &Self) -> Self;
     fn as_vector(&self) -> Self::Vector;
     fn add_vector(&self, v: &Self::Vector) -> Self;
@@ -179,10 +180,14 @@ where
     type Vector = Vector<T, 2>;
 
     fn distance_to(&self, other: &Self) -> T {
+        (self.distance_squared_to(other)).sqrt()
+    }
+
+    fn distance_squared_to(&self, other: &Self) -> T {
         let a = (&self[0] - &other[0]).pow(2);
         let b = (&self[1] - &other[1]).pow(2);
 
-        (a + b).sqrt()
+        a + b
     }
 
     fn sub(&self, other: &Self) -> Self {
@@ -216,12 +221,16 @@ where
     type Vector = Vector<T, 3>;
 
     fn distance_to(&self, other: &Self) -> T {
+        (self.distance_squared_to(other)).sqrt()
+    }
+
+    fn distance_squared_to(&self, other: &Self) -> T {
         let a = (&self[0] - &other[0]).pow(2);
         let b = (&self[1] - &other[1]).pow(2);
         let c = (&self[2] - &other[2]).pow(2);
         let ab = a + b;
 
-        (ab + c).sqrt()
+        ab + c
     }
 
     fn sub(&self, other: &Self) -> Self {

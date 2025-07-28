@@ -73,6 +73,8 @@ pub trait Scalar:
 
     fn tolerance() -> Self;
 
+    fn tolerance_squared() -> Self;
+
     // CGAL-style: separate thresholds for different purposes
     fn point_merge_threshold() -> Self;
 
@@ -81,4 +83,8 @@ pub trait Scalar:
     fn area_degeneracy_threshold() -> Self;
 
     fn query_tolerance() -> Self;
+
+    fn query_tolerance_squared() -> Self;
+
+    fn point_merge_threshold_squared() -> Self;
 }
