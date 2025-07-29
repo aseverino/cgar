@@ -39,6 +39,14 @@ use crate::{
     operations::Zero,
 };
 
+#[derive(Clone, Debug)]
+pub enum TriTriIntersectionResult<T: Scalar, const N: usize> {
+    Proper(Segment<T, N>),
+    Coplanar(Segment<T, N>),
+    CoplanarPolygon(Vec<Segment<T, N>>),
+    None,
+}
+
 /// Return true if 2D point `p` lies inside (or on) the triangle `tri` = [(x0,y0),(x1,y1),(x2,y2)].
 /// Uses a barycentric‐coordinate test.
 fn point_in_tri_2d<T>(p: &Point2<T>, tri: &[Point2<T>; 3]) -> bool
@@ -55,13 +63,15 @@ where
     let (x2, y2) = (&tri[2].coords[0], &tri[2].coords[1]);
     // Compute barycentric coords
     let denom = &(&(y1 - y2) * &(x0 - x2)) + &(&(x2 - x1) * &(y0 - y2));
-    if denom == T::zero() {
+    if denom.is_zero() {
         // degenerate triangle
         return false;
     }
     let u = &(&(&(y1 - y2) * &(x - &x2)) + &(&(x2 - x1) * &(y - &y2))) / &denom;
     let v = &(&(&(y2 - y0) * &(x - &x2)) + &(&(x0 - x2) * &(y - &y2))) / &denom;
-    u >= T::zero() && v >= T::zero() && (&u + &v) <= T::one()
+    u.is_positive_or_zero()
+        && v.is_positive_or_zero()
+        && ((&u + &v) - T::one()).is_negative_or_zero()
 }
 
 /// If segments [a→b] and [c→d] intersect in 2D, return the intersection point.
@@ -178,7 +188,7 @@ fn coplanar_tri_tri_intersection<T: Scalar, const N: usize>(
     p: &[&Point<T, N>; 3],
     q: &[&Point<T, N>; 3],
     n: &Vector<T, N>,
-) -> Option<Segment<T, N>>
+) -> TriTriIntersectionResult<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
@@ -227,13 +237,108 @@ where
             uniq.push(p)
         }
     }
-    if uniq.len() == 2 {
-        Some(Segment::new(&uniq[0], &uniq[1]))
-    } else if uniq.len() == 1 {
-        Some(Segment::new(&uniq[0], &uniq[0]))
-    } else {
-        None
+
+    match uniq.len() {
+        2 => TriTriIntersectionResult::Coplanar(Segment::new(&uniq[0], &uniq[1])),
+        m if m >= 3 => {
+            // 1) project all uniq back to 2D
+            let to2d = |p: &Point<T, N>| project_to_2d(p, i0, i1);
+            let mut pts2d: Vec<Point2<T>> = uniq.iter().map(to2d).collect();
+            // 2) compute 2D convex hull indices (e.g. monotone‐chain)
+            let hull_idx = convex_hull_2d_indices(&mut pts2d);
+            // 3) turn hull edges back into 3D segments
+            let mut segs = Vec::with_capacity(hull_idx.len());
+            for w in 0..hull_idx.len() {
+                let i = hull_idx[w];
+                let j = hull_idx[(w + 1) % hull_idx.len()];
+                let a3 = back_project_to_3d(&pts2d[i], i0, i1, drop, p[2]);
+                let b3 = back_project_to_3d(&pts2d[j], i0, i1, drop, p[2]);
+                segs.push(Segment::new(&a3, &b3));
+            }
+            TriTriIntersectionResult::CoplanarPolygon(segs)
+        }
+        _ => TriTriIntersectionResult::None,
     }
+}
+
+pub fn convex_hull_2d_indices<T>(pts: &Vec<Point2<T>>) -> Vec<usize>
+where
+    T: Scalar,
+    Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    let n = pts.len();
+    if n < 3 {
+        return (0..n).collect();
+    }
+
+    // 1) sort indices by (x, then y)
+    let mut idxs: Vec<usize> = (0..n).collect();
+    idxs.sort_by(|&i, &j| {
+        let xi = &pts[i].coords[0];
+        let xj = &pts[j].coords[0];
+        xi.partial_cmp(xj)
+            .unwrap()
+            .then_with(|| (&pts[i].coords[1]).partial_cmp(&pts[j].coords[1]).unwrap())
+    });
+
+    // 2) build lower hull
+    let mut lower = Vec::new();
+    for &i in &idxs {
+        while lower.len() >= 2 {
+            let j = lower[lower.len() - 2];
+            let k = lower[lower.len() - 1];
+            let pts_k: &Point<T, 2> = &pts[k];
+            let pts_j: &Point<T, 2> = &pts[j];
+            // cross((pts[k] - pts[j]), (pts[i] - pts[j]))
+            let cross = {
+                let x1 = &pts_k.coords[0] - &pts_j.coords[0];
+                let y1 = &pts_k.coords[1] - &pts_j.coords[1];
+                let x2 = &pts[i].coords[0] - &pts_j.coords[0];
+                let y2 = &pts[i].coords[1] - &pts_j.coords[1];
+                &x1 * &y2 - &y1 * &x2
+            };
+            if cross <= T::zero() {
+                lower.pop();
+            } else {
+                break;
+            }
+        }
+        lower.push(i);
+    }
+
+    // 3) build upper hull
+    let mut upper = Vec::new();
+    for &i in idxs.iter().rev() {
+        while upper.len() >= 2 {
+            let j = upper[upper.len() - 2];
+            let k = upper[upper.len() - 1];
+            let pts_k: &Point<T, 2> = &pts[k];
+            let pts_j: &Point<T, 2> = &pts[j];
+            let cross = {
+                let x1 = &pts_k.coords[0] - &pts_j.coords[0];
+                let y1 = &pts_k.coords[1] - &pts_j.coords[1];
+                let x2 = &pts[i].coords[0] - &pts_j.coords[0];
+                let y2 = &pts[i].coords[1] - &pts_j.coords[1];
+                &x1 * &y2 - &y1 * &x2
+            };
+            if cross <= T::zero() {
+                upper.pop();
+            } else {
+                break;
+            }
+        }
+        upper.push(i);
+    }
+
+    // 4) concatenate, dropping the duplicate endpoints
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    lower
 }
 
 /// Computes the segment where triangles T1=(p0,p1,p2) and T2=(q0,q1,q2) intersect.
@@ -242,7 +347,7 @@ where
 pub fn tri_tri_intersection<T: Scalar, const N: usize>(
     p: &[&Point<T, N>; 3],
     q: &[&Point<T, N>; 3],
-) -> Option<Segment<T, N>>
+) -> TriTriIntersectionResult<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
@@ -257,14 +362,13 @@ where
     let n2 = v01.cross(&v02);
     let d2 = -n2.dot(&q[2].as_vector());
 
-    // signed distances of p-verts to T2’s plane
+    // signed distances of p-verts to T2's plane
     let d_p0 = &n2.dot(&p[2].as_vector()) + &d2;
     let d_p1 = &n2.dot(&p[0].as_vector()) + &d2;
     let d_p2 = &n2.dot(&p[1].as_vector()) + &d2;
 
-    //  → Fall back for strictly co-planar
-    if d_p0 == T::zero() && d_p1 == T::zero() && d_p2 == T::zero() {
-        // Must handle co-planar intersection in 2D
+    // Fall back for strictly co-planar
+    if d_p0.is_zero() && d_p1.is_zero() && d_p2.is_zero() {
         return coplanar_tri_tri_intersection(p, q, &n2);
     }
 
@@ -309,11 +413,29 @@ where
         .cloned()
         .collect();
 
-    // 7) Return
+    // 6) Return based on unique points count
     match on_a.len() {
-        2 => Some(Segment::new(&on_a[0], &on_a[1])),
-        1 => Some(Segment::new(&on_a[0], &on_a[0])),
-        _ => None,
+        0 => TriTriIntersectionResult::None,
+        1 => TriTriIntersectionResult::Proper(Segment::new(&on_a[0], &on_a[0])),
+        2 => TriTriIntersectionResult::Proper(Segment::new(&on_a[0], &on_a[1])),
+        _ => {
+            // More than 2 points - select the two most distant points
+            let mut max_dist_sq = T::zero();
+            let mut best_pair = (0, 1);
+
+            for i in 0..on_a.len() {
+                for j in (i + 1)..on_a.len() {
+                    let diff = (&on_a[j] - &on_a[i]).as_vector();
+                    let dist_sq = diff.dot(&diff);
+                    if dist_sq > max_dist_sq {
+                        max_dist_sq = dist_sq;
+                        best_pair = (i, j);
+                    }
+                }
+            }
+
+            TriTriIntersectionResult::Proper(Segment::new(&uniq[best_pair.0], &uniq[best_pair.1]))
+        }
     }
 }
 
@@ -338,15 +460,15 @@ where
     let db = &n.as_vector().dot(&b.as_vector()) + &d;
 
     // if both on same side (and nonzero), no cross
-    if &da * &db > T::zero() {
+    if (&da * &db).is_positive() {
         return None;
     }
 
     // Check for division by zero
     let denominator = &da - &db;
-    if denominator == T::zero() {
+    if denominator.is_zero() {
         // Edge is parallel to plane, check if it lies on the plane
-        if da == T::zero() {
+        if da.is_zero() {
             return Some(a.clone()); // Both points are on the plane
         }
         return None;
@@ -395,7 +517,9 @@ where
     let v = &(&(&dot00 * &dot12) - &(&dot01 * &dot02)) * &inv_denom;
 
     // inside if u>=0, v>=0, u+v<=1
-    u >= T::zero() && v >= T::zero() && (&u + &v) <= T::one()
+    u.is_positive_or_zero()
+        && v.is_positive_or_zero()
+        && ((&u + &v) - T::one()).is_negative_or_zero()
 }
 
 /// Given a normal, return the indices of the two axes to keep (largest dropped).
@@ -417,7 +541,7 @@ fn project_to_2d<T: Scalar, const N: usize>(p: &Point<T, N>, i0: usize, i1: usiz
 }
 
 /// Back-project a 2D point into 3D, using a reference 3D point for the dropped axis.
-fn back_project_to_3d<T: Scalar, const N: usize>(
+pub fn back_project_to_3d<T: Scalar, const N: usize>(
     p: &Point2<T>,
     i0: usize,
     i1: usize,

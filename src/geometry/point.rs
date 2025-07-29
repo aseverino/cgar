@@ -44,6 +44,7 @@ pub trait PointOps<T: Scalar, const N: usize>: Sized {
     fn sub(&self, other: &Self) -> Self;
     fn as_vector(&self) -> Self::Vector;
     fn add_vector(&self, v: &Self::Vector) -> Self;
+    fn vector_to(&self, other: &Self) -> Self::Vector;
 }
 
 #[derive(Clone, Debug)]
@@ -208,6 +209,13 @@ where
             coords: [&self[0] + &v[0], &self[1] + &v[1]],
         }
     }
+
+    fn vector_to(&self, other: &Self) -> Self::Vector {
+        Vector(Point::from_vals([
+            &other[0] - &self[0],
+            &other[1] - &self[1],
+        ]))
+    }
 }
 
 impl<T> PointOps<T, 3> for Point<T, 3>
@@ -255,6 +263,14 @@ where
         Point {
             coords: [&self[0] + &v[0], &self[1] + &v[1], &self[2] + &v[2]],
         }
+    }
+
+    fn vector_to(&self, other: &Self) -> Self::Vector {
+        Vector(Point::from_vals([
+            &other[0] - &self[0],
+            &other[1] - &self[1],
+            &other[2] - &self[2],
+        ]))
     }
 }
 

@@ -800,8 +800,49 @@ fn make_cube(origin: [f64; 3], min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3>
     m
 }
 
+fn make_cube_exact(origin: [f64; 3], min: [f64; 3], max: [f64; 3]) -> Mesh<CgarRational, 3> {
+    let mut m = Mesh::new();
+    let [ox, oy, oz] = origin;
+    let [x0, y0, z0] = min;
+    let [x1, y1, z1] = max;
+
+    // eight corners
+    let v = [
+        m.add_vertex(Point3::from_vals([ox + x0, oy + y0, oz + z0])),
+        m.add_vertex(Point3::from_vals([ox + x1, oy + y0, oz + z0])),
+        m.add_vertex(Point3::from_vals([ox + x1, oy + y1, oz + z0])),
+        m.add_vertex(Point3::from_vals([ox + x0, oy + y1, oz + z0])),
+        m.add_vertex(Point3::from_vals([ox + x0, oy + y0, oz + z1])),
+        m.add_vertex(Point3::from_vals([ox + x1, oy + y0, oz + z1])),
+        m.add_vertex(Point3::from_vals([ox + x1, oy + y1, oz + z1])),
+        m.add_vertex(Point3::from_vals([ox + x0, oy + y1, oz + z1])),
+    ];
+
+    // each triple is a CCW triangle when viewed from outside
+    let faces = [
+        [0, 2, 1],
+        [0, 3, 2],
+        [4, 5, 6],
+        [4, 6, 7],
+        [0, 1, 5],
+        [0, 5, 4],
+        [1, 2, 6],
+        [1, 6, 5],
+        [2, 3, 7],
+        [2, 7, 6],
+        [3, 0, 4],
+        [3, 4, 7],
+    ];
+
+    for &f in &faces {
+        m.add_triangle(v[f[0]], v[f[1]], v[f[2]]);
+    }
+
+    m
+}
+
 #[test]
-fn difference_boolean() {
+fn difference_coplanar_boolean() {
     // 1) Big unit cube [0,1]^3
     let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     // let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
@@ -815,6 +856,8 @@ fn difference_boolean() {
     let result_1 = big_a.boolean(&small, BooleanOp::Difference);
     //let result_2 = big_a.boolean(&big_b, BooleanOp::Difference);
 
+    let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/big.obj");
+    let _ = write_obj(&small, "/mnt/v/cgar_meshes/small.obj");
     let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
     //let _ = write_obj(&result_2, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
 
@@ -823,6 +866,39 @@ fn difference_boolean() {
 
     //assert_eq!(result_2.vertices.len(), 22);
     //assert_eq!(result_2.faces.len(), 26);
+}
+
+#[test]
+fn difference_boolean_inexact() {
+    // 1) Big unit cube [0,1]^3
+    let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+    // 3) Perform boolean difference
+    let result_1 = big_a.boolean(&big_b, BooleanOp::Difference);
+
+    let _ = write_obj(
+        &result_1,
+        "/mnt/v/cgar_meshes/difference_boolean_inexact.obj",
+    );
+
+    assert_eq!(result_1.vertices.len(), 16);
+    assert_eq!(result_1.faces.len(), 26);
+}
+
+#[test]
+fn difference_boolean_exact() {
+    // 1) Big unit cube [0,1]^3
+    let big_a = make_cube_exact([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let big_b = make_cube_exact([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+    // 3) Perform boolean difference
+    let result_1 = big_a.boolean(&big_b, BooleanOp::Union);
+
+    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/difference_boolean_exact.obj");
+
+    assert_eq!(result_1.vertices.len(), 16);
+    assert_eq!(result_1.faces.len(), 26);
 }
 
 #[test]
@@ -849,7 +925,7 @@ fn union_boolean() {
     // 3) Perform boolean difference
     let result_1 = big_a.boolean(&big_b, BooleanOp::Union);
 
-    // let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
+    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
 
     assert_eq!(result_1.vertices.len(), 28);
     assert_eq!(result_1.faces.len(), 38);

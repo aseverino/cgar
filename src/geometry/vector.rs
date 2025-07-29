@@ -41,6 +41,7 @@ where
     fn dot(&self, other: &Self) -> T;
     fn cross(&self, other: &Self) -> Self::Cross;
     fn norm(&self) -> T;
+    fn norm_squared(&self) -> T;
     fn normalized(&self) -> Self;
     fn scale(&self, s: &T) -> Self;
 }
@@ -168,7 +169,11 @@ where
     }
 
     fn norm(&self) -> T {
-        (&(&self[0] * &self[0]) + &(&self[0] * &self[0])).sqrt()
+        self.norm_squared().sqrt()
+    }
+
+    fn norm_squared(&self) -> T {
+        &(&self[0] * &self[0]) + &(&self[1] * &self[1])
     }
 
     fn normalized(&self) -> Self {
@@ -204,7 +209,11 @@ where
     }
 
     fn norm(&self) -> T {
-        (&(&self[0] * &self[0]) + &(&self[1] * &self[1])).sqrt()
+        self.norm_squared().sqrt()
+    }
+
+    fn norm_squared(&self) -> T {
+        &(&self[0] * &self[0]) + &(&self[1] * &self[1])
     }
 
     fn normalized(&self) -> Self {

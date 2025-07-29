@@ -23,6 +23,7 @@
 pub mod aabb;
 pub mod aabb_tree;
 pub mod intersection;
+pub mod plane;
 pub mod point;
 pub mod segment;
 pub mod spatial_element;

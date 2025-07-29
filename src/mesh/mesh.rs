@@ -23,18 +23,19 @@
 use crate::{
     geometry::{
         Aabb, AabbTree,
+        plane::Plane,
         point::{Point, PointOps},
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
-        tri_tri_intersect::tri_tri_intersection,
         vector::{Vector, VectorOps},
     },
-    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    numeric::scalar::Scalar,
     operations::Zero,
 };
 
 use super::{face::Face, half_edge::HalfEdge, vertex::Vertex};
 use core::panic;
+use smallvec::SmallVec;
 use std::convert::TryInto;
 use std::{
     array::from_fn,
@@ -49,12 +50,28 @@ pub struct FaceSplitMap {
     pub new_faces: Vec<usize>,
 }
 
+#[derive(Debug, Clone)]
 pub enum SplitResultKind {
     NoSplit,
     SplitFace,
     SplitEdge,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointInMeshResult {
+    Outside,
+    OnSurface,
+    Inside,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RayCastResult {
+    Outside,
+    OnSurface,
+    Inside,
+}
+
+#[derive(Debug, Clone)]
 pub struct SplitResult {
     pub kind: SplitResultKind,
     pub vertex: usize,
@@ -67,6 +84,8 @@ pub struct IntersectionSegment<T: Scalar, const N: usize> {
     pub original_face: usize,
     pub resulting_faces: [usize; 2],
     pub resulting_vertices_pair: [usize; 2], // indices of vertices on faces_a that this segment intersects
+    pub links: SmallVec<[usize; 2]>,
+    pub coplanar: bool,
 }
 
 impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
@@ -75,12 +94,15 @@ impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
         original_face: usize,
         resulting_faces: [usize; 2],
         resulting_vertices_pair: [usize; 2],
+        coplanar: bool,
     ) -> Self {
         Self {
             segment,
             original_face,
             resulting_faces,
             resulting_vertices_pair,
+            links: SmallVec::new(),
+            coplanar,
         }
     }
     pub fn new_default(segment: Segment<T, N>, original_face: usize) -> Self {
@@ -89,6 +111,7 @@ impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
             original_face,
             [usize::MAX, usize::MAX],
             [usize::MAX, usize::MAX],
+            false,
         )
     }
 }
@@ -118,11 +141,27 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
     }
 
+    pub fn plane_from_face(&self, face_idx: usize) -> Plane<T, N>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        let verts = self.face_vertices(face_idx); // [usize; 3]
+        let v0 = &self.vertices[verts[0]].position;
+        let v1 = &self.vertices[verts[1]].position;
+        let v2 = &self.vertices[verts[2]].position;
+
+        Plane::from_points(v0, v1, v2)
+    }
+
     pub fn build_robust_boundary_map(
         &self,
         intersection_segments: &[IntersectionSegment<T, N>],
-        loop_segments: &[Vec<usize>],
-    ) -> HashMap<usize, usize>
+    ) -> HashSet<(usize, usize)>
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
@@ -132,34 +171,49 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        let mut boundary_map = HashMap::new();
+        fn ordered(a: usize, b: usize) -> (usize, usize) {
+            if a < b { (a, b) } else { (b, a) }
+        }
 
-        // println!("Number of loop segments: {}", loop_segments.len());
+        let mut boundary_edges = HashSet::new();
 
-        // Mark all face pairs that have intersection segments between them
-        for loop_segs in loop_segments {
-            // println!("Processing loop with {} segments", loop_segs.len());
-            for &seg_idx in loop_segs {
-                if seg_idx < intersection_segments.len() {
-                    let seg = &intersection_segments[seg_idx];
+        for (seg_idx, seg) in intersection_segments.iter().enumerate() {
+            let face0 = self.find_valid_face(seg.resulting_faces[0], &seg.segment.a);
+            let face1 = self.find_valid_face(seg.resulting_faces[1], &seg.segment.b);
 
-                    let face_a_1 = self.find_valid_face(seg.resulting_faces[0], &seg.segment.a);
-                    let face_a_2 = self.find_valid_face(seg.resulting_faces[1], &seg.segment.b);
+            boundary_edges.insert(ordered(face0.unwrap(), face1.unwrap()));
 
-                    let face_a_1 = face_a_1.expect("Failed to find valid face A1");
-                    let face_a_2 = face_a_2.expect("Failed to find valid face A2");
+            for &linked_idx in &seg.links {
+                if linked_idx == seg_idx || linked_idx >= intersection_segments.len() {
+                    continue;
+                }
 
-                    boundary_map.insert(face_a_1, face_a_2);
-                    boundary_map.insert(face_a_2, face_a_1);
+                let linked = &intersection_segments[linked_idx];
+
+                let faces = [
+                    (
+                        seg.resulting_faces[0],
+                        linked.resulting_faces[0],
+                        &seg.segment.a,
+                        &linked.segment.a,
+                    ),
+                    (
+                        seg.resulting_faces[1],
+                        linked.resulting_faces[1],
+                        &seg.segment.b,
+                        &linked.segment.b,
+                    ),
+                ];
+
+                for (f0, f1, pa, pb) in faces {
+                    let fa = self.find_valid_face(f0, pa).unwrap_or(f0);
+                    let fb = self.find_valid_face(f1, pb).unwrap_or(f1);
+                    boundary_edges.insert(ordered(fa, fb));
                 }
             }
         }
 
-        // println!(
-        //     "Built robust boundary set with {} entries",
-        //     boundary_map.len()
-        // );
-        boundary_map
+        boundary_edges
     }
 
     pub fn build_face_adjacency_graph(&self) -> HashMap<usize, Vec<usize>> {
@@ -1216,7 +1270,11 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         loops
     }
 
-    pub fn point_in_mesh(&self, tree: &AabbTree<T, 3, Point<T, 3>, usize>, p: &Point<T, 3>) -> bool
+    pub fn point_in_mesh(
+        &self,
+        tree: &AabbTree<T, 3, Point<T, 3>, usize>,
+        p: &Point<T, 3>,
+    ) -> PointInMeshResult
     where
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
@@ -1225,6 +1283,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     {
         let mut inside_count = 0;
         let mut total_rays = 0;
+        let mut on_surface = false;
 
         let rays = vec![
             Vector::from_vals([T::one(), T::zero(), T::zero()]),
@@ -1236,15 +1295,29 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         ];
 
         for r in rays {
-            if let Some(is_inside) = self.cast_ray(p, &r, tree) {
-                if is_inside {
+            match self.cast_ray(p, &r, tree) {
+                Some(RayCastResult::Inside) => {
                     inside_count += 1;
+                    total_rays += 1;
                 }
-                total_rays += 1;
+                Some(RayCastResult::OnSurface) => {
+                    on_surface = true;
+                    total_rays += 1;
+                }
+                Some(RayCastResult::Outside) => {
+                    total_rays += 1;
+                }
+                None => {}
             }
         }
 
-        total_rays > 0 && inside_count > total_rays / 2
+        if on_surface {
+            PointInMeshResult::OnSurface
+        } else if total_rays > 0 && inside_count > total_rays / 2 {
+            PointInMeshResult::Inside
+        } else {
+            PointInMeshResult::Outside
+        }
     }
 
     fn cast_ray(
@@ -1252,7 +1325,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         p: &Point<T, 3>,
         dir: &Vector<T, 3>,
         tree: &AabbTree<T, 3, Point<T, 3>, usize>,
-    ) -> Option<bool>
+    ) -> Option<RayCastResult>
     where
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
@@ -1260,6 +1333,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Div<&'a T, Output = T>,
     {
         let mut hits: Vec<T> = Vec::new();
+        let mut touches_surface = false;
 
         // Create ray AABB for tree query
         let far_multiplier = T::from(1000.0);
@@ -1284,7 +1358,9 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             let v2 = &self.vertices[vs_idxs[2]].position;
 
             if let Some(t) = self.ray_triangle_intersection(&p.coords(), dir, [v0, v1, v2]) {
-                if t > T::tolerance() {
+                if t.abs() <= T::tolerance() {
+                    touches_surface = true;
+                } else if t > T::tolerance() {
                     hits.push(t);
                 }
             }
@@ -1296,20 +1372,33 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
         // Remove duplicates and count
         hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let mut filtered_hits = 0;
-        let mut last_t = None;
 
-        for t in hits {
-            if last_t
-                .as_ref()
-                .map_or(true, |lt: &T| (&t - &lt).abs() > T::tolerance())
-            {
-                filtered_hits += 1;
-                last_t = Some(t);
+        if touches_surface {
+            Some(RayCastResult::OnSurface)
+        } else if !hits.is_empty() {
+            // Deduplicate and count intersections (same logic as before)
+            hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let mut filtered_hits = 0;
+            let mut last_t = None;
+
+            for t in hits {
+                if last_t
+                    .as_ref()
+                    .map_or(true, |lt: &T| (&t - &lt).abs() > T::tolerance())
+                {
+                    filtered_hits += 1;
+                    last_t = Some(t);
+                }
             }
-        }
 
-        Some(filtered_hits % 2 == 1)
+            Some(if filtered_hits % 2 == 1 {
+                RayCastResult::Inside
+            } else {
+                RayCastResult::Outside
+            })
+        } else {
+            None
+        }
     }
 
     /// Robust ray-triangle intersection using Möller-Trumbore algorithm
@@ -1382,12 +1471,13 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
         // Calculate t parameter (distance along ray)
         let t = &f * &edge2.dot(&q);
+        Some(t)
 
-        if t.is_positive() {
-            Some(t) // Valid intersection
-        } else {
-            None // Intersection behind ray origin or too close
-        }
+        // if t.is_positive() {
+        //     Some(t) // Valid intersection
+        // } else {
+        //     None // Intersection behind ray origin or too close
+        // }
     }
 
     /// Flip an interior edge given one of its half‐edges `he`.
@@ -2024,6 +2114,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                         split_edge_result.new_faces[3],
                     ],
                     [w, end_vertex],
+                    false,
                 );
 
                 intersection_segments.push(new_segment);
@@ -2700,16 +2791,16 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         if let Some(connection_path) =
             find_adjacent_face_connection(self, start_vertex, target_vertex)
         {
-            return self
-                .find_or_add_edge_intersection(
-                    aabb_tree,
-                    connection_path.start_face,
-                    intersection_segments,
-                    segment_idx,
-                    start_vertex,
-                    target_vertex,
-                )
-                .is_some();
+            let test = self.find_or_add_edge_intersection(
+                aabb_tree,
+                connection_path.start_face,
+                intersection_segments,
+                segment_idx,
+                start_vertex,
+                target_vertex,
+            );
+
+            return test.is_some();
         }
 
         create_direct_geometric_connection(self, start_vertex, target_vertex)

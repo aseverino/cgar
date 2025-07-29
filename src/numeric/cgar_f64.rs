@@ -209,7 +209,7 @@ impl ToPrimitive for CgarF64 {
 
 impl PartialEq for CgarF64 {
     fn eq(&self, other: &CgarF64) -> bool {
-        (self.0 - other.0).abs() < EPS
+        self.0.to_bits() == other.0.to_bits() // Comparing with tolerance breaks the hashing contract
     }
 }
 

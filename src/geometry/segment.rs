@@ -42,6 +42,8 @@ where
 
     fn midpoint(&self) -> Point<T, N>;
     fn is_point_on(&self, p: &Point<T, N>) -> bool;
+
+    fn inverse(&self) -> Self;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +124,10 @@ where
             // a == b; degenerate segment
             p.iter().zip(self.a.iter()).all(|(p, a)| p == a)
         }
+    }
+
+    fn inverse(&self) -> Self {
+        Self::new(self.b(), self.a())
     }
 }
 
