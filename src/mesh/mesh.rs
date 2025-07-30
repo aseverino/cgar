@@ -178,8 +178,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let mut boundary_edges = HashSet::new();
 
         for (seg_idx, seg) in intersection_segments.iter().enumerate() {
-            let face0 = self.find_valid_face(seg.resulting_faces[0], &seg.segment.a);
-            let face1 = self.find_valid_face(seg.resulting_faces[1], &seg.segment.b);
+            let face0 = self.find_valid_face(seg.resulting_faces[0], &seg.segment.a, false);
+            let face1 = self.find_valid_face(seg.resulting_faces[1], &seg.segment.b, false);
 
             boundary_edges.insert(ordered(face0.unwrap(), face1.unwrap()));
 
@@ -206,8 +206,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                 ];
 
                 for (f0, f1, pa, pb) in faces {
-                    let fa = self.find_valid_face(f0, pa).unwrap_or(f0);
-                    let fb = self.find_valid_face(f1, pb).unwrap_or(f1);
+                    let fa = self.find_valid_face(f0, pa, false).unwrap_or(f0);
+                    let fb = self.find_valid_face(f1, pb, false).unwrap_or(f1);
                     boundary_edges.insert(ordered(fa, fb));
                 }
             }
@@ -886,7 +886,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
         // **ALSO FIXED: Use same tolerance for geometric tests**
         for &face_idx in &candidates {
-            let face = self.find_valid_face(*face_idx, p).unwrap();
+            let face = self.find_valid_face(*face_idx, p, false).unwrap();
             let he0 = self.faces[face].half_edge;
 
             if he0 >= self.half_edges.len() {
@@ -2081,6 +2081,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                                     .face
                                     .expect("Half-edge doesn't point to a face."),
                                 q_pos,
+                                false,
                             )
                             .expect("Face was replaced by an invalidated face."),
                             intersection_point,
@@ -2598,7 +2599,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         None
     }
 
-    pub fn find_valid_face(&self, face_idx: usize, point: &Point<T, N>) -> Option<usize>
+    pub fn find_valid_face(&self, face_idx: usize, point: &Point<T, N>, any: bool) -> Option<usize>
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
@@ -2607,29 +2608,47 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        // Recursively search for a valid face containing the point
+        // 1. Direct validity check
         if face_idx < self.faces.len() && !self.faces[face_idx].removed {
             return Some(face_idx);
         }
 
+        // 2. If face has splits, check subfaces
         if let Some(split_map) = self.face_split_map.get(&face_idx) {
+            let mut valid_matches = Vec::new();
+
             for &new_face_idx in &split_map.new_faces {
-                if let Some(valid_idx) = self.find_valid_face(new_face_idx, point) {
-                    return Some(valid_idx);
+                if self.point_in_face(new_face_idx, point) {
+                    // Recursively resolve to a truly valid face
+                    if let Some(valid_idx) = self.find_valid_face(new_face_idx, point, any) {
+                        valid_matches.push(valid_idx);
+                    }
+                }
+            }
+
+            match valid_matches.len() {
+                0 => {
+                    // Try children even if they didn’t directly match point_in_face
+                    for &new_face_idx in &split_map.new_faces {
+                        if let Some(valid_idx) = self.find_valid_face(new_face_idx, point, any) {
+                            return Some(valid_idx);
+                        }
+                    }
+                }
+                1 => return Some(valid_matches[0]),
+                _ => {
+                    if any {
+                        return Some(valid_matches[0]);
+                    } else {
+                        panic!(
+                            "Ambiguous face match: point lies in multiple valid split faces: {:?}",
+                            valid_matches
+                        );
+                    }
                 }
             }
         }
 
-        if self.point_in_face(face_idx, point) {
-            return Some(face_idx);
-        }
-        if let Some(split_map) = self.face_split_map.get(&face_idx) {
-            for &new_face_idx in &split_map.new_faces {
-                if let Some(valid_idx) = self.find_valid_face(new_face_idx, point) {
-                    return Some(valid_idx);
-                }
-            }
-        }
         None
     }
 

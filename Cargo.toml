@@ -7,6 +7,7 @@ edition = "2024"
 num-traits = "0.2.19"
 rand = "0.9.1"
 rug = "1.24"
+smallvec = "1.15.1"
 
 [profile.release]
 opt-level = 3          # Maximum optimization

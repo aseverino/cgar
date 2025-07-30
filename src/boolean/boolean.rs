@@ -159,10 +159,10 @@ where
         let mut face_pairs: HashMap<usize, Vec<usize>> = HashMap::new();
         for seg in intersection_segments {
             let f0 = self
-                .find_valid_face(seg.resulting_faces[0], &seg.segment.a)
+                .find_valid_face(seg.resulting_faces[0], &seg.segment.a, false)
                 .unwrap();
             let f1 = self
-                .find_valid_face(seg.resulting_faces[1], &seg.segment.b)
+                .find_valid_face(seg.resulting_faces[1], &seg.segment.b, false)
                 .unwrap();
 
             face_pairs.entry(f0).or_default().push(f1);
@@ -529,7 +529,7 @@ where
         let vertex_b;
 
         if let Some(valid_face_idx) =
-            self.find_valid_face(segment.original_face, &segment.segment.a)
+            self.find_valid_face(segment.original_face, &segment.segment.a, true)
         {
             let split_result =
                 self.split_or_find_vertex_on_face(aabb_tree, valid_face_idx, &segment.segment.a);
@@ -550,7 +550,7 @@ where
         }
 
         if let Some(valid_face_idx) =
-            self.find_valid_face(segment.original_face, &segment.segment.b)
+            self.find_valid_face(segment.original_face, &segment.segment.b, true)
         {
             let split_result =
                 self.split_or_find_vertex_on_face(aabb_tree, valid_face_idx, &segment.segment.b);
