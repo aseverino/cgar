@@ -76,6 +76,11 @@ impl Scalar for CgarRational {
         let tol = Self::point_merge_threshold();
         &tol * &tol
     }
+
+    fn approx_eq(self, other: &Self) -> bool {
+        // For rational numbers, we can use exact equality
+        self.0 == other.0
+    }
 }
 
 impl<'a, 'b> Add<&'b CgarRational> for &'a CgarRational {
@@ -287,5 +292,13 @@ impl Neg for CgarRational {
 
     fn neg(self) -> CgarRational {
         CgarRational(-self.0)
+    }
+}
+
+impl<'a> Neg for &'a CgarRational {
+    type Output = CgarRational;
+
+    fn neg(self) -> CgarRational {
+        CgarRational(self.0.clone().neg())
     }
 }

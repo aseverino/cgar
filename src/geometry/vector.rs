@@ -21,9 +21,9 @@
 // SOFTWARE.
 
 use std::{
-    array,
+    array::{self, from_fn},
     hash::{Hash, Hasher},
-    ops::{Add, AddAssign, Div, Index, IndexMut, Mul, Sub, SubAssign},
+    ops::{Add, AddAssign, Div, Index, IndexMut, Mul, Neg, Sub, SubAssign},
 };
 
 use crate::{
@@ -44,6 +44,7 @@ where
     fn norm_squared(&self) -> T;
     fn normalized(&self) -> Self;
     fn scale(&self, s: &T) -> Self;
+    fn any_perpendicular(&self) -> Vector<T, N>;
 }
 
 #[derive(Clone, Debug)]
@@ -184,6 +185,10 @@ where
     fn scale(&self, s: &T) -> Self {
         Self::from(Point::from_vals([&self[0] * &s, &self[1] * &s]))
     }
+
+    fn any_perpendicular(&self) -> Vector<T, 2> {
+        unimplemented!("any_perpendicular is not implemented for 2D vectors");
+    }
 }
 
 impl<T> VectorOps<T, 3> for Vector<T, 3>
@@ -213,7 +218,7 @@ where
     }
 
     fn norm_squared(&self) -> T {
-        &(&self[0] * &self[0]) + &(&self[1] * &self[1])
+        &(&(&self[0] * &self[0]) + &(&self[1] * &self[1])) + &(&self[2] * &self[2])
     }
 
     fn normalized(&self) -> Self {
@@ -231,6 +236,16 @@ where
             &self[1] * &s,
             &self[2] * &s,
         ]))
+    }
+
+    fn any_perpendicular(&self) -> Vector<T, 3> {
+        if self[0].abs() < self[1].abs() && self[0].abs() < self[2].abs() {
+            self.cross(&Vector::new([T::one(), T::zero(), T::zero()]))
+        } else if self[1].abs() < self[2].abs() {
+            self.cross(&Vector::new([T::zero(), T::one(), T::zero()]))
+        } else {
+            self.cross(&Vector::new([T::zero(), T::zero(), T::one()]))
+        }
     }
 }
 
@@ -311,6 +326,19 @@ impl<T: Scalar, const N: usize> PartialOrd for Vector<T, N> {
     }
 }
 impl<T: Scalar, const N: usize> Eq for Vector<T, N> {}
+
+impl<T: Scalar, const N: usize> Neg for Vector<T, N>
+where
+    for<'a> &'a T: Mul<Output = T>,
+{
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        Vector::from(Point::from_vals(from_fn(|i| {
+            &self[i] * &T::from_num_den(-1, 1)
+        })))
+    }
+}
 
 pub type Vector2<T> = Vector<T, 2>;
 pub type Vector3<T> = Vector<T, 3>;

@@ -76,6 +76,10 @@ impl Scalar for CgarF64 {
         let tol = Self::point_merge_threshold();
         CgarF64(tol.0 * tol.0)
     }
+
+    fn approx_eq(self, other: &Self) -> bool {
+        return (self.0 - other.0).abs() < EPS;
+    }
 }
 
 impl<'a, 'b> Add<&'b CgarF64> for &'a CgarF64 {
@@ -295,5 +299,13 @@ impl Neg for CgarF64 {
 
     fn neg(self) -> CgarF64 {
         CgarF64(-self.0)
+    }
+}
+
+impl<'a> Neg for &'a CgarF64 {
+    type Output = CgarF64;
+
+    fn neg(self) -> CgarF64 {
+        CgarF64(-&self.0)
     }
 }

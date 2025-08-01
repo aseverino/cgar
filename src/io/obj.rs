@@ -32,7 +32,10 @@ use crate::{
     numeric::scalar::Scalar,
 };
 
-pub fn write_obj<T: Scalar, P: AsRef<Path>>(mesh: &Mesh<T, 3>, path: P) -> io::Result<()> {
+pub fn write_obj<T: Scalar, const N: usize, P: AsRef<Path>>(
+    mesh: &Mesh<T, N>,
+    path: P,
+) -> io::Result<()> {
     let file = File::create(path)?;
     let mut out = BufWriter::new(file);
 
@@ -50,6 +53,9 @@ pub fn write_obj<T: Scalar, P: AsRef<Path>>(mesh: &Mesh<T, 3>, path: P) -> io::R
 
     // 2) write faces (1-based indices)
     for f in 0..mesh.faces.len() {
+        if mesh.faces[f].removed {
+            continue; // skip removed faces
+        }
         let vs = mesh.face_vertices(f);
         // OBJ is 1-based
         writeln!(out, "f {:?} {:?} {:?}", vs[0] + 1, vs[1] + 1, vs[2] + 1)?;

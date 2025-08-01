@@ -20,11 +20,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::{
     geometry::{
         point::{Point, PointOps},
+        spatial_element::SpatialElement,
         vector::{Vector, VectorOps},
     },
     numeric::scalar::Scalar,
@@ -32,11 +33,15 @@ use crate::{
 
 use std::hash::{Hash, Hasher};
 
+#[derive(Clone, Debug)]
 pub struct Plane<T: Scalar, const N: usize> {
     pub normal: Vector<T, N>,
     pub d: T,
 }
-impl<T: Scalar, const N: usize> Plane<T, N> {
+impl<T: Scalar, const N: usize> Plane<T, N>
+where
+    Vector<T, N>: VectorOps<T, N>,
+{
     pub fn new(normal: Vector<T, N>, d: T) -> Self {
         Plane { normal, d }
     }
@@ -55,6 +60,43 @@ impl<T: Scalar, const N: usize> Plane<T, N> {
         let normal = v1.cross(&v2);
         let d = -normal.dot(&p1.as_vector());
         Plane::new(normal, d)
+    }
+
+    pub fn origin(&self) -> Point<T, 3>
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>
+            + Neg<Output = T>,
+    {
+        let zero = T::zero();
+        let n = &self.normal;
+
+        if n[2].abs().is_positive() {
+            // solve for z: n·x = d → z = (d - n.x * 0 - n.y * 0) / n.z
+            let z = &(&-(&self.d) / (&n[2]));
+            Point::from_vals([zero.clone(), zero.clone(), z.clone()])
+        } else if n[1].abs().is_positive() {
+            let y = &-&self.d / &n[1];
+            Point::from_vals([zero.clone(), y, zero.clone()])
+        } else if n[0].abs().is_positive() {
+            let x = &-&self.d / &n[0];
+            Point::from_vals([x, zero.clone(), zero.clone()])
+        } else {
+            panic!("Invalid plane: zero normal");
+        }
+    }
+
+    pub fn basis(&self) -> (Vector<T, N>, Vector<T, N>)
+    where
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    {
+        let n = self.normal.normalized();
+        let u = n.any_perpendicular().normalized();
+        let v = n.cross(&u).normalized();
+        (u, v)
     }
 }
 

@@ -52,6 +52,14 @@ pub struct Point<T: Scalar, const N: usize> {
     pub coords: [T; N],
 }
 
+impl<T: Scalar, const N: usize> Point<T, N> {
+    pub fn default() -> Point<T, N> {
+        Point {
+            coords: array::from_fn(|_| T::default()),
+        }
+    }
+}
+
 impl<T: Scalar, const N: usize> SpatialElement<T, N> for Point<T, N> {
     fn new(coords: [T; N]) -> Point<T, N> {
         Point { coords }

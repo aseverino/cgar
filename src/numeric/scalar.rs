@@ -69,6 +69,9 @@ pub trait Scalar:
         if self > other { self } else { other }
     }
 
+    fn default() -> Self {
+        Self::from(0)
+    }
     fn from_num_den(num: i32, den: i32) -> Self;
 
     fn tolerance() -> Self;
@@ -87,4 +90,6 @@ pub trait Scalar:
     fn query_tolerance_squared() -> Self;
 
     fn point_merge_threshold_squared() -> Self;
+
+    fn approx_eq(self, other: &Self) -> bool;
 }

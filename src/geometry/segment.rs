@@ -24,10 +24,11 @@ use crate::{
     geometry::{
         point::{Point, PointOps},
         spatial_element::SpatialElement,
+        vector::{Vector, VectorOps},
     },
     numeric::scalar::Scalar,
 };
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
 
 pub trait SegmentOps<T: Scalar, const N: usize>: Sized
 where
@@ -44,6 +45,9 @@ where
     fn is_point_on(&self, p: &Point<T, N>) -> bool;
 
     fn inverse(&self) -> Self;
+    fn invert(&mut self);
+
+    fn direction(&self) -> Vector<T, N>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,12 +63,20 @@ impl<T: Scalar, const N: usize> Segment<T, N> {
             b: b.clone(),
         }
     }
+
+    pub fn default() -> Self {
+        Self {
+            a: Point::default(),
+            b: Point::default(),
+        }
+    }
 }
 
 impl<T: Scalar, const N: usize> SegmentOps<T, N> for Segment<T, N>
 where
     T: Scalar,
-    Point<T, N>: PointOps<T, N>,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'c> &'c T: Add<&'c T, Output = T>
         + Sub<&'c T, Output = T>
         + Mul<&'c T, Output = T>
@@ -126,8 +138,41 @@ where
         }
     }
 
+    fn direction(&self) -> Vector<T, N> {
+        // Calculate the direction vector from point a to point b
+        (&self.b - &self.a).as_vector().normalized()
+    }
+
     fn inverse(&self) -> Self {
         Self::new(self.b(), self.a())
+    }
+
+    fn invert(&mut self) {
+        std::mem::swap(&mut self.a, &mut self.b);
+    }
+}
+
+impl<T: Scalar, const N: usize> Index<usize> for Segment<T, N> {
+    type Output = Point<T, N>;
+    fn index(&self, i: usize) -> &Self::Output {
+        if i == 0 {
+            &self.a
+        } else if i == 1 {
+            &self.b
+        } else {
+            panic!("Index out of bounds for Segment: {}", i);
+        }
+    }
+}
+impl<T: Scalar, const N: usize> IndexMut<usize> for Segment<T, N> {
+    fn index_mut(&mut self, i: usize) -> &mut Self::Output {
+        if i == 0 {
+            &mut self.a
+        } else if i == 1 {
+            &mut self.b
+        } else {
+            panic!("Index out of bounds for Segment: {}", i);
+        }
     }
 }
 
