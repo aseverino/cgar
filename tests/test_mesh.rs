@@ -943,6 +943,8 @@ fn difference_large_boolean() {
 
     println!("Loaded");
 
+    let _ = write_obj(&other_sphere, "/mnt/v/cgar_meshes/sphere.obj");
+
     // translate the second sphere to create a difference
     let translation = Point3::from_vals([0.5, 0.5, 0.5]);
     for v in other_sphere.vertices.iter_mut() {

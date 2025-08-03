@@ -29,11 +29,12 @@ use crate::{
 };
 
 use std::{
+    fmt,
     hash::{Hash, Hasher},
     ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CgarRational(pub Rational);
 
 impl Scalar for CgarRational {
@@ -300,5 +301,12 @@ impl<'a> Neg for &'a CgarRational {
 
     fn neg(self) -> CgarRational {
         CgarRational(self.0.clone().neg())
+    }
+}
+
+impl fmt::Debug for CgarRational {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Print as f64, optionally with more precision
+        write!(f, "{:.5}", self.0.to_f64())
     }
 }

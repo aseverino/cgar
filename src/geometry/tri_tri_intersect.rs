@@ -363,9 +363,9 @@ where
     let d2 = -n2.dot(&q[2].as_vector());
 
     // signed distances of p-verts to T2's plane
-    let d_p0 = &n2.dot(&p[2].as_vector()) + &d2;
-    let d_p1 = &n2.dot(&p[0].as_vector()) + &d2;
-    let d_p2 = &n2.dot(&p[1].as_vector()) + &d2;
+    let d_p0 = &n2.dot(&p[0].as_vector()) + &d2;
+    let d_p1 = &n2.dot(&p[1].as_vector()) + &d2;
+    let d_p2 = &n2.dot(&p[2].as_vector()) + &d2;
 
     // Fall back for strictly co-planar
     if d_p0.is_zero() && d_p1.is_zero() && d_p2.is_zero() {
@@ -374,9 +374,9 @@ where
 
     // 2) Now do the regular non-coplanar plane‐edge clipping:
     let mut pts = Vec::new();
-    for (a, b) in [(&p[2], &p[0]), (&p[0], &p[1]), (&p[1], &p[2])] {
+    for (a, b) in [(&p[0], &p[1]), (&p[1], &p[2]), (&p[2], &p[0])] {
         if let Some(ip) = intersect_edge_plane(&a, &b, &n2.0, &d2) {
-            if point_in_tri(&ip, &q[2], &q[0], &q[1]) {
+            if point_in_tri(&ip, &q[0], &q[1], &q[2]) {
                 pts.push(ip);
             }
         }
@@ -389,9 +389,9 @@ where
     let d1 = -n1.dot(&p[2].as_vector());
 
     // 4) Clip edges of T2 against T1’s plane:
-    for (a, b) in [(&q[2], &q[0]), (&q[0], &q[1]), (&q[1], &q[2])] {
+    for (a, b) in [(&q[0], &q[1]), (&q[1], &q[2]), (&q[2], &q[0])] {
         if let Some(ip) = intersect_edge_plane(&a, &b, &n1.0, &d1) {
-            if point_in_tri(&ip, &p[2], &p[0], &p[1]) {
+            if point_in_tri(&ip, &p[0], &p[1], &p[2]) {
                 pts.push(ip);
             }
         }
@@ -409,7 +409,7 @@ where
     // 6) Make sure both points are on T1
     let on_a: Vec<_> = uniq
         .iter()
-        .filter(|this_p| point_in_tri(this_p, &p[2], &p[0], &p[1]))
+        //.filter(|this_p| point_in_tri(this_p, &p[0], &p[1], &p[2]))
         .cloned()
         .collect();
 
@@ -434,7 +434,9 @@ where
                 }
             }
 
-            TriTriIntersectionResult::Proper(Segment::new(&uniq[best_pair.0], &uniq[best_pair.1]))
+            let (i, j) = best_pair;
+            TriTriIntersectionResult::Proper(Segment::new(&on_a[i], &on_a[j]))
+            // TriTriIntersectionResult::Proper(Segment::new(&uniq[best_pair.0], &uniq[best_pair.1]))
         }
     }
 }

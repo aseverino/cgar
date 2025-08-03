@@ -37,7 +37,7 @@ use crate::{
 
 use super::{face::Face, half_edge::HalfEdge, vertex::Vertex};
 use core::panic;
-use smallvec::SmallVec;
+use smallvec::*;
 use std::{
     array::from_fn,
     collections::{HashMap, HashSet, VecDeque},
@@ -47,9 +47,15 @@ use std::{
 use std::{convert::TryInto, sync::Arc};
 
 #[derive(Debug, Clone, Default)]
+pub struct Triangle {
+    pub face_idx: usize,
+    pub vertices: [usize; 3],
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct FaceSplitMap {
     pub face: usize,
-    pub new_faces: Vec<usize>,
+    pub new_faces: SmallVec<[Triangle; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,34 +88,38 @@ pub struct SplitResult {
 
 #[derive(Debug, Clone)]
 pub struct IntersectionEndPoint<T: Scalar, const N: usize> {
-    pub point: Point<T, N>,
+    // pub point: Point<T, N>,
     pub vertex_hint: Option<[usize; 2]>,
     pub half_edge_hint: Option<usize>,
+    pub half_edge_u_hint: Option<T>,
     pub face_hint: Option<usize>, // only if interior
     pub barycentric_hint: Option<(T, T, T)>,
 }
 
 impl<T: Scalar, const N: usize> IntersectionEndPoint<T, N> {
     pub fn new(
-        point: Point<T, N>,
+        // point: Point<T, N>,
         vertex_hint: Option<[usize; 2]>,
         half_edge_hint: Option<usize>,
+        half_edge_u_hint: Option<T>,
         face_hint: Option<usize>,
         barycentric_hint: Option<(T, T, T)>,
     ) -> Self {
         Self {
-            point,
+            // point,
             vertex_hint,
             half_edge_hint,
-            face_hint,
+            half_edge_u_hint,
+            face_hint: face_hint,
             barycentric_hint,
         }
     }
     pub fn new_default() -> Self {
         Self {
-            point: Point::default(),
+            // point: Point::default(),
             vertex_hint: None,
             half_edge_hint: None,
+            half_edge_u_hint: None,
             face_hint: None,
             barycentric_hint: None,
         }
@@ -160,16 +170,16 @@ impl<T: Scalar, const N: usize> IndexMut<usize> for IntersectionSegment<T, N> {
 
 impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
     pub fn new(
-        a: &IntersectionEndPoint<T, N>,
-        b: &IntersectionEndPoint<T, N>,
+        a: IntersectionEndPoint<T, N>,
+        b: IntersectionEndPoint<T, N>,
         segment: &Segment<T, N>,
         initial_face_reference: usize,
         resulting_vertices_pair: [usize; 2],
         coplanar: bool,
     ) -> Self {
         Self {
-            a: a.clone(),
-            b: b.clone(),
+            a: a,
+            b: b,
             segment: segment.clone(),
             initial_face_reference,
             resulting_vertices_pair,
@@ -179,8 +189,8 @@ impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
         }
     }
     pub fn new_default(
-        a: &IntersectionEndPoint<T, N>,
-        b: &IntersectionEndPoint<T, N>,
+        a: IntersectionEndPoint<T, N>,
+        b: IntersectionEndPoint<T, N>,
         segment: &Segment<T, N>,
         initial_face_reference: usize,
     ) -> Self {
@@ -198,8 +208,8 @@ impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
 impl<T: Scalar, const N: usize> Default for IntersectionSegment<T, N> {
     fn default() -> Self {
         Self::new_default(
-            &IntersectionEndPoint::default(),
-            &IntersectionEndPoint::default(),
+            IntersectionEndPoint::default(),
+            IntersectionEndPoint::default(),
             &Segment::default(),
             usize::MAX,
         )
@@ -245,7 +255,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             .map(|v| &self.vertices[v].position);
         let edge1 = (face_vertices[1] - face_vertices[0]).as_vector();
         let edge2 = (face_vertices[2] - face_vertices[0]).as_vector();
-        edge1.cross(&edge2)
+        edge1.cross(&edge2).normalized()
     }
 
     pub fn plane_from_face(&self, face_idx: usize) -> Plane<T, N>
@@ -298,7 +308,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             let face0 = self.half_edges[*he]
                 .face
                 .expect("Half-edge must have a face");
-            let twin = self.find_valid_half_edge(*he, &seg.a.point);
+            let twin = self.find_valid_half_edge(self.half_edges[*he].twin, &seg.segment.a);
             println!("Here 11");
             let face1 = self.half_edges[twin]
                 .face
@@ -555,73 +565,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         initial_count - self.vertices.len()
     }
 
-    /// Remove faces that have become degenerate due to vertex merging
-    fn remove_degenerate_faces(&mut self)
-    where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        let mut faces_to_remove = Vec::new();
-
-        for (face_idx, face) in self.faces.iter().enumerate() {
-            if face.removed {
-                continue;
-            }
-
-            if let Some(face_vertices) = self.face_vertices_safe(face_idx) {
-                // Check for duplicate vertices in face
-                let mut unique_vertices = HashSet::new();
-                let mut is_degenerate = false;
-
-                for &vertex in &face_vertices {
-                    if !unique_vertices.insert(vertex) {
-                        is_degenerate = true;
-                        break;
-                    }
-                }
-
-                // Check for insufficient vertices
-                if face_vertices.len() < 3 || is_degenerate {
-                    faces_to_remove.push(face_idx);
-                    continue;
-                }
-
-                // Check for geometric degeneracy
-                if face_vertices.len() == 3 {
-                    let v0 = &self.vertices[face_vertices[0]].position;
-                    let v1 = &self.vertices[face_vertices[1]].position;
-                    let v2 = &self.vertices[face_vertices[2]].position;
-
-                    if !is_triangle_non_degenerate(v0, v1, v2) {
-                        faces_to_remove.push(face_idx);
-                    }
-                }
-            } else {
-                faces_to_remove.push(face_idx);
-            }
-        }
-
-        // Mark degenerate faces as removed
-        for &face_idx in &faces_to_remove {
-            self.faces[face_idx].removed = true;
-        }
-
-        // Remove associated half-edges
-        for &face_idx in &faces_to_remove {
-            if let Some(half_edges) = get_face_half_edges_iterative(self, face_idx) {
-                for &he_idx in &half_edges {
-                    if he_idx < self.half_edges.len() {
-                        self.half_edges[he_idx].removed = true;
-                    }
-                }
-            }
-        }
-    }
-
     pub fn remove_unused_vertices(&mut self) {
         // 1. Find used vertices
         let mut used = vec![false; self.vertices.len()];
@@ -757,7 +700,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Div<&'a T, Output = T>,
     {
         let face = &self.faces[f];
-        if face.half_edge == usize::MAX || self.half_edges[face.half_edge].removed {
+        if face.removed || face.half_edge == usize::MAX || self.half_edges[face.half_edge].removed {
             // Return degenerate AABB for invalid faces
             let origin = Point::<T, N>::from_vals(from_fn(|_| T::from(0)));
             return Aabb::from_points(&origin, &origin);
@@ -794,13 +737,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
     pub fn add_vertex(&mut self, position: Point<T, N>) -> usize {
         let idx = self.vertices.len();
-
-        let hash_key = self.position_to_hash_key(&position);
-        self.vertex_spatial_hash
-            .entry(hash_key)
-            .or_insert_with(Vec::new)
-            .push(idx);
-
         self.vertices.push(Vertex::new(position));
         idx
     }
@@ -1660,6 +1596,29 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         Ok(())
     }
 
+    // pub fn split_edge_by_u(
+    //     &mut self,
+    //     aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
+    //     he: usize,
+    //     u: &T,
+    // ) -> Result<SplitResult, &'static str>
+    // where
+    //     T: Scalar,
+    //     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    //     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    //     for<'a> &'a T: Sub<&'a T, Output = T>
+    //         + Mul<&'a T, Output = T>
+    //         + Add<&'a T, Output = T>
+    //         + Div<&'a T, Output = T>,
+    // {
+    //     let he = self.find_valid_half_edge(he, &u);
+    //     let source = self.half_edges[self.half_edges[he].prev].vertex;
+    //     let segment = self.segment_from_half_edge(he);
+    //     let segment_direction = segment.direction();
+    //     let new_point = &self.vertices[source].position + &segment_direction.scale(&u).0;
+    //     self.split_edge(aabb_tree, he, &new_point)
+    // }
+
     pub fn split_edge(
         &mut self,
         aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
@@ -1678,26 +1637,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let he_ca = self.find_valid_half_edge(he, pos);
         let he_ab = self.half_edges[he_ca].next;
         let he_bc = self.half_edges[he_ab].next;
-
-        // println!(
-        //     "he pos: {:?}",
-        //     self.vertices[self.half_edges[he].vertex].position
-        // );
-
-        // println!(
-        //     "he_ca pos: {:?}",
-        //     self.vertices[self.half_edges[he_ca].vertex].position
-        // );
-
-        // println!(
-        //     "he_ab pos: {:?}",
-        //     self.vertices[self.half_edges[he_ab].vertex].position
-        // );
-
-        // println!(
-        //     "he_bc pos: {:?}",
-        //     self.vertices[self.half_edges[he_bc].vertex].position
-        // );
 
         let he_ac = self.half_edges[he_ca].twin;
         let he_cd = self.half_edges[he_ac].next;
@@ -1719,146 +1658,78 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             .entry(self.position_to_hash_key(pos))
             .or_default()
             .push(w);
-        self.vertices.push(Vertex::new(pos.clone()));
+        //self.vertices.push(Vertex::new(pos.clone()));
+        self.add_vertex(pos.clone());
 
         // let mut new_face_results = Vec::new();
         let original_face_1 = self.half_edges[he_ca].face.unwrap();
         let original_face_2 = self.half_edges[he_ac].face.unwrap();
 
         // 1. Build the new faces (4 in total) and create their half-edges (no twins for now)
-        let face_1_subface_1_verts = [w, b, c];
-        let face_1_subface_2_verts = [w, a, b];
-        let face_2_subface_1_verts = [w, c, d];
-        let face_2_subface_2_verts = [w, d, a];
-
-        let face_1_subface_1_idx = self.faces.len();
-        let face_1_subface_2_idx = self.faces.len() + 1;
-        let face_2_subface_1_idx = self.faces.len() + 2;
-        let face_2_subface_2_idx = self.faces.len() + 3;
-
-        // Create face 1 subface 1
-        let base_he_idx_face_1_sub_1 = self.half_edges.len();
-        let edge_vertices_face_1_sub_1 = [
-            (face_1_subface_1_verts[0], face_1_subface_1_verts[1]), // w -> b
-            // (face_1_subface_1_verts[1], face_1_subface_1_verts[2]), // b -> c
-            (face_1_subface_1_verts[2], face_1_subface_1_verts[0]), // c -> w
+        let evs = [
+            (w, b), // face wbc
+            (c, w),
+            (w, a), // face wab
+            (b, w),
+            (w, c), // face wcd
+            (d, w),
+            (w, d), // face wda
+            (a, w),
         ];
 
-        // Create half-edges for face 1 subface 1
-        for (_i, &(_from, to)) in edge_vertices_face_1_sub_1.iter().enumerate() {
+        let existing_evs = [he_bc, he_ab, he_cd, he_da];
+
+        let base_face_idx = self.faces.len();
+
+        let base_half_edge_idx = self.half_edges.len();
+
+        // let he_wb = base_half_edge_idx;
+        let he_cw = base_half_edge_idx + 1;
+        let he_wa = base_half_edge_idx + 2;
+        // let he_bw = base_half_edge_idx + 3;
+        let he_wc = base_half_edge_idx + 4;
+        // let he_dw = base_half_edge_idx + 5;
+        // let he_wd = base_half_edge_idx + 6;
+        let he_aw = base_half_edge_idx + 7;
+
+        let mut i = 0;
+        for (from, to) in evs {
             let mut he = HalfEdge::new(to);
-            he.face = Some(face_1_subface_1_idx);
+            he.face = Some(base_face_idx + i / 2);
+            he.vertex = to;
             self.half_edges.push(he);
+            self.edge_map.insert((from, to), base_half_edge_idx + i);
+            i += 1;
         }
 
-        // Link face 1 subface 1 half-edges
-        let edge_indices_face_1_sub_1 = [
-            base_he_idx_face_1_sub_1,
-            he_bc,
-            base_he_idx_face_1_sub_1 + 1,
-        ];
-        self.half_edges[edge_indices_face_1_sub_1[0]].next = edge_indices_face_1_sub_1[1];
-        self.half_edges[edge_indices_face_1_sub_1[0]].prev = edge_indices_face_1_sub_1[2];
-        self.half_edges[edge_indices_face_1_sub_1[1]].next = edge_indices_face_1_sub_1[2];
-        self.half_edges[edge_indices_face_1_sub_1[1]].prev = edge_indices_face_1_sub_1[0];
-        self.half_edges[edge_indices_face_1_sub_1[2]].next = edge_indices_face_1_sub_1[0];
-        self.half_edges[edge_indices_face_1_sub_1[2]].prev = edge_indices_face_1_sub_1[1];
+        for i in 0..4 {
+            let base_he_idx = base_half_edge_idx + i * 2;
+            let edge_indices = [base_he_idx, existing_evs[i], base_he_idx + 1];
+            self.half_edges[edge_indices[0]].next = edge_indices[1];
+            self.half_edges[edge_indices[0]].prev = edge_indices[2];
+            self.half_edges[edge_indices[1]].next = edge_indices[2];
+            self.half_edges[edge_indices[1]].prev = edge_indices[0];
+            self.half_edges[edge_indices[2]].next = edge_indices[0];
+            self.half_edges[edge_indices[2]].prev = edge_indices[1];
 
-        ///////////////////////
-        // Create face 1 subface 2
-        let base_he_idx_face_1_sub_2 = self.half_edges.len();
-        let edge_vertices_face_1_sub_2 = [
-            (face_1_subface_2_verts[0], face_1_subface_2_verts[1]), // w -> a
-            // (face_1_subface_2_verts[1], face_1_subface_2_verts[2]), // a -> b
-            (face_1_subface_2_verts[2], face_1_subface_2_verts[0]), // b -> w
-        ];
-
-        // Create half-edges for face 1 subface 2
-        for (_i, &(_from, to)) in edge_vertices_face_1_sub_2.iter().enumerate() {
-            let mut he = HalfEdge::new(to);
-            he.face = Some(face_1_subface_2_idx);
-            self.half_edges.push(he);
+            self.faces.push(Face::new(edge_indices[0]));
+            self.faces[base_face_idx + i].half_edge = edge_indices[0];
         }
 
-        // Link face 1 subface 2 half-edges
-        let edge_indices_face_1_sub_2 = [
-            base_he_idx_face_1_sub_2,
-            he_ab,
-            base_he_idx_face_1_sub_2 + 1,
-        ];
-        self.half_edges[edge_indices_face_1_sub_2[0]].next = edge_indices_face_1_sub_2[1];
-        self.half_edges[edge_indices_face_1_sub_2[0]].prev = edge_indices_face_1_sub_2[2];
-        self.half_edges[edge_indices_face_1_sub_2[1]].next = edge_indices_face_1_sub_2[2];
-        self.half_edges[edge_indices_face_1_sub_2[1]].prev = edge_indices_face_1_sub_2[0];
-        self.half_edges[edge_indices_face_1_sub_2[2]].next = edge_indices_face_1_sub_2[0];
-        self.half_edges[edge_indices_face_1_sub_2[2]].prev = edge_indices_face_1_sub_2[1];
-
-        ///////////////////////////////
-        // Create face 2 subface 1
-        let base_he_idx_face_2_sub_1 = self.half_edges.len();
-        let edge_vertices_face_2_sub_1 = [
-            (face_2_subface_1_verts[0], face_2_subface_1_verts[1]), // w -> c
-            // (face_2_subface_1_verts[1], face_2_subface_1_verts[2]), // c -> d
-            (face_2_subface_1_verts[2], face_2_subface_1_verts[0]), // d -> w
+        let twins = [
+            (0, 3), // w -> b | b -> w
+            (1, 4), // c -> w | w -> c
+            (2, 7), // w -> a | a -> w
+            (5, 6), // d -> w | w -> d
         ];
 
-        // Create half-edges for face 2 subface 1
-        for (_i, &(_from, to)) in edge_vertices_face_2_sub_1.iter().enumerate() {
-            let mut he = HalfEdge::new(to);
-            he.face = Some(face_2_subface_1_idx);
-            self.half_edges.push(he);
+        for i in 0..4 {
+            self.half_edges[base_half_edge_idx + twins[i].0].twin = base_half_edge_idx + twins[i].1;
+            self.half_edges[base_half_edge_idx + twins[i].1].twin = base_half_edge_idx + twins[i].0;
         }
-
-        // Link face 2 subface 1 half-edges
-        let edge_indices_face_2_sub_1 = [
-            base_he_idx_face_2_sub_1,
-            he_cd,
-            base_he_idx_face_2_sub_1 + 1,
-        ];
-        self.half_edges[edge_indices_face_2_sub_1[0]].next = edge_indices_face_2_sub_1[1];
-        self.half_edges[edge_indices_face_2_sub_1[0]].prev = edge_indices_face_2_sub_1[2];
-        self.half_edges[edge_indices_face_2_sub_1[1]].next = edge_indices_face_2_sub_1[2];
-        self.half_edges[edge_indices_face_2_sub_1[1]].prev = edge_indices_face_2_sub_1[0];
-        self.half_edges[edge_indices_face_2_sub_1[2]].next = edge_indices_face_2_sub_1[0];
-        self.half_edges[edge_indices_face_2_sub_1[2]].prev = edge_indices_face_2_sub_1[1];
-
-        ///////////////////////////////
-        // Create face 2 subface 2
-        let base_he_idx_face_2_sub_2 = self.half_edges.len();
-        let edge_vertices_face_2_sub_2 = [
-            (face_2_subface_2_verts[0], face_2_subface_2_verts[1]), // w -> d
-            // (face_2_subface_2_verts[1], face_2_subface_2_verts[2]), // d -> a
-            (face_2_subface_2_verts[2], face_2_subface_2_verts[0]), // a -> w
-        ];
-
-        // Create half-edges for face 2 subface 2
-        for (_i, &(_from, to)) in edge_vertices_face_2_sub_2.iter().enumerate() {
-            let mut he = HalfEdge::new(to);
-            he.face = Some(face_2_subface_2_idx);
-            self.half_edges.push(he);
-        }
-
-        // Link face 2 subface 2 half-edges
-        let edge_indices_face_2_sub_2 = [
-            base_he_idx_face_2_sub_2,
-            he_da,
-            base_he_idx_face_2_sub_2 + 1,
-        ];
-        self.half_edges[edge_indices_face_2_sub_2[0]].next = edge_indices_face_2_sub_2[1];
-        self.half_edges[edge_indices_face_2_sub_2[0]].prev = edge_indices_face_2_sub_2[2];
-        self.half_edges[edge_indices_face_2_sub_2[1]].next = edge_indices_face_2_sub_2[2];
-        self.half_edges[edge_indices_face_2_sub_2[1]].prev = edge_indices_face_2_sub_2[0];
-        self.half_edges[edge_indices_face_2_sub_2[2]].next = edge_indices_face_2_sub_2[0];
-        self.half_edges[edge_indices_face_2_sub_2[2]].prev = edge_indices_face_2_sub_2[1];
-
-        // Add the 4 faces
-        self.faces.push(Face::new(edge_indices_face_1_sub_1[0]));
-        self.faces.push(Face::new(edge_indices_face_1_sub_2[0]));
-        self.faces.push(Face::new(edge_indices_face_2_sub_1[0]));
-        self.faces.push(Face::new(edge_indices_face_2_sub_2[0]));
 
         // Update vertices half-edges
-        self.vertices[w].half_edge = Some(base_he_idx_face_1_sub_1); // w -> b
+        self.vertices[w].half_edge = Some(base_half_edge_idx); // w -> b
         self.vertices[a].half_edge = Some(he_ab); // a -> b
         self.vertices[b].half_edge = Some(he_bc); // b -> c
         self.vertices[c].half_edge = Some(he_cd); // c -> d
@@ -1867,23 +1738,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         // Remove old edges from edge map
         self.edge_map.remove(&(c, a));
         self.edge_map.remove(&(a, c));
-
-        // Add new edges to the edge map
-        self.edge_map.insert((w, b), base_he_idx_face_1_sub_1);
-        // self.edge_map.insert((b, c), he_bc);
-        self.edge_map.insert((c, w), base_he_idx_face_1_sub_1 + 1);
-
-        self.edge_map.insert((w, a), base_he_idx_face_1_sub_2);
-        // self.edge_map.insert((a, b), he_ab);
-        self.edge_map.insert((b, w), base_he_idx_face_1_sub_2 + 1);
-
-        self.edge_map.insert((w, c), base_he_idx_face_2_sub_1);
-        // self.edge_map.insert((c, d), he_cd);
-        self.edge_map.insert((d, w), base_he_idx_face_2_sub_1 + 1);
-
-        self.edge_map.insert((w, d), base_he_idx_face_2_sub_2);
-        // self.edge_map.insert((d, a), he_da);
-        self.edge_map.insert((a, w), base_he_idx_face_2_sub_2 + 1);
 
         // External twins (unchanged neighboring faces)
         self.half_edges[ex_he_ba].twin = he_ab; // external b->a | a->b
@@ -1898,95 +1752,65 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         self.half_edges[ex_he_ad].twin = he_da; // external a->d | d->a
         self.half_edges[he_da].twin = ex_he_ad;
 
-        // Internal twins (4 edges between the new subfaces)
-        // w->b (face_1_sub_1) | b->w (face_1_sub_2)
-        self.half_edges[base_he_idx_face_1_sub_1].twin = base_he_idx_face_1_sub_2 + 1;
-        self.half_edges[base_he_idx_face_1_sub_2 + 1].twin = base_he_idx_face_1_sub_1;
+        let triangle_wbc = Triangle {
+            face_idx: base_face_idx,
+            vertices: [w, b, c],
+        };
+        let triangle_wab = Triangle {
+            face_idx: base_face_idx + 1,
+            vertices: [w, a, b],
+        };
+        let triangle_wcd = Triangle {
+            face_idx: base_face_idx + 2,
+            vertices: [w, c, d],
+        };
+        let triangle_wda = Triangle {
+            face_idx: base_face_idx + 3,
+            vertices: [w, d, a],
+        };
 
-        // c->w (face_1_sub_1) | w->c (face_2_sub_1)
-        self.half_edges[base_he_idx_face_1_sub_1 + 1].twin = base_he_idx_face_2_sub_1;
-        self.half_edges[base_he_idx_face_2_sub_1].twin = base_he_idx_face_1_sub_1 + 1;
-
-        // w->a (face_1_sub_2) | a->w (face_2_sub_2)
-        self.half_edges[base_he_idx_face_1_sub_2].twin = base_he_idx_face_2_sub_2 + 1;
-        self.half_edges[base_he_idx_face_2_sub_2 + 1].twin = base_he_idx_face_1_sub_2;
-
-        // d->w (face_2_sub_1) | w->d (face_2_sub_2)
-        self.half_edges[base_he_idx_face_2_sub_1 + 1].twin = base_he_idx_face_2_sub_2;
-        self.half_edges[base_he_idx_face_2_sub_2].twin = base_he_idx_face_2_sub_1 + 1;
-
-        // Mark face 1 as removed and add to face_split_map
-        self.faces[original_face_1].removed = true; // Mark as removed
-        // let face_split = FaceSplitMap {
-        //     face: original_face_1,
-        //     new_faces: vec![face_1_subface_1_idx, face_1_subface_2_idx],
-        // };
-        // self.face_split_map.insert(original_face_1, face_split);
-
-        // Mark face 2 as removed and add to face_split_map
-        self.faces[original_face_2].removed = true; // Mark as removed
-        // let face_split = FaceSplitMap {
-        //     face: original_face_2,
-        //     new_faces: vec![face_2_subface_1_idx, face_2_subface_2_idx],
-        // };
-        // self.face_split_map.insert(original_face_2, face_split);
+        // Mark old faces as removed
+        self.faces[original_face_1].removed = true;
+        self.faces[original_face_2].removed = true;
 
         // Mark old half-edges as removed
-        self.half_edges[he_ca].removed = true; // Mark as removed
-        // self.half_edges[he_ab].removed = true; // Mark as removed
-        // self.half_edges[he_bc].removed = true; // Mark as removed
-        self.half_edges[he_ac].removed = true; // Mark as removed
-        // self.half_edges[he_cd].removed = true; // Mark as removed
-        // self.half_edges[he_da].removed = true; // Mark as removed
+        self.half_edges[he_ca].removed = true;
+        self.half_edges[he_ac].removed = true;
 
-        self.half_edges[he_ab].face = Some(face_1_subface_2_idx);
-        self.half_edges[he_bc].face = Some(face_1_subface_1_idx);
-        self.half_edges[he_cd].face = Some(face_2_subface_1_idx);
-        self.half_edges[he_da].face = Some(face_2_subface_2_idx);
+        self.half_edges[he_bc].face = Some(base_face_idx);
+        self.half_edges[he_ab].face = Some(base_face_idx + 1);
+        self.half_edges[he_cd].face = Some(base_face_idx + 2);
+        self.half_edges[he_da].face = Some(base_face_idx + 3);
 
         // Connect the new half-edges to their respective vertices
-        self.half_edges[base_he_idx_face_1_sub_1].vertex = b; // w -> b
         self.half_edges[he_bc].vertex = c; // b -> c
-        self.half_edges[base_he_idx_face_1_sub_1 + 1].vertex = w; // c -> w
-
-        self.half_edges[base_he_idx_face_1_sub_2].vertex = a; // w -> a
         self.half_edges[he_ab].vertex = b; // a -> b
-        self.half_edges[base_he_idx_face_1_sub_2 + 1].vertex = w; // b -> w
-
-        self.half_edges[base_he_idx_face_2_sub_1].vertex = c; // w -> c
         self.half_edges[he_cd].vertex = d; // c -> d
-        self.half_edges[base_he_idx_face_2_sub_1 + 1].vertex = w; // d -> w
-
-        self.half_edges[base_he_idx_face_2_sub_2].vertex = d; // w -> d
         self.half_edges[he_da].vertex = a; // d -> a
-        self.half_edges[base_he_idx_face_2_sub_2 + 1].vertex = w; // a -> w
 
-        self.half_edge_split_map.insert(
-            he_ca,
-            (base_he_idx_face_1_sub_1 + 1, base_he_idx_face_1_sub_2),
-        );
-        self.half_edge_split_map.insert(
-            he_ac,
-            (base_he_idx_face_2_sub_2 + 1, base_he_idx_face_2_sub_1),
-        );
+        self.half_edge_split_map.insert(he_ca, (he_cw, he_wa));
+        self.half_edge_split_map.insert(he_ac, (he_aw, he_wc));
 
-        // self.half_edge_split_map
-        //     .insert(he_ab, (base_he_idx_face_1_sub_2 + 1, usize::MAX));
-        // self.half_edge_split_map
-        //     .insert(he_bc, (base_he_idx_face_1_sub_1 + 1, usize::MAX));
-        // self.half_edge_split_map
-        //     .insert(he_cd, (base_he_idx_face_2_sub_1 + 1, usize::MAX));
-        // self.half_edge_split_map
-        //     .insert(he_da, (base_he_idx_face_2_sub_2 + 2, usize::MAX));
+        let face_split = FaceSplitMap {
+            face: original_face_1,
+            new_faces: smallvec![triangle_wbc, triangle_wab],
+        };
+        self.face_split_map.insert(original_face_1, face_split);
+
+        let face_split = FaceSplitMap {
+            face: original_face_2,
+            new_faces: smallvec![triangle_wcd, triangle_wda],
+        };
+        self.face_split_map.insert(original_face_2, face_split);
 
         let split_result = SplitResult {
             kind: SplitResultKind::SplitEdge,
             vertex: w,
             new_faces: [
-                face_1_subface_1_idx,
-                face_1_subface_2_idx,
-                face_2_subface_1_idx,
-                face_2_subface_2_idx,
+                base_face_idx,
+                base_face_idx + 1,
+                base_face_idx + 2,
+                base_face_idx + 3,
             ],
         };
 
@@ -2024,7 +1848,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                 "he {} twin -> twin mismatch",
                 i
             );
-            // face must match the one it’s stored on:
+            // face must match the one it's stored on:
             if let Some(f) = he.face {
                 // check that f really contains i somewhere in its cycle…
                 let mut cur = self.faces[f].half_edge;
@@ -2040,7 +1864,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
         }
 
-        // Check every face’s entry half_edge still belongs to that face:
+        // Check every face's entry half_edge still belongs to that face:
         for (fi, face) in self.faces.iter().enumerate() {
             if face.removed {
                 continue;
@@ -2062,7 +1886,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
         }
 
-        // Check every vertex’s half_edge really points at a target half-edge:
+        // Check every vertex's half_edge really points at a target half-edge:
         for (vi, v) in self.vertices.iter().enumerate() {
             if let Some(he0) = v.half_edge {
                 let prev = self.half_edges[he0].prev;
@@ -2276,6 +2100,13 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
         // Get triangle half-edges
         let hes = self.face_half_edges(face);
+
+        if self.half_edges[hes[0]].removed
+            || self.half_edges[hes[1]].removed
+            || self.half_edges[hes[2]].removed
+        {
+            panic!("Cannot find intersection on a face with removed half-edges");
+        }
 
         let pts: [Point<T, 2>; 3] = hes
             .iter()
@@ -2547,251 +2378,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         None
     }
 
-    /// Given a face and a target point, finds an existing vertex (if close)
-    /// or splits the appropriate edge and returns the new vertex index.
-    pub fn find_or_insert_vertex_on_face(
-        &mut self,
-        aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
-        face: usize,
-        p: &Point<T, N>,
-    ) -> Option<SplitResult>
-    where
-        T: Scalar,
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        if self.faces[face].removed {
-            panic!("Cannot find or insert vertex on a removed face");
-        }
-        // 1. Check if p coincides with a face vertex.
-        let vs = self.face_vertices(face);
-        let face_vs = self.face_vertices(face);
-        for &vi in &face_vs {
-            if self.vertices[vi].position.distance_to(p).is_zero() {
-                return Some(SplitResult {
-                    kind: SplitResultKind::NoSplit,
-                    vertex: vi,
-                    new_faces: [usize::MAX; 4],
-                });
-            }
-        }
-
-        // 2. Check if p is on a face edge, and split if so.
-        for &he in &self.face_half_edges(face) {
-            let src = self.half_edges[self.half_edges[he].prev].vertex;
-            let dst = self.half_edges[he].vertex;
-            let ps = &self.vertices[src].position;
-            let pd = &self.vertices[dst].position;
-            // Is p on segment [ps, pd]?
-            if let Some(u) = point_on_segment(ps, pd, p) {
-                // Split edge and return new vertex index.
-                let split_edge_result = self.split_edge(aabb_tree, he, &p).unwrap();
-                return Some(split_edge_result);
-            }
-        }
-
-        // 3. If p is strictly inside this triangular face, split it into 3 (RARE case).
-        let a = &self.vertices[vs[0]].position;
-        let b = &self.vertices[vs[1]].position;
-        let c = &self.vertices[vs[2]].position;
-        if point_in_or_on_triangle(p, a, b, c) {
-            // println!("Point is inside the triangle, splitting... RARE CASE *********************");
-
-            let a = vs[0];
-            let b = vs[1];
-            let c = vs[2];
-
-            // 3.a add new vertex
-            let w = self.add_vertex(p.clone());
-
-            let face_1_idx = self.faces.len();
-            let face_2_idx = self.faces.len() + 1;
-            let face_3_idx = self.faces.len() + 2;
-
-            let tri1_verts = [a, w, c];
-            let tri2_verts = [w, b, c];
-            let tri3_verts = [a, b, w];
-
-            // Create face 1
-            let base_he_idx_1 = self.half_edges.len();
-            let edge_vertices_1 = [
-                (tri1_verts[0], tri1_verts[1]), // a -> w
-                (tri1_verts[1], tri1_verts[2]), // w -> c
-                (tri1_verts[2], tri1_verts[0]), // c -> a
-            ];
-
-            // Create half-edges for face 1
-            for (_i, &(_from, to)) in edge_vertices_1.iter().enumerate() {
-                let mut he = HalfEdge::new(to);
-                he.face = Some(face_1_idx);
-                self.half_edges.push(he);
-            }
-
-            // Link face 1 half-edges
-            let edge_indices_1 = [base_he_idx_1, base_he_idx_1 + 1, base_he_idx_1 + 2];
-            self.half_edges[edge_indices_1[0]].next = edge_indices_1[1];
-            self.half_edges[edge_indices_1[0]].prev = edge_indices_1[2];
-            self.half_edges[edge_indices_1[1]].next = edge_indices_1[2];
-            self.half_edges[edge_indices_1[1]].prev = edge_indices_1[0];
-            self.half_edges[edge_indices_1[2]].next = edge_indices_1[0];
-            self.half_edges[edge_indices_1[2]].prev = edge_indices_1[1];
-
-            // Create face 2
-            let base_he_idx_2 = self.half_edges.len();
-            let edge_vertices_2 = [
-                (tri2_verts[0], tri2_verts[1]), // w -> b
-                (tri2_verts[1], tri2_verts[2]), // b -> c
-                (tri2_verts[2], tri2_verts[0]), // c -> w
-            ];
-
-            // Create half-edges for face 2
-            for (_i, &(_from, to)) in edge_vertices_2.iter().enumerate() {
-                let mut he = HalfEdge::new(to);
-                he.face = Some(face_2_idx);
-                self.half_edges.push(he);
-            }
-
-            // Link face 2 half-edges
-            let edge_indices_2 = [base_he_idx_2, base_he_idx_2 + 1, base_he_idx_2 + 2];
-            self.half_edges[edge_indices_2[0]].next = edge_indices_2[1];
-            self.half_edges[edge_indices_2[0]].prev = edge_indices_2[2];
-            self.half_edges[edge_indices_2[1]].next = edge_indices_2[2];
-            self.half_edges[edge_indices_2[1]].prev = edge_indices_2[0];
-            self.half_edges[edge_indices_2[2]].next = edge_indices_2[0];
-            self.half_edges[edge_indices_2[2]].prev = edge_indices_2[1];
-
-            // Create face 3
-            let base_he_idx_3 = self.half_edges.len();
-            let edge_vertices_3 = [
-                (tri3_verts[0], tri3_verts[1]), // a -> b
-                (tri3_verts[1], tri3_verts[2]), // b -> w
-                (tri3_verts[2], tri3_verts[0]), // w -> a
-            ];
-
-            // Create half-edges for face 3
-            for (_i, &(_from, to)) in edge_vertices_3.iter().enumerate() {
-                let mut he = HalfEdge::new(to);
-                he.face = Some(face_3_idx);
-                self.half_edges.push(he);
-            }
-
-            // Link face 3 half-edges
-            let edge_indices_3 = [base_he_idx_3, base_he_idx_3 + 1, base_he_idx_3 + 2];
-            self.half_edges[edge_indices_3[0]].next = edge_indices_3[1];
-            self.half_edges[edge_indices_3[0]].prev = edge_indices_3[2];
-            self.half_edges[edge_indices_3[1]].next = edge_indices_3[2];
-            self.half_edges[edge_indices_3[1]].prev = edge_indices_3[0];
-            self.half_edges[edge_indices_3[2]].next = edge_indices_3[0];
-            self.half_edges[edge_indices_3[2]].prev = edge_indices_3[1];
-
-            self.faces.push(Face::new(edge_indices_1[0]));
-            self.faces.push(Face::new(edge_indices_2[0]));
-            self.faces.push(Face::new(edge_indices_3[0]));
-
-            self.half_edges[base_he_idx_1].face = Some(face_1_idx);
-            self.half_edges[base_he_idx_1 + 1].face = Some(face_1_idx);
-            self.half_edges[base_he_idx_1 + 2].face = Some(face_1_idx);
-
-            self.half_edges[base_he_idx_2].face = Some(face_2_idx);
-            self.half_edges[base_he_idx_2 + 1].face = Some(face_2_idx);
-            self.half_edges[base_he_idx_2 + 2].face = Some(face_2_idx);
-
-            self.half_edges[base_he_idx_3].face = Some(face_3_idx);
-            self.half_edges[base_he_idx_3 + 1].face = Some(face_3_idx);
-            self.half_edges[base_he_idx_3 + 2].face = Some(face_3_idx);
-
-            let old_he_1 = self.edge_map.get(&(a, b)).unwrap();
-            let old_he_2 = self.edge_map.get(&(b, c)).unwrap();
-            let old_he_3 = self.edge_map.get(&(c, a)).unwrap();
-
-            self.vertices[w].half_edge = Some(base_he_idx_1); // a -> w
-            self.vertices[a].half_edge = Some(base_he_idx_1 + 2); // c -> a
-            self.vertices[b].half_edge = Some(base_he_idx_2); // w -> b
-            self.vertices[c].half_edge = Some(base_he_idx_1 + 1); // w -> c
-
-            let external_twin_1 = self.half_edges[*old_he_1].twin;
-            self.half_edges[external_twin_1].twin = base_he_idx_3;
-            self.half_edges[base_he_idx_3].twin = external_twin_1;
-
-            let external_twin_2 = self.half_edges[*old_he_2].twin;
-            self.half_edges[external_twin_2].twin = base_he_idx_2 + 1;
-            self.half_edges[base_he_idx_2 + 1].twin = external_twin_2;
-
-            let external_twin_3 = self.half_edges[*old_he_3].twin;
-            self.half_edges[external_twin_3].twin = base_he_idx_1 + 2;
-            self.half_edges[base_he_idx_1 + 2].twin = external_twin_3;
-
-            // internal twins
-            // a -> w and w -> a, respectively
-            self.half_edges[base_he_idx_1].twin = base_he_idx_3 + 2;
-            self.half_edges[base_he_idx_3 + 2].twin = base_he_idx_1;
-
-            // w -> c and c -> w, respectively
-            self.half_edges[base_he_idx_1 + 1].twin = base_he_idx_2 + 2;
-            self.half_edges[base_he_idx_2 + 2].twin = base_he_idx_1 + 1;
-
-            // c -> a and a -> c, respectively
-            self.half_edges[base_he_idx_2].twin = base_he_idx_3 + 1;
-            self.half_edges[base_he_idx_3 + 1].twin = base_he_idx_2;
-
-            self.faces[face].removed = true;
-            self.half_edges[*old_he_1].removed = true;
-            self.half_edges[*old_he_2].removed = true;
-            self.half_edges[*old_he_3].removed = true;
-
-            self.half_edge_split_map
-                .insert(*old_he_1, (base_he_idx_1, usize::MAX));
-            self.half_edge_split_map
-                .insert(*old_he_2, (base_he_idx_2 + 1, usize::MAX));
-            self.half_edge_split_map
-                .insert(*old_he_3, (base_he_idx_1 + 2, usize::MAX));
-
-            let face_split_map = FaceSplitMap {
-                face: face,
-                new_faces: vec![face_1_idx, face_2_idx, face_3_idx],
-            };
-            self.face_split_map.insert(face, face_split_map);
-
-            self.edge_map.insert((a, w), base_he_idx_1);
-            self.edge_map.insert((w, c), base_he_idx_1 + 1);
-            self.edge_map.insert((c, a), base_he_idx_1 + 2);
-
-            self.edge_map.insert((w, b), base_he_idx_2);
-            self.edge_map.insert((b, c), base_he_idx_2 + 1);
-            self.edge_map.insert((c, w), base_he_idx_2 + 2);
-
-            self.edge_map.insert((a, b), base_he_idx_3);
-            self.edge_map.insert((b, w), base_he_idx_3 + 1);
-            self.edge_map.insert((w, a), base_he_idx_3 + 2);
-
-            let split_result = SplitResult {
-                kind: SplitResultKind::SplitFace,
-                vertex: w,
-                new_faces: [face_1_idx, face_2_idx, face_3_idx, usize::MAX],
-            };
-
-            for i in 0..3 {
-                let face_aabb = self.face_aabb(split_result.new_faces[i]);
-                aabb_tree.insert(face_aabb, split_result.new_faces[i]);
-            }
-
-            aabb_tree.invalidate(&face);
-
-            // remove_invalidated_faces(self);
-            // self.remove_unused_vertices();
-            // let _ = write_obj(&self, "/mnt/v/cgar_meshes/vamooo.obj");
-            // panic!("a");
-
-            return Some(split_result);
-        }
-
-        None
-    }
-
     pub fn split_face(
         &mut self,
         aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
@@ -2807,203 +2393,227 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             + Add<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
+        let face = self.find_valid_face(face, p);
         if self.faces[face].removed {
             panic!("Cannot find or insert vertex on a removed face");
         }
 
-        let vs = self.face_vertices(face);
+        // let _ = write_obj(&self, "/mnt/v/cgar_meshes/vamooo_0.obj");
 
-        // If p is strictly inside this triangular face, split it into 3 (RARE case).
-        let a = &self.vertices[vs[0]].position;
-        let b = &self.vertices[vs[1]].position;
-        let c = &self.vertices[vs[2]].position;
-        if point_in_or_on_triangle(p, a, b, c) {
-            // println!("Point is inside the triangle, splitting... RARE CASE *********************");
+        let he_ab = self.find_valid_half_edge(self.faces[face].half_edge, &p);
+        let he_bc = self.half_edges[he_ab].next;
+        let he_ca = self.half_edges[he_bc].next;
 
-            let a = vs[0];
-            let b = vs[1];
-            let c = vs[2];
+        let w = self.add_vertex(p.clone());
 
-            // Add new vertex
-            let w = self.add_vertex(p.clone());
+        let a = self.half_edges[he_ca].vertex;
+        let b = self.half_edges[he_ab].vertex;
+        let c = self.half_edges[he_bc].vertex;
 
-            let face_1_idx = self.faces.len();
-            let face_2_idx = self.faces.len() + 1;
-            let face_3_idx = self.faces.len() + 2;
+        // if self.half_edges[self.vertices[vs[0]].half_edge.unwrap()]
+        //     .face
+        //     .unwrap()
+        //     != face
+        // {
+        //     panic!("Face half-edge does not match the face");
+        // }
+        // if self.half_edges[self.vertices[vs[1]].half_edge.unwrap()]
+        //     .face
+        //     .unwrap()
+        //     != face
+        // {
+        //     panic!("Face half-edge does not match the face");
+        // }
+        // if self.half_edges[self.vertices[vs[2]].half_edge.unwrap()]
+        //     .face
+        //     .unwrap()
+        //     != face
+        // {
+        //     panic!("Face half-edge does not match the face");
+        // }
 
-            let tri1_verts = [a, w, c];
-            let tri2_verts = [w, b, c];
-            let tri3_verts = [a, b, w];
+        let subface_1_verts = [a, w, c];
+        let subface_2_verts = [c, w, b];
+        let subface_3_verts = [b, w, a];
 
-            // Create face 1
-            let base_he_idx_1 = self.half_edges.len();
-            let edge_vertices_1 = [
-                (tri1_verts[0], tri1_verts[1]), // a -> w
-                (tri1_verts[1], tri1_verts[2]), // w -> c
-                (tri1_verts[2], tri1_verts[0]), // c -> a
-            ];
+        let subface_1_idx = self.faces.len();
+        let subface_2_idx = self.faces.len() + 1;
+        let subface_3_idx = self.faces.len() + 2;
 
-            // Create half-edges for face 1
-            for (_i, &(_from, to)) in edge_vertices_1.iter().enumerate() {
-                let mut he = HalfEdge::new(to);
-                he.face = Some(face_1_idx);
-                self.half_edges.push(he);
-            }
+        // Create subface 1
+        let base_he_idx_1 = self.half_edges.len();
+        let edge_vertices_1 = [
+            (subface_1_verts[0], subface_1_verts[1]), // a -> w
+            (subface_1_verts[1], subface_1_verts[2]), // w -> c
+                                                      // c -> a
+        ];
 
-            // Link face 1 half-edges
-            let edge_indices_1 = [base_he_idx_1, base_he_idx_1 + 1, base_he_idx_1 + 2];
-            self.half_edges[edge_indices_1[0]].next = edge_indices_1[1];
-            self.half_edges[edge_indices_1[0]].prev = edge_indices_1[2];
-            self.half_edges[edge_indices_1[1]].next = edge_indices_1[2];
-            self.half_edges[edge_indices_1[1]].prev = edge_indices_1[0];
-            self.half_edges[edge_indices_1[2]].next = edge_indices_1[0];
-            self.half_edges[edge_indices_1[2]].prev = edge_indices_1[1];
-
-            // Create face 2
-            let base_he_idx_2 = self.half_edges.len();
-            let edge_vertices_2 = [
-                (tri2_verts[0], tri2_verts[1]), // w -> b
-                (tri2_verts[1], tri2_verts[2]), // b -> c
-                (tri2_verts[2], tri2_verts[0]), // c -> w
-            ];
-
-            // Create half-edges for face 2
-            for (_i, &(_from, to)) in edge_vertices_2.iter().enumerate() {
-                let mut he = HalfEdge::new(to);
-                he.face = Some(face_2_idx);
-                self.half_edges.push(he);
-            }
-
-            // Link face 2 half-edges
-            let edge_indices_2 = [base_he_idx_2, base_he_idx_2 + 1, base_he_idx_2 + 2];
-            self.half_edges[edge_indices_2[0]].next = edge_indices_2[1];
-            self.half_edges[edge_indices_2[0]].prev = edge_indices_2[2];
-            self.half_edges[edge_indices_2[1]].next = edge_indices_2[2];
-            self.half_edges[edge_indices_2[1]].prev = edge_indices_2[0];
-            self.half_edges[edge_indices_2[2]].next = edge_indices_2[0];
-            self.half_edges[edge_indices_2[2]].prev = edge_indices_2[1];
-
-            // Create face 3
-            let base_he_idx_3 = self.half_edges.len();
-            let edge_vertices_3 = [
-                (tri3_verts[0], tri3_verts[1]), // a -> b
-                (tri3_verts[1], tri3_verts[2]), // b -> w
-                (tri3_verts[2], tri3_verts[0]), // w -> a
-            ];
-
-            // Create half-edges for face 3
-            for (_i, &(_from, to)) in edge_vertices_3.iter().enumerate() {
-                let mut he = HalfEdge::new(to);
-                he.face = Some(face_3_idx);
-                self.half_edges.push(he);
-            }
-
-            // Link face 3 half-edges
-            let edge_indices_3 = [base_he_idx_3, base_he_idx_3 + 1, base_he_idx_3 + 2];
-            self.half_edges[edge_indices_3[0]].next = edge_indices_3[1];
-            self.half_edges[edge_indices_3[0]].prev = edge_indices_3[2];
-            self.half_edges[edge_indices_3[1]].next = edge_indices_3[2];
-            self.half_edges[edge_indices_3[1]].prev = edge_indices_3[0];
-            self.half_edges[edge_indices_3[2]].next = edge_indices_3[0];
-            self.half_edges[edge_indices_3[2]].prev = edge_indices_3[1];
-
-            self.faces.push(Face::new(edge_indices_1[0]));
-            self.faces.push(Face::new(edge_indices_2[0]));
-            self.faces.push(Face::new(edge_indices_3[0]));
-
-            self.half_edges[base_he_idx_1].face = Some(face_1_idx);
-            self.half_edges[base_he_idx_1 + 1].face = Some(face_1_idx);
-            self.half_edges[base_he_idx_1 + 2].face = Some(face_1_idx);
-
-            self.half_edges[base_he_idx_2].face = Some(face_2_idx);
-            self.half_edges[base_he_idx_2 + 1].face = Some(face_2_idx);
-            self.half_edges[base_he_idx_2 + 2].face = Some(face_2_idx);
-
-            self.half_edges[base_he_idx_3].face = Some(face_3_idx);
-            self.half_edges[base_he_idx_3 + 1].face = Some(face_3_idx);
-            self.half_edges[base_he_idx_3 + 2].face = Some(face_3_idx);
-
-            let old_he_1 = self.edge_map.get(&(a, b)).unwrap();
-            let old_he_2 = self.edge_map.get(&(b, c)).unwrap();
-            let old_he_3 = self.edge_map.get(&(c, a)).unwrap();
-
-            self.vertices[w].half_edge = Some(base_he_idx_1); // a -> w
-            self.vertices[a].half_edge = Some(base_he_idx_1 + 2); // c -> a
-            self.vertices[b].half_edge = Some(base_he_idx_2); // w -> b
-            self.vertices[c].half_edge = Some(base_he_idx_1 + 1); // w -> c
-
-            let external_twin_1 = self.half_edges[*old_he_1].twin;
-            self.half_edges[external_twin_1].twin = base_he_idx_3;
-            self.half_edges[base_he_idx_3].twin = external_twin_1;
-
-            let external_twin_2 = self.half_edges[*old_he_2].twin;
-            self.half_edges[external_twin_2].twin = base_he_idx_2 + 1;
-            self.half_edges[base_he_idx_2 + 1].twin = external_twin_2;
-
-            let external_twin_3 = self.half_edges[*old_he_3].twin;
-            self.half_edges[external_twin_3].twin = base_he_idx_1 + 2;
-            self.half_edges[base_he_idx_1 + 2].twin = external_twin_3;
-
-            // internal twins
-            // a -> w and w -> a, respectively
-            self.half_edges[base_he_idx_1].twin = base_he_idx_3 + 2;
-            self.half_edges[base_he_idx_3 + 2].twin = base_he_idx_1;
-
-            // w -> c and c -> w, respectively
-            self.half_edges[base_he_idx_1 + 1].twin = base_he_idx_2 + 2;
-            self.half_edges[base_he_idx_2 + 2].twin = base_he_idx_1 + 1;
-
-            // c -> a and a -> c, respectively
-            self.half_edges[base_he_idx_2].twin = base_he_idx_3 + 1;
-            self.half_edges[base_he_idx_3 + 1].twin = base_he_idx_2;
-
-            self.faces[face].removed = true;
-            self.half_edges[*old_he_1].removed = true;
-            self.half_edges[*old_he_2].removed = true;
-            self.half_edges[*old_he_3].removed = true;
-
-            self.half_edge_split_map
-                .insert(*old_he_1, (base_he_idx_1, usize::MAX));
-            self.half_edge_split_map
-                .insert(*old_he_2, (base_he_idx_2 + 1, usize::MAX));
-            self.half_edge_split_map
-                .insert(*old_he_3, (base_he_idx_1 + 2, usize::MAX));
-
-            let face_split_map = FaceSplitMap {
-                face: face,
-                new_faces: vec![face_1_idx, face_2_idx, face_3_idx],
-            };
-            self.face_split_map.insert(face, face_split_map);
-
-            self.edge_map.insert((a, w), base_he_idx_1);
-            self.edge_map.insert((w, c), base_he_idx_1 + 1);
-            self.edge_map.insert((c, a), base_he_idx_1 + 2);
-
-            self.edge_map.insert((w, b), base_he_idx_2);
-            self.edge_map.insert((b, c), base_he_idx_2 + 1);
-            self.edge_map.insert((c, w), base_he_idx_2 + 2);
-
-            self.edge_map.insert((a, b), base_he_idx_3);
-            self.edge_map.insert((b, w), base_he_idx_3 + 1);
-            self.edge_map.insert((w, a), base_he_idx_3 + 2);
-
-            let split_result = SplitResult {
-                kind: SplitResultKind::SplitFace,
-                vertex: w,
-                new_faces: [face_1_idx, face_2_idx, face_3_idx, usize::MAX],
-            };
-
-            for i in 0..3 {
-                let face_aabb = self.face_aabb(split_result.new_faces[i]);
-                aabb_tree.insert(face_aabb, split_result.new_faces[i]);
-            }
-
-            aabb_tree.invalidate(&face);
-
-            return Some(split_result);
+        // Create half-edges for face 1
+        for (_i, &(_from, to)) in edge_vertices_1.iter().enumerate() {
+            let mut he = HalfEdge::new(to);
+            he.face = Some(subface_1_idx);
+            self.half_edges.push(he);
         }
 
-        None
+        // Link face 1 half-edges
+        let edge_indices_1 = [base_he_idx_1, base_he_idx_1 + 1, he_ca];
+        self.half_edges[edge_indices_1[0]].next = edge_indices_1[1];
+        self.half_edges[edge_indices_1[0]].prev = edge_indices_1[2];
+        self.half_edges[edge_indices_1[1]].next = edge_indices_1[2];
+        self.half_edges[edge_indices_1[1]].prev = edge_indices_1[0];
+        self.half_edges[edge_indices_1[2]].next = edge_indices_1[0];
+        self.half_edges[edge_indices_1[2]].prev = edge_indices_1[1];
+
+        // Create face 2
+        let base_he_idx_2 = self.half_edges.len();
+        let edge_vertices_2 = [
+            (subface_2_verts[0], subface_2_verts[1]), // c -> w
+            (subface_2_verts[1], subface_2_verts[2]), // w -> b
+                                                      // b -> c
+        ];
+
+        // Create half-edges for face 2
+        for (_i, &(_from, to)) in edge_vertices_2.iter().enumerate() {
+            let mut he = HalfEdge::new(to);
+            he.face = Some(subface_2_idx);
+            self.half_edges.push(he);
+        }
+
+        // Link face 2 half-edges
+        let edge_indices_2 = [base_he_idx_2, base_he_idx_2 + 1, he_bc];
+        self.half_edges[edge_indices_2[0]].next = edge_indices_2[1];
+        self.half_edges[edge_indices_2[0]].prev = edge_indices_2[2];
+        self.half_edges[edge_indices_2[1]].next = edge_indices_2[2];
+        self.half_edges[edge_indices_2[1]].prev = edge_indices_2[0];
+        self.half_edges[edge_indices_2[2]].next = edge_indices_2[0];
+        self.half_edges[edge_indices_2[2]].prev = edge_indices_2[1];
+
+        // Create face 3
+        let base_he_idx_3 = self.half_edges.len();
+        let edge_vertices_3 = [
+            (subface_3_verts[0], subface_3_verts[1]), // b -> w
+            (subface_3_verts[1], subface_3_verts[2]), // w -> a
+                                                      // a -> b
+        ];
+
+        // Create half-edges for face 3
+        for (_i, &(_from, to)) in edge_vertices_3.iter().enumerate() {
+            let mut he = HalfEdge::new(to);
+            he.face = Some(subface_3_idx);
+            self.half_edges.push(he);
+        }
+
+        // Link face 3 half-edges
+        let edge_indices_3 = [base_he_idx_3, base_he_idx_3 + 1, he_ab];
+        self.half_edges[edge_indices_3[0]].next = edge_indices_3[1];
+        self.half_edges[edge_indices_3[0]].prev = edge_indices_3[2];
+        self.half_edges[edge_indices_3[1]].next = edge_indices_3[2];
+        self.half_edges[edge_indices_3[1]].prev = edge_indices_3[0];
+        self.half_edges[edge_indices_3[2]].next = edge_indices_3[0];
+        self.half_edges[edge_indices_3[2]].prev = edge_indices_3[1];
+
+        self.faces.push(Face::new(edge_indices_1[0]));
+        self.faces.push(Face::new(edge_indices_2[0]));
+        self.faces.push(Face::new(edge_indices_3[0]));
+
+        self.faces[face].removed = true;
+
+        // self.half_edges[base_he_idx_1].face = Some(subface_1_idx);
+        // self.half_edges[base_he_idx_1 + 1].face = Some(subface_1_idx);
+        self.half_edges[he_ca].face = Some(subface_1_idx);
+
+        // self.half_edges[base_he_idx_2].face = Some(subface_2_idx);
+        // self.half_edges[base_he_idx_2 + 1].face = Some(subface_2_idx);
+        self.half_edges[he_bc].face = Some(subface_2_idx);
+
+        // self.half_edges[base_he_idx_3].face = Some(subface_3_idx);
+        // self.half_edges[base_he_idx_3 + 1].face = Some(subface_3_idx);
+        self.half_edges[he_ab].face = Some(subface_3_idx);
+
+        self.vertices[w].half_edge = Some(base_he_idx_2 + 1); // w -> b
+        self.vertices[a].half_edge = Some(he_ab);
+        self.vertices[b].half_edge = Some(he_bc);
+        self.vertices[c].half_edge = Some(he_ca);
+
+        self.half_edges[base_he_idx_1].vertex = w; // a -> w
+        self.half_edges[base_he_idx_1 + 1].vertex = c; // w -> c
+
+        self.half_edges[base_he_idx_2].vertex = w; // c -> w
+        self.half_edges[base_he_idx_2 + 1].vertex = b; // w -> b
+
+        self.half_edges[base_he_idx_3].vertex = w; // b -> w
+        self.half_edges[base_he_idx_3 + 1].vertex = a; // w -> a
+
+        self.faces[subface_1_idx].half_edge = base_he_idx_1;
+        self.faces[subface_2_idx].half_edge = base_he_idx_2;
+        self.faces[subface_3_idx].half_edge = base_he_idx_3;
+
+        // internal twins
+        // w -> a and a -> w, respectively
+        self.half_edges[base_he_idx_3 + 1].twin = base_he_idx_1;
+        self.half_edges[base_he_idx_1].twin = base_he_idx_3 + 1;
+
+        // w -> c and c -> w, respectively
+        self.half_edges[base_he_idx_1 + 1].twin = base_he_idx_2;
+        self.half_edges[base_he_idx_2].twin = base_he_idx_1 + 1;
+
+        // w -> b and b -> w, respectively
+        self.half_edges[base_he_idx_2 + 1].twin = base_he_idx_3;
+        self.half_edges[base_he_idx_3].twin = base_he_idx_2 + 1;
+
+        self.edge_map.insert((a, w), base_he_idx_1);
+        self.edge_map.insert((w, c), base_he_idx_1 + 1);
+
+        self.edge_map.insert((c, w), base_he_idx_2);
+        self.edge_map.insert((w, b), base_he_idx_2 + 1);
+
+        self.edge_map.insert((b, w), base_he_idx_3);
+        self.edge_map.insert((w, a), base_he_idx_3 + 1);
+
+        let triangle_awc = Triangle {
+            face_idx: subface_1_idx,
+            vertices: [a, w, c],
+        };
+        let triangle_cwb = Triangle {
+            face_idx: subface_2_idx,
+            vertices: [c, w, b],
+        };
+        let triangle_bwa = Triangle {
+            face_idx: subface_3_idx,
+            vertices: [b, w, a],
+        };
+
+        let face_split = FaceSplitMap {
+            face: face,
+            new_faces: smallvec![triangle_awc, triangle_cwb, triangle_bwa],
+        };
+        self.face_split_map.insert(face, face_split);
+
+        let split_result = SplitResult {
+            kind: SplitResultKind::SplitFace,
+            vertex: w,
+            new_faces: [subface_1_idx, subface_2_idx, subface_3_idx, usize::MAX],
+        };
+
+        for i in 0..3 {
+            let face_aabb = self.face_aabb(split_result.new_faces[i]);
+            aabb_tree.insert(face_aabb, split_result.new_faces[i]);
+        }
+
+        aabb_tree.invalidate(&face);
+
+        // let _ = write_obj(&self, "/mnt/v/cgar_meshes/vamooo.obj");
+        // self.validate_connectivity();
+
+        // println!(
+        //     "created faces {} {} {}",
+        //     subface_1_idx, subface_2_idx, subface_3_idx
+        // );
+
+        // println!("With center vertex {}", w);
+        // println!("Positioned at {:?}", p);
+
+        Some(split_result)
     }
 
     pub fn half_edge_between(&self, vi0: usize, vi1: usize) -> Option<usize> {
@@ -3042,6 +2652,42 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
         }
         None
+    }
+
+    pub fn find_valid_face(&self, face_idx: usize, point: &Point<T, N>) -> usize
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
+        for<'a> &'a T: Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Add<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
+    {
+        // base case: if this face is still around, we’re done
+        if !self.faces[face_idx].removed {
+            return face_idx;
+        }
+
+        // if it was split, try each child
+        if let Some(mapping) = self.face_split_map.get(&face_idx) {
+            for tri in &mapping.new_faces {
+                let [i0, i1, i2] = tri.vertices;
+                if point_in_or_on_triangle(
+                    point,
+                    &self.vertices[i0].position,
+                    &self.vertices[i1].position,
+                    &self.vertices[i2].position,
+                ) {
+                    // recurse into that sub-face
+                    return self.find_valid_face(tri.face_idx, point);
+                }
+            }
+        }
+
+        panic!(
+            "find_valid_face: no child triangle contains point {:?}",
+            point
+        );
     }
 
     pub fn find_valid_half_edge(&self, mut he_idx: usize, point_hint: &Point<T, N>) -> usize
@@ -3687,236 +3333,6 @@ fn find_shared_edge_between_faces<T: Scalar, const N: usize>(
     }
 
     None
-}
-
-/// Create edge in shared face (atomic operation)
-fn create_edge_in_shared_face<T: Scalar, const N: usize>(
-    mesh: &mut Mesh<T, N>,
-    face_idx: usize,
-    vertex_a: usize,
-    vertex_b: usize,
-) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    let face_vertices = get_face_vertices_with_timeout(mesh, face_idx, 50);
-    if face_vertices.is_none() {
-        return false;
-    }
-    let face_vertices = face_vertices.unwrap();
-
-    if face_vertices.len() != 3 {
-        return false;
-    }
-
-    // Find third vertex
-    let vertex_c = face_vertices
-        .iter()
-        .find(|&&v| v != vertex_a && v != vertex_b)
-        .copied();
-
-    if vertex_c.is_none() {
-        return false;
-    }
-    let vertex_c = vertex_c.unwrap();
-
-    // Validate triangle is not degenerate
-    let pos_a = &mesh.vertices[vertex_a].position;
-    let pos_b = &mesh.vertices[vertex_b].position;
-    let pos_c = &mesh.vertices[vertex_c].position;
-
-    if !is_triangle_non_degenerate(pos_a, pos_b, pos_c) {
-        return false;
-    }
-
-    mesh.faces[face_idx].removed = true;
-    mesh.face_split_map
-        .entry(face_idx)
-        .or_default()
-        .new_faces
-        .push(mesh.faces.len());
-
-    // Add exactly one triangle with correct orientation
-    if preserve_face_orientation(&face_vertices, vertex_a, vertex_b, vertex_c) {
-        mesh.add_triangle(vertex_a, vertex_b, vertex_c);
-    } else {
-        mesh.add_triangle(vertex_b, vertex_a, vertex_c);
-    }
-
-    true
-}
-
-/// Direct geometric connection (non-recursive fallback)
-fn create_direct_geometric_connection<T: Scalar, const N: usize>(
-    mesh: &mut Mesh<T, N>,
-    vertex_a: usize,
-    vertex_b: usize,
-) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // Find any face containing vertex_a
-    let faces_a = find_faces_containing_vertex_safe(mesh, vertex_a);
-    if faces_a.is_empty() {
-        return false;
-    }
-
-    let face_idx = faces_a[0];
-    let face_vertices = get_face_vertices_with_timeout(mesh, face_idx, 50);
-    if face_vertices.is_none() {
-        return false;
-    }
-    let face_vertices = face_vertices.unwrap();
-
-    if face_vertices.len() != 3 {
-        return false;
-    }
-
-    // Find other vertices in the face
-    let other_vertices: Vec<usize> = face_vertices
-        .iter()
-        .filter(|&&v| v != vertex_a)
-        .copied()
-        .collect();
-
-    if other_vertices.len() != 2 {
-        return false;
-    }
-
-    // **ATOMIC OPERATION: Replace face with fan triangulation**
-    mesh.faces[face_idx].removed = true;
-
-    // Create triangles connecting to target vertex
-    mesh.add_triangle(vertex_a, vertex_b, other_vertices[0]);
-    mesh.add_triangle(vertex_b, other_vertices[1], other_vertices[0]);
-    mesh.add_triangle(vertex_a, other_vertices[1], vertex_b);
-
-    true
-}
-
-/// Check if triangle is non-degenerate
-fn is_triangle_non_degenerate<T: Scalar, const N: usize>(
-    pos_a: &Point<T, N>,
-    pos_b: &Point<T, N>,
-    pos_c: &Point<T, N>,
-) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // Check edge lengths
-    if pos_a.distance_to(pos_b) < T::edge_degeneracy_threshold()
-        || pos_b.distance_to(pos_c) < T::edge_degeneracy_threshold()
-        || pos_c.distance_to(pos_a) < T::edge_degeneracy_threshold()
-    {
-        return false;
-    }
-
-    // Check area
-    let edge1 = (pos_b - pos_a).as_vector();
-    let edge2 = (pos_c - pos_a).as_vector();
-    let cross = edge1.cross(&edge2);
-
-    cross.norm() > T::area_degeneracy_threshold()
-}
-
-/// Preserve face orientation when creating new triangle
-fn preserve_face_orientation(
-    face_vertices: &[usize],
-    vertex_a: usize,
-    vertex_b: usize,
-    vertex_c: usize,
-) -> bool {
-    let pos_a = face_vertices
-        .iter()
-        .position(|&v| v == vertex_a)
-        .unwrap_or(0);
-    let pos_b = face_vertices
-        .iter()
-        .position(|&v| v == vertex_b)
-        .unwrap_or(1);
-    let pos_c = face_vertices
-        .iter()
-        .position(|&v| v == vertex_c)
-        .unwrap_or(2);
-
-    // Maintain cyclic order
-    ((pos_a + 1) % 3 == pos_b && (pos_b + 1) % 3 == pos_c)
-        || ((pos_a + 2) % 3 == pos_c && (pos_c + 1) % 3 == pos_b)
-}
-
-fn compute_boundary_loop_score<T: Scalar, const N: usize>(
-    loop_segments: &Vec<usize>,
-    segments: &Vec<IntersectionSegment<T, N>>,
-) -> f64
-where
-    Point<T, N>: PointOps<T, N>,
-    Segment<T, N>: SegmentOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    if loop_segments.is_empty() {
-        return 0.0;
-    }
-
-    // 1. Length score (longer loops are generally better for outer boundaries)
-    let length_score = loop_segments.len() as f64 * 10.0;
-
-    // 2. Geometric perimeter score
-    let total_length: f64 = loop_segments
-        .iter()
-        .map(|&seg_idx| segments[seg_idx].segment.length().to_f64().unwrap())
-        .sum();
-    let perimeter_score = total_length * 5.0;
-
-    // 3. Regularity score (prefer loops with more uniform segment lengths)
-    let avg_length = total_length / loop_segments.len() as f64;
-    let variance: f64 = loop_segments
-        .iter()
-        .map(|&seg_idx| {
-            let len = segments[seg_idx].segment.length().to_f64().unwrap();
-            (len - avg_length).powi(2)
-        })
-        .sum::<f64>()
-        / loop_segments.len() as f64;
-
-    let regularity_score = if variance < 1e-10 {
-        5.0
-    } else {
-        5.0 / (1.0 + variance)
-    };
-
-    // 4. Closure bonus (complete loops are much better than partial paths)
-    let closure_bonus = if is_closed_loop(loop_segments, segments) {
-        50.0
-    } else {
-        0.0
-    };
-
-    // 5. Topological validity score for flood fill classification
-    let topology_score = if is_manifold_boundary_loop(loop_segments, segments) {
-        100.0 // High bonus for valid manifold boundaries
-    } else {
-        20.0 // Lower score for non-manifold boundaries
-    };
-
-    length_score + perimeter_score + regularity_score + closure_bonus + topology_score
 }
 
 fn is_manifold_boundary_loop<T: Scalar, const N: usize>(
