@@ -29,7 +29,6 @@ use crate::{
         spatial_element::SpatialElement,
         vector::{Vector, VectorOps},
     },
-    io::obj::write_obj,
     mesh::face,
     numeric::scalar::Scalar,
     operations::Zero,
@@ -309,7 +308,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                 .face
                 .expect("Half-edge must have a face");
             let twin = self.find_valid_half_edge(self.half_edges[*he].twin, &seg.segment.a);
-            println!("Here 11");
             let face1 = self.half_edges[twin]
                 .face
                 .expect("Half-edge must have a face");
@@ -378,7 +376,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             adjacency_graph.insert(face_idx, adjacent_faces);
         }
 
-        // println!("Built adjacency graph for {} faces", adjacency_graph.len());
         adjacency_graph
     }
 
@@ -388,8 +385,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         // Filter out invalidated faces
         let mut new_faces = Vec::new();
         let mut face_mapping = vec![None; self.faces.len()];
-
-        println!("num of faces before removal: {}", original_count);
 
         for (old_idx, face) in self.faces.iter().enumerate() {
             if !face.removed {
@@ -412,8 +407,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                 }
             }
         }
-
-        println!("num of faces after removal: {}", new_faces.len());
 
         // Replace faces
         self.faces = new_faces;
@@ -806,7 +799,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
         // **OPTIMIZED: Early exit with tree rebuild**
         if candidates.is_empty() {
-            println!("NEEDED RECONSTRUCTION 1");
             // Try with much larger search radius before rebuilding
             let large_tolerance = T::tolerance() * T::from(100.0);
             let large_query_aabb = Aabb::from_points(
@@ -892,7 +884,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
 
         // **OPTIMIZED: Tree rebuild detection**
         if result.is_empty() && !candidates.is_empty() {
-            println!("NEEDED RECONSTRUCTION");
             // Candidates existed but none contained point - possible stale tree
             *aabb_tree = self.build_face_tree();
             return self.faces_containing_point_aabb(aabb_tree, p);
@@ -1848,6 +1839,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                 "he {} twin -> twin mismatch",
                 i
             );
+
             // face must match the one it's stored on:
             if let Some(f) = he.face {
                 // check that f really contains i somewhere in its cycle…
@@ -1862,6 +1854,21 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                     assert!(cur != self.faces[f].half_edge, "he {} not in face {}", i, f);
                 }
             }
+        }
+
+        let mut edge_set = HashSet::new();
+        for (i, he) in self.half_edges.iter().enumerate() {
+            if he.removed {
+                continue;
+            }
+            let src = self.half_edges[he.prev].vertex;
+            let dst = he.vertex;
+            assert!(
+                edge_set.insert((src, dst)),
+                "duplicate half-edge ({},{})",
+                src,
+                dst
+            );
         }
 
         // Check every face's entry half_edge still belongs to that face:
@@ -2132,10 +2139,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
         }
 
-        // if closest_he.is_none() {
-        //     let _ = write_obj(&self, "/mnt/v/cgar_meshes/new.obj");
-        // }
-
         if let Some(he) = closest_he {
             return Some((he, closest_t.unwrap(), closest_u.unwrap()));
         }
@@ -2398,8 +2401,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             panic!("Cannot find or insert vertex on a removed face");
         }
 
-        // let _ = write_obj(&self, "/mnt/v/cgar_meshes/vamooo_0.obj");
-
         let he_ab = self.find_valid_half_edge(self.faces[face].half_edge, &p);
         let he_bc = self.half_edges[he_ab].next;
         let he_ca = self.half_edges[he_bc].next;
@@ -2601,17 +2602,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
 
         aabb_tree.invalidate(&face);
-
-        // let _ = write_obj(&self, "/mnt/v/cgar_meshes/vamooo.obj");
-        // self.validate_connectivity();
-
-        // println!(
-        //     "created faces {} {} {}",
-        //     subface_1_idx, subface_2_idx, subface_3_idx
-        // );
-
-        // println!("With center vertex {}", w);
-        // println!("Positioned at {:?}", p);
 
         Some(split_result)
     }
@@ -3019,6 +3009,8 @@ where
     // Reconstruct point on segment line
     let proj = ab.scale(&u);
     let rejection = &ap - &proj;
+
+    println!("rejection: {:?}", rejection);
 
     // If rejection is non-zero, p is not on the line
     if rejection.norm_squared().is_zero()
@@ -3579,6 +3571,8 @@ where
     let v = (&d11 * &d20 - &d01 * &d21) / denom.clone();
     let w = (&d00 * &d21 - &d01 * &d20) / denom;
     let u = &T::one() - &(&v - &w);
+
+    // println!("Barycentric coords: u={:?}, v={:?}, w={:?}", u, v, w);
 
     Some((u, v, w))
 }
