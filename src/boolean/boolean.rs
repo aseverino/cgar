@@ -1396,7 +1396,7 @@ where
                 println!("Creating new intersection to fill the gap.");
                 let v_a = &intersection_segments[segment_idx].segment[0];
                 let v_b = &intersection_segments[segment_idx].segment[1];
-                let new_point = v_a + &(v_b - v_a).as_vector().scale(&t).0;
+                let new_point = v_a + &(segment_direction).scale(&t).0;
                 // let new_point =
                 //     &intersection_segments[segment_idx].segment[0] + &segment_direction.scale(&t).0;
 
