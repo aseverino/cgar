@@ -1813,8 +1813,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         aabb_tree.invalidate(&original_face_1);
         aabb_tree.invalidate(&original_face_2);
 
-        self.validate_connectivity();
-
         Ok(split_result)
     }
 

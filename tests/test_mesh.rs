@@ -797,8 +797,6 @@ fn make_cube(origin: [f64; 3], min: [f64; 3], max: [f64; 3]) -> Mesh<CgarF64, 3>
         m.add_triangle(v[f[0]], v[f[1]], v[f[2]]);
     }
 
-    m.validate_connectivity();
-
     m
 }
 

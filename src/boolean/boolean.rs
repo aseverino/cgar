@@ -508,8 +508,6 @@ where
     }
 
     fn boolean(&self, other: &Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
-        self.validate_connectivity();
-        other.validate_connectivity();
         let mut a = self.clone();
         let mut b = other.clone();
 
@@ -988,7 +986,6 @@ where
             + Neg<Output = T>,
     {
         let mut vertex_ab = [usize::MAX, usize::MAX];
-        // self.validate_connectivity();
 
         // We first check if a half_edge hint gives us an exact vertex.
         if segment_idx > 0 {
@@ -1206,7 +1203,6 @@ where
         // Let's find out if both endpoints are on the same face or adjacent.
         let face_a = get_face(self, &intersection_segments[segment_idx], 0);
         let face_b = get_face(self, &intersection_segments[segment_idx], 1);
-        self.validate_connectivity();
 
         if self.faces[face_a].removed
             || self.faces[face_b].removed
@@ -1245,9 +1241,6 @@ where
                 let updated_he = self.find_valid_half_edge(he, &new_point);
                 let updated_he_twin =
                     self.find_valid_half_edge(self.half_edges[updated_he].twin, &new_point);
-
-                let mut test_mesh = Mesh::new();
-                test_mesh.add_vertex(new_point.clone());
 
                 let updated_face = self.half_edges[updated_he_twin]
                     .face
