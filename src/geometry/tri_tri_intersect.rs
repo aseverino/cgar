@@ -232,9 +232,11 @@ where
     // 5) dedupe
     let mut set = HashSet::new();
     let mut uniq: Vec<Point<T, N>> = Vec::new();
+    println!("adding an intersection:");
     for p in pts {
         if set.insert(p.clone()) {
-            uniq.push(p)
+            println!("{:?}", p);
+            uniq.push(p);
         }
     }
 
@@ -367,6 +369,21 @@ where
     let d_p1 = &n2.dot(&p[1].as_vector()) + &d2;
     let d_p2 = &n2.dot(&p[2].as_vector()) + &d2;
 
+    let zero_p = [d_p0.is_zero(), d_p1.is_zero(), d_p2.is_zero()];
+    let zc_p = zero_p.iter().filter(|z| **z).count();
+
+    if zc_p == 2 {
+        let (i, j) = match zero_p {
+            [true, true, false] => (0, 1),
+            [true, false, true] => (0, 2),
+            [false, true, true] => (1, 2),
+            _ => unreachable!(),
+        };
+        if let Some((a3, b3)) = clip_segment_to_triangle_in_plane(p[i], p[j], q, &n2) {
+            return TriTriIntersectionResult::Coplanar(Segment::new(&a3, &b3));
+        }
+    }
+
     // Fall back for strictly co-planar
     if d_p0.is_zero() && d_p1.is_zero() && d_p2.is_zero() {
         return coplanar_tri_tri_intersection(p, q, &n2);
@@ -387,6 +404,25 @@ where
     let u02 = (p[1] - p[2]).as_vector();
     let n1 = u01.cross(&u02);
     let d1 = -n1.dot(&p[2].as_vector());
+
+    let d_q0 = &n1.dot(&q[0].as_vector()) + &d1;
+    let d_q1 = &n1.dot(&q[1].as_vector()) + &d1;
+    let d_q2 = &n1.dot(&q[2].as_vector()) + &d1;
+
+    let zero_q = [d_q0.is_zero(), d_q1.is_zero(), d_q2.is_zero()];
+    let zc_q = zero_q.iter().filter(|z| **z).count();
+
+    if zc_q == 2 {
+        let (i, j) = match zero_q {
+            [true, true, false] => (0, 1),
+            [true, false, true] => (0, 2),
+            [false, true, true] => (1, 2),
+            _ => unreachable!(),
+        };
+        if let Some((a3, b3)) = clip_segment_to_triangle_in_plane(q[i], q[j], p, &n1) {
+            return TriTriIntersectionResult::Coplanar(Segment::new(&a3, &b3));
+        }
+    }
 
     // 4) Clip edges of T2 against T1’s plane:
     for (a, b) in [(&q[0], &q[1]), (&q[1], &q[2]), (&q[2], &q[0])] {
@@ -469,10 +505,7 @@ where
     // Check for division by zero
     let denominator = &da - &db;
     if denominator.is_zero() {
-        // Edge is parallel to plane, check if it lies on the plane
-        if da.is_zero() {
-            return Some(a.clone()); // Both points are on the plane
-        }
+        // Edge parallel to plane. If it's on the plane, no point should be returned.
         return None;
     }
 
@@ -558,4 +591,125 @@ where
     coords[i1] = p.coords[1].clone();
     coords[drop] = reference[drop].clone();
     coords
+}
+
+fn clip_segment_to_triangle_in_plane<T: Scalar, const N: usize>(
+    a3: &Point<T, N>,
+    b3: &Point<T, N>,
+    tri: &[&Point<T, N>; 3],
+    n: &Vector<T, N>,
+) -> Option<(Point<T, N>, Point<T, N>)>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    let (i0, i1, drop) = coplanar_axes(n);
+    let a = project_to_2d(a3, i0, i1);
+    let b = project_to_2d(b3, i0, i1);
+    let t = [
+        project_to_2d(tri[0], i0, i1),
+        project_to_2d(tri[1], i0, i1),
+        project_to_2d(tri[2], i0, i1),
+    ];
+
+    // ensure CCW triangle (left side is inside)
+    let area = {
+        let x0 = &t[1][0] - &t[0][0];
+        let y0 = &t[1][1] - &t[0][1];
+        let x1 = &t[2][0] - &t[0][0];
+        let y1 = &t[2][1] - &t[0][1];
+        &x0 * &y1 - &y0 * &x1
+    };
+    let tri_ccw = area.is_positive();
+    let tri_edges = if tri_ccw {
+        [(0, 1), (1, 2), (2, 0)]
+    } else {
+        [(0, 2), (2, 1), (1, 0)]
+    };
+
+    // parametric segment s(t)=a + t*(b-a)
+    let dx = &b[0] - &a[0];
+    let dy = &b[1] - &a[1];
+    let mut t0 = T::zero();
+    let mut t1 = T::one();
+
+    let is_left = |vi: &Point2<T>, vj: &Point2<T>, x: &Point2<T>| {
+        // cross( vj-vi, x-vi )
+        let ex = &vj[0] - &vi[0];
+        let ey = &vj[1] - &vi[1];
+        let rx = &x[0] - &vi[0];
+        let ry = &x[1] - &vi[1];
+        &ex * &ry - &ey * &rx
+    };
+
+    for (i, j) in tri_edges {
+        // signed “inside-ness” values at endpoints
+        let f0 = is_left(&t[i], &t[j], &a);
+        let f1 = is_left(&t[i], &t[j], &b);
+
+        let f0_neg = f0.is_negative();
+        let f1_neg = f1.is_negative();
+
+        if f0_neg && f1_neg {
+            return None; // fully outside
+        }
+        if f0_neg || f1_neg {
+            // Find t where f(t)=0 along the segment.
+            // f(t) = is_left(vi,vj, a + t*(b-a)) is linear in t:
+            // f(t) = f0 + t * ((vj-vi) x (b-a))
+            let denom = {
+                let ex = &t[j][0] - &t[i][0];
+                let ey = &t[j][1] - &t[i][1];
+                &ex * &dy - &ey * &dx
+            };
+            if denom.is_zero() {
+                // parallel edge: skip (shouldn’t happen for proper triangles)
+                continue;
+            }
+            let t_hit = &(&T::zero() - &f0) / &denom; // t where it enters/leaves
+            if f0_neg {
+                // entering
+                if t_hit > t0 {
+                    t0 = t_hit;
+                }
+            } else {
+                // leaving
+                if t_hit < t1 {
+                    t1 = t_hit;
+                }
+            }
+            if !(t0 < t1) && !(&t0 - &t1).is_negative() {
+                return None;
+            }
+        }
+    }
+
+    if t0.is_negative() && t1.is_negative() {
+        return None;
+    }
+    if t0.is_positive() && t0 >= t1 {
+        return None;
+    }
+
+    let lerp3 = |t: &T| {
+        let ox = &dx * t;
+        let oy = &dy * t;
+        let p2 = Point2::from_vals([&a[0] + &ox, &a[1] + &oy]);
+        back_project_to_3d(&p2, i0, i1, drop, a3) // drop axis from a3
+    };
+    let pa = lerp3(&t0);
+    let pb = lerp3(&t1);
+    if (&pb - &pa)
+        .as_vector()
+        .dot(&(&pb - &pa).as_vector())
+        .is_positive()
+    {
+        Some((pa, pb))
+    } else {
+        None
+    }
 }

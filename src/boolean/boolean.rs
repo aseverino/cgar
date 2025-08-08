@@ -200,7 +200,21 @@ where
         let mut inside = vec![false; self.faces.len()];
 
         // Non-coplanar intersections first.
-        if !intersection_segments.is_empty() {
+        if intersection_segments.is_empty() {
+            for f in 0..self.faces.len() {
+                if self.faces[f].removed {
+                    continue;
+                }
+                let c = self.face_centroid(f).0;
+                let c3 = Point::<T, 3>::from_vals([c[0].clone(), c[1].clone(), c[2].clone()]);
+                match other.point_in_mesh(&tree_b, &c3) {
+                    PointInMeshResult::Inside => inside[f] = true,
+                    PointInMeshResult::OnSurface if include_on_surface => inside[f] = true,
+                    _ => {}
+                }
+            }
+            return inside;
+        } else {
             let boundary_map = self.build_boundary_map(intersection_segments);
 
             let mut boundary_faces = HashSet::new();
@@ -889,15 +903,6 @@ where
             links.sort_unstable();
 
             seg.links.extend_from_slice(&links);
-        }
-
-        for (_plane, group) in &coplanar_groups {
-            for seg in group {
-                println!(
-                    "Coplanar segment: {:?}, {:?}\n",
-                    seg.segment.a, seg.segment.b
-                );
-            }
         }
 
         // === COPLANAR SEGMENTS: Build links within each group ===
@@ -1651,9 +1656,6 @@ where
         adj.entry(v).or_default().insert(u);
         edge_to_seg.entry(ordered(u, v)).or_insert(ei);
     }
-
-    println!("ADJACENCY: {:?}", adj);
-    println!("EDGE TO SEGMENT: {:?}", edge_to_seg);
 
     // quick accessor for point coords
     let P = |i: usize| &mesh.vertices[i].position;
