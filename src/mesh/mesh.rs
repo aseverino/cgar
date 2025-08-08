@@ -141,6 +141,7 @@ pub struct IntersectionSegment<T: Scalar, const N: usize> {
     pub links: SmallVec<[usize; 2]>,
     pub coplanar: bool,
     pub invalidated: bool,
+    pub split: bool,
 }
 
 impl<T: Scalar, const N: usize> Index<usize> for IntersectionSegment<T, N> {
@@ -185,6 +186,7 @@ impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
             links: SmallVec::new(),
             coplanar,
             invalidated: false,
+            split: true,
         }
     }
     pub fn new_default(
@@ -224,7 +226,7 @@ pub struct Mesh<T: Scalar, const N: usize> {
     pub edge_map: HashMap<(usize, usize), usize>,
     vertex_spatial_hash: HashMap<(i64, i64, i64), Vec<usize>>,
     face_split_map: HashMap<usize, FaceSplitMap>,
-    half_edge_split_map: HashMap<usize, (usize, usize)>,
+    pub half_edge_split_map: HashMap<usize, (usize, usize)>,
 }
 
 impl<T: Scalar, const N: usize> Mesh<T, N> {
@@ -255,6 +257,21 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let edge1 = (face_vertices[1] - face_vertices[0]).as_vector();
         let edge2 = (face_vertices[2] - face_vertices[0]).as_vector();
         edge1.cross(&edge2).normalized()
+    }
+
+    pub fn face_from_vertices(&self, v0: usize, v1: usize, v2: usize) -> usize {
+        // find a face with the given vertex indices
+        // It's more efficient to get faces around each vertex and check for a match
+        let fs0 = self.faces_around_vertex(v0);
+        let fs1 = self.faces_around_vertex(v1);
+        let fs2 = self.faces_around_vertex(v2);
+
+        for &face_id in fs0.iter() {
+            if fs1.contains(&face_id) && fs2.contains(&face_id) {
+                return face_id;
+            }
+        }
+        usize::MAX
     }
 
     pub fn plane_from_face(&self, face_idx: usize) -> Plane<T, N>
@@ -2076,9 +2093,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         if self.faces[face].removed {
             panic!("Cannot find intersection on a removed face");
         }
-        println!("face: {}", face);
-        println!("from: {:?}", from);
-        println!("direction: {:?}", direction);
         let mut closest_he = None;
         let mut closest_t = None;
         let mut closest_u = None;
@@ -3007,8 +3021,6 @@ where
     // Reconstruct point on segment line
     let proj = ab.scale(&u);
     let rejection = &ap - &proj;
-
-    println!("rejection: {:?}", rejection);
 
     // If rejection is non-zero, p is not on the line
     if rejection.norm_squared().is_zero()

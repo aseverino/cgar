@@ -44,6 +44,7 @@ use crate::{
         },
         vector::{Vector, VectorOps},
     },
+    io::obj::write_obj,
     mesh::{
         self,
         mesh::{
@@ -132,14 +133,14 @@ where
         &mut self,
         other: &Mesh<T, N>,
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
-        coplanar_intersections: &HashMap<Plane<T, N>, Vec<IntersectionSegment<T, N>>>,
+        coplanar_intersections: &Vec<CoplanarTriangle>,
         include_on_surface: bool,
     ) -> Vec<bool>;
 
     fn build_links(
         mesh: &Mesh<T, N>,
         intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-    ) -> HashMap<Plane<T, N>, Vec<IntersectionSegment<T, N>>>;
+    ) -> Vec<CoplanarTriangle>;
 }
 
 impl<T: Scalar, const N: usize> BooleanImpl<T, N> for Mesh<T, N>
@@ -159,7 +160,7 @@ where
         &mut self,
         other: &Mesh<T, N>,
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
-        coplanar_intersections: &HashMap<Plane<T, N>, Vec<IntersectionSegment<T, N>>>,
+        coplanar_triangles: &Vec<CoplanarTriangle>,
         include_on_surface: bool,
     ) -> Vec<bool>
     where
@@ -284,90 +285,18 @@ where
             );
         }
 
-        let mut coplanar_group = 0;
-        // Now do co-planar intersections.
-        for (_plane, segments) in coplanar_intersections {
-            println!(
-                "Processing coplanar group {} with {} segments",
-                coplanar_group,
-                segments.len()
-            );
-            coplanar_group += 1;
-            let boundary_map = self.build_boundary_map(segments);
-            let mut boundary_faces = HashSet::new();
-            for &(a, b) in &boundary_map {
-                boundary_faces.insert(a);
-                boundary_faces.insert(b);
-            }
-
-            let seed = (0..self.faces.len())
-                .filter(|&f| !self.faces[f].removed && boundary_faces.contains(&f))
-                .find(|&f| {
-                    let c = self.face_centroid(f).0;
-                    let c3 = Point::<T, 3>::from_vals([c[0].clone(), c[1].clone(), c[2].clone()]);
-                    match other.point_in_mesh(&tree_b, &c3) {
-                        PointInMeshResult::Inside => true,
-                        PointInMeshResult::OnSurface if include_on_surface => true,
-                        _ => false,
-                    }
-                })
-                .expect("No seed face found inside B");
-
-            // 4) iterative flood‐fill without crossing the boundary_map
-
-            let mut face_pairs: HashMap<usize, Vec<usize>> = HashMap::new();
-            for seg_idx in 0..intersection_segments.len() {
-                // let seg = &intersection_segments[seg_idx];
-                // let f0 = self
-                //     .find_exact_valid_face(seg.resulting_faces[0], &seg.segment.a, None)
-                //     .unwrap();
-                // let f1 = self
-                //     .find_exact_valid_face(seg.resulting_faces[1], &seg.segment.b, None)
-                //     .unwrap();
-
-                // face_pairs.entry(f0).or_default().push(f1);
-                // face_pairs.entry(f1).or_default().push(f0);
-            }
-            let mut queue = VecDeque::new();
-
-            // seed found as before
-            visited[seed] = true;
-            inside[seed] = true;
-            queue.push_back(seed);
-            let mut num_visited = 1;
-
-            while let Some(curr) = queue.pop_front() {
-                if let Some(neighbors) = adj.get(&curr) {
-                    // grab the list of “paired” faces for this curr
-                    let paired = face_pairs.get(&curr);
-
-                    for &nbr in neighbors {
-                        if visited[nbr] {
-                            continue;
-                        }
-
-                        // skip exactly the neighbor that comes from the same segment split
-                        if let Some(pv) = paired {
-                            if pv.iter().any(|&pf| pf == nbr) {
-                                // this nbr is the other half of a segment splitting curr
-                                continue;
-                            }
-                        }
-
-                        // otherwise, it's a genuine inside‐region adjacency
-                        visited[nbr] = true;
-                        inside[nbr] = true;
-                        num_visited += 1;
-                        queue.push_back(nbr);
-                    }
+        if include_on_surface {
+            // Now do co-planar intersections.
+            for triangle in coplanar_triangles {
+                let face = self.face_from_vertices(
+                    triangle.verts[0],
+                    triangle.verts[1],
+                    triangle.verts[2],
+                );
+                if face != usize::MAX {
+                    inside[face] = true;
                 }
             }
-
-            println!(
-                "Flood-fill visited {} faces out of {}",
-                num_visited,
-                self.faces.len()
-            );
         }
 
         inside
@@ -710,7 +639,7 @@ where
         let start = Instant::now();
         let mut i = 0;
         while i < intersection_segments_a.len() {
-            if intersection_segments_a[i].invalidated {
+            if intersection_segments_a[i].invalidated || !intersection_segments_a[i].split {
                 i += 1;
                 continue;
             }
@@ -721,11 +650,11 @@ where
         println!("Processing remaining segments B");
         i = 0;
         while i < intersection_segments_b.len() {
-            if intersection_segments_b[i].invalidated {
+            if intersection_segments_b[i].invalidated || !intersection_segments_b[i].split {
                 i += 1;
                 continue;
             }
-            b.process_segment(&mut splits_a, &mut tree_b, &mut intersection_segments_b, i);
+            b.process_segment(&mut splits_b, &mut tree_b, &mut intersection_segments_b, i);
             i += 1;
         }
         println!("Remaining segments processed in {:.2?}", start.elapsed());
@@ -734,6 +663,8 @@ where
         intersection_segments_b.retain(|segment| !segment.invalidated);
 
         println!("Intersection segments processed in {:.2?}", start.elapsed());
+
+        let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
 
         // 6. Create result mesh
         let mut result = Mesh::new();
@@ -844,6 +775,11 @@ where
                     &mut b_coplanars,
                     false,
                 );
+
+                println!("B CLASSIFICATION:");
+                for i in intersection_segments_b {
+                    println!("  {:?}", i);
+                }
                 for (fb, inside) in b_classification.iter().enumerate() {
                     if b.faces[fb].removed {
                         continue;
@@ -878,9 +814,9 @@ where
     fn build_links(
         mesh: &Mesh<T, N>,
         intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-    ) -> HashMap<Plane<T, N>, Vec<IntersectionSegment<T, N>>> {
+    ) -> Vec<CoplanarTriangle> {
         if intersection_segments.is_empty() {
-            return HashMap::new();
+            return Vec::new();
         }
 
         // First let's drain the coplanar segments into a separate structure
@@ -895,10 +831,23 @@ where
         while i < intersection_segments.len() {
             if intersection_segments[i].coplanar {
                 let seg = intersection_segments.remove(i);
-                let plane_key = mesh.plane_from_face(
-                    mesh.find_valid_face(seg.initial_face_reference, &seg.segment[i]),
-                );
-                coplanar_groups.entry(plane_key).or_default().push(seg);
+                let edge = mesh.edge_map.get(&(
+                    seg.resulting_vertices_pair[0],
+                    seg.resulting_vertices_pair[1],
+                ));
+                if let Some(half_edge) = edge {
+                    if let Some(face_0) = mesh.half_edges[*half_edge].face {
+                        let plane_key = mesh.plane_from_face(face_0).canonicalized();
+                        coplanar_groups
+                            .entry(plane_key)
+                            .or_default()
+                            .push(seg.clone());
+                    }
+                    if let Some(face_1) = mesh.half_edges[mesh.half_edges[*half_edge].twin].face {
+                        let plane_key = mesh.plane_from_face(face_1).canonicalized();
+                        coplanar_groups.entry(plane_key).or_default().push(seg);
+                    }
+                }
             } else {
                 i += 1;
             }
@@ -942,32 +891,51 @@ where
             seg.links.extend_from_slice(&links);
         }
 
-        // === COPLANAR SEGMENTS: Build links within each group ===
-        for group in coplanar_groups.values_mut() {
-            let pairs: Vec<[usize; 2]> = group
-                .iter()
-                .map(|seg| seg.resulting_vertices_pair)
-                .collect();
-
-            for (i, seg) in group.iter_mut().enumerate() {
-                let [v0, v1] = pairs[i];
-                let mut links: Vec<usize> = pairs
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(j, &[ov0, ov1])| {
-                        if j != i && (ov0 == v0 || ov1 == v0 || ov0 == v1 || ov1 == v1) {
-                            Some(j)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                links.sort_unstable();
-                seg.links.extend_from_slice(&links);
+        for (_plane, group) in &coplanar_groups {
+            for seg in group {
+                println!(
+                    "Coplanar segment: {:?}, {:?}\n",
+                    seg.segment.a, seg.segment.b
+                );
             }
         }
 
-        coplanar_groups
+        // === COPLANAR SEGMENTS: Build links within each group ===
+        // for group in coplanar_groups.values_mut() {
+        //     let pairs: Vec<[usize; 2]> = group
+        //         .iter()
+        //         .map(|seg| seg.resulting_vertices_pair)
+        //         .collect();
+
+        //     for (i, seg) in group.iter_mut().enumerate() {
+        //         let [v0, v1] = pairs[i];
+        //         let mut links: Vec<usize> = pairs
+        //             .iter()
+        //             .enumerate()
+        //             .filter_map(|(j, &[ov0, ov1])| {
+        //                 if j != i && (ov0 == v0 || ov1 == v0 || ov0 == v1 || ov1 == v1) {
+        //                     Some(j)
+        //                 } else {
+        //                     None
+        //                 }
+        //             })
+        //             .collect();
+        //         links.sort_unstable();
+        //         seg.links.extend_from_slice(&links);
+        //     }
+        // }
+
+        let mut triangles_per_group: Vec<CoplanarTriangle> = Vec::new();
+        for (_plane, group) in &coplanar_groups {
+            if group.len() >= 3 {
+                let triangles = extract_triangles_in_group(mesh, group);
+                triangles_per_group.extend(triangles);
+            }
+        }
+
+        // panic!("testing");
+
+        triangles_per_group
     }
 
     fn process_segment(
@@ -1351,6 +1319,43 @@ where
                             .expect("Failed to split edge for segment end");
 
                         vertex_ab[i] = split_result.vertex;
+
+                        if intersection_segments[segment_idx].coplanar {
+                            if let Some(new_edges) = self.half_edge_split_map.get(&half_edge) {
+                                let new_edges_arr = [new_edges.0, new_edges.1];
+                                for i in 0..2 {
+                                    let mut other_vertex = usize::MAX;
+                                    if self.half_edges[new_edges_arr[i]].vertex
+                                        != split_result.vertex
+                                    {
+                                        other_vertex = self.half_edges[new_edges_arr[i]].vertex;
+                                    } else if self.half_edges
+                                        [self.half_edges[new_edges_arr[i]].twin]
+                                        .vertex
+                                        != split_result.vertex
+                                    {
+                                        other_vertex = self.half_edges
+                                            [self.half_edges[new_edges_arr[i]].twin]
+                                            .vertex;
+                                    }
+
+                                    let mut seg = IntersectionSegment::new(
+                                        IntersectionEndPoint::new_default(),
+                                        IntersectionEndPoint::new_default(),
+                                        &Segment::new(
+                                            &self.vertices[split_result.vertex].position,
+                                            &self.vertices[other_vertex].position,
+                                        ),
+                                        intersection_segments[segment_idx].initial_face_reference,
+                                        [split_result.vertex, other_vertex],
+                                        true,
+                                    );
+                                    seg.split = false;
+                                    intersection_segments.push(seg);
+                                    println!("added");
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1610,4 +1615,103 @@ where
         .expect("No seed face found inside B");
 
     (seed_idx, selected_face)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CoplanarTriangle {
+    verts: [usize; 3], // (a,b,c) with a<b<c
+    segs: [usize; 3],  // indices into the group's segment list: (ab, bc, ca)
+}
+
+fn ordered(a: usize, b: usize) -> (usize, usize) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+fn extract_triangles_in_group<T: Scalar, const N: usize>(
+    mesh: &Mesh<T, N>,
+    group: &[IntersectionSegment<T, N>],
+) -> Vec<CoplanarTriangle>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    use std::collections::{HashMap, HashSet};
+
+    // 1) adjacency and one seg index per undirected edge
+    let mut adj: HashMap<usize, HashSet<usize>> = HashMap::new();
+    let mut edge_to_seg: HashMap<(usize, usize), usize> = HashMap::new();
+
+    for (ei, seg) in group.iter().enumerate() {
+        let [u, v] = seg.resulting_vertices_pair;
+        adj.entry(u).or_default().insert(v);
+        adj.entry(v).or_default().insert(u);
+        edge_to_seg.entry(ordered(u, v)).or_insert(ei);
+    }
+
+    println!("ADJACENCY: {:?}", adj);
+    println!("EDGE TO SEGMENT: {:?}", edge_to_seg);
+
+    // quick accessor for point coords
+    let P = |i: usize| &mesh.vertices[i].position;
+
+    // 2) enumerate unique triangles a<b<c s.t. (a,b), (a,c), (b,c) are edges
+    let mut verts: Vec<usize> = adj.keys().copied().collect();
+    verts.sort_unstable();
+
+    let mut out = Vec::new();
+
+    for (ai, &a) in verts.iter().enumerate() {
+        // neighbors of a
+        let mut na: Vec<usize> = adj[&a].iter().copied().collect();
+        na.sort_unstable();
+
+        for (bi, &b) in na.iter().enumerate() {
+            if b <= a {
+                continue;
+            }
+
+            // candidates c are neighbors of a with c>b
+            for &c in na.iter().skip(bi + 1) {
+                if c <= b {
+                    continue;
+                }
+
+                // edge (b,c) must exist to close the triangle
+                if !adj.get(&b).map_or(false, |nb| nb.contains(&c)) {
+                    continue;
+                }
+
+                // 3) reject collinear (degenerate) triangles
+                let ab = (P(b) - P(a)).as_vector();
+                let ac = (P(c) - P(a)).as_vector();
+                let cr = ab.cross(&ac); // 3D: normal vector
+                let area2 = cr.dot(&cr); // squared area
+                if area2 == T::zero() {
+                    // exact-zero ok for rationals
+                    continue;
+                }
+
+                // 4) pick one segment index per edge
+                let e_ab = *edge_to_seg.get(&ordered(a, b)).unwrap();
+                let e_bc = *edge_to_seg.get(&ordered(b, c)).unwrap();
+                let e_ca = *edge_to_seg.get(&ordered(c, a)).unwrap();
+
+                // (paranoia) ensure distinct segment indices
+                if e_ab == e_bc || e_bc == e_ca || e_ab == e_ca {
+                    continue;
+                }
+
+                out.push(CoplanarTriangle {
+                    verts: [a, b, c],
+                    segs: [e_ab, e_bc, e_ca],
+                });
+            }
+        }
+    }
+
+    out
 }

@@ -98,6 +98,46 @@ where
         let v = n.cross(&u).normalized();
         (u, v)
     }
+
+    pub fn canonicalized(&self) -> Plane<T, N>
+    where
+        T: Scalar,
+    {
+        let mut plane = Plane::new(self.normal.clone(), self.d.clone());
+        // Remove negative zeros
+        for x in plane.normal.coords_mut() {
+            if x.is_zero() {
+                *x = T::zero();
+            }
+        }
+        // Find first non-zero entry
+        let mut flip = false;
+        let mut scale = None;
+        for x in plane.normal.coords_mut() {
+            if !x.is_zero() {
+                if x < &mut T::zero() {
+                    flip = true;
+                }
+                scale = Some(x.abs());
+                break;
+            }
+        }
+        if flip {
+            for x in plane.normal.coords_mut() {
+                *x = -x.clone();
+            }
+            plane.d = -plane.d;
+        }
+
+        if let Some(scale) = scale {
+            for x in plane.normal.coords_mut() {
+                *x = x.clone() / scale.clone();
+            }
+            plane.d = plane.d / scale;
+        }
+
+        plane
+    }
 }
 
 impl<T: Scalar, const N: usize> Hash for Plane<T, N> {
