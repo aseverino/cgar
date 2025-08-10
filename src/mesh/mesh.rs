@@ -716,9 +716,29 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         compute_triangle_aabb(p0, p1, p2)
     }
 
+    fn get_or_insert_vertex(&mut self, pos: &Point<T, N>) -> usize {
+        let key = self.position_to_hash_key(pos);
+        if let Some(bucket) = self.vertex_spatial_hash.get(&key) {
+            for &vi in bucket {
+                if self.vertices[vi].position == *pos {
+                    return vi; // reuse
+                }
+            }
+        }
+        // insert new
+        let idx = self.vertices.len();
+        self.vertices.push(Vertex::new(pos.clone()));
+        self.vertex_spatial_hash.entry(key).or_default().push(idx);
+        idx
+    }
+
     pub fn add_vertex(&mut self, position: Point<T, N>) -> usize {
         let idx = self.vertices.len();
         self.vertices.push(Vertex::new(position));
+
+        let key = self.position_to_hash_key(&self.vertices[idx].position);
+        self.vertex_spatial_hash.entry(key).or_default().push(idx);
+
         idx
     }
 
@@ -1725,13 +1745,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let d = self.half_edges[he_cd].vertex;
 
         // Create new vertex at split position
-        let w = self.vertices.len();
-        self.vertex_spatial_hash
-            .entry(self.position_to_hash_key(pos))
-            .or_default()
-            .push(w);
-        //self.vertices.push(Vertex::new(pos.clone()));
-        self.add_vertex(pos.clone());
+        let w = self.get_or_insert_vertex(pos);
 
         // let mut new_face_results = Vec::new();
         let original_face_1 = self.half_edges[he_ca].face.unwrap();
