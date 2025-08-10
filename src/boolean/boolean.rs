@@ -21,37 +21,25 @@
 // SOFTWARE.
 
 use std::{
-    array::from_fn,
     collections::{HashMap, HashSet, VecDeque},
+    hash::{Hash, Hasher},
     ops::{Add, Div, Mul, Neg, Sub},
-    os::unix::process,
-    result,
     time::Instant,
 };
 
-use smallvec::SmallVec;
-
 use crate::{
     geometry::{
-        Aabb, AabbTree, Point2, aabb,
+        Aabb, AabbTree,
         plane::Plane,
         point::{Point, PointOps},
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
-        tri_tri_intersect::{
-            TriTriIntersectionResult, back_project_to_3d, convex_hull_2d_indices,
-            tri_tri_intersection,
-        },
+        tri_tri_intersect::{TriTriIntersectionResult, tri_tri_intersection},
         vector::{Vector, VectorOps},
     },
     io::obj::write_obj,
-    mesh::{
-        self,
-        mesh::{
-            IntersectionEndPoint, IntersectionSegment, Mesh, PointInMeshResult, VertexSource,
-            point_position_on_segment,
-        },
-        vertex,
+    mesh::mesh::{
+        IntersectionEndPoint, IntersectionSegment, Mesh, PointInMeshResult, VertexSource,
     },
     numeric::{cgar_f64::CgarF64, scalar::Scalar},
 };
@@ -1460,8 +1448,6 @@ fn face_axes(face_idx: usize) -> (usize, usize, usize) {
 //             .extend_from_slice(&connected);
 //     }
 // }
-
-use std::hash::{Hash, Hasher};
 
 struct SegmentKey<'a, T: Scalar, const N: usize>(&'a Point<T, N>, &'a Point<T, N>);
 

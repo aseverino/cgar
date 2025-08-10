@@ -330,35 +330,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
                 .expect("Half-edge must have a face");
 
             boundary_edges.insert(ordered(face0, face1));
-
-            // for &linked_idx in &seg.links {
-            //     if linked_idx == seg_idx || linked_idx >= intersection_segments.len() {
-            //         continue;
-            //     }
-
-            //     let linked = &intersection_segments[linked_idx];
-
-            //     let faces = [
-            //         (
-            //             seg.resulting_faces[0],
-            //             linked.resulting_faces[0],
-            //             &seg.segment.a,
-            //             &linked.segment.a,
-            //         ),
-            //         (
-            //             seg.resulting_faces[1],
-            //             linked.resulting_faces[1],
-            //             &seg.segment.b,
-            //             &linked.segment.b,
-            //         ),
-            //     ];
-
-            //     for (f0, f1, pa, pb) in faces {
-            //         let fa = self.find_exact_valid_face(f0, pa, None).unwrap_or(f0);
-            //         let fb = self.find_exact_valid_face(f1, pb, None).unwrap_or(f1);
-            //         boundary_edges.insert(ordered(fa, fb));
-            //     }
-            // }
         }
 
         boundary_edges
@@ -977,8 +948,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             } else {
                 // Create a brand-new half-edge for this triangle
                 let he_idx = self.half_edges.len();
-            let mut he = HalfEdge::new(to);
-            he.face = Some(face_idx);
+                let mut he = HalfEdge::new(to);
+                he.face = Some(face_idx);
                 self.half_edges.push(he);
                 self.edge_map.insert((from, to), he_idx);
                 edge_indices[i] = he_idx;
@@ -2286,23 +2257,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             }
         }
 
-        // let closest_he_q = self.vertices[self.half_edges[closest_he.unwrap()].vertex]
-        //     .position
-        //     .clone();
-        // let closest_he_p = self.vertices[self.half_edges
-        //     [self.find_valid_half_edge(self.half_edges[closest_he.unwrap()].twin)]
-        // .vertex]
-        //     .position
-        //     .clone();
-
-        // let t = closest_t.unwrap();
-
-        // let hit = from + &direction.scale(&t).0;
-        // let hit_edge_vector = (&closest_he_q - &closest_he_p).as_vector();
-        // let relative_vector = &hit.as_vector() - &closest_he_p.as_vector();
-
-        // let u = relative_vector.dot(&hit_edge_vector) / hit_edge_vector.dot(&hit_edge_vector);
-
         match (closest_he, closest_t, closest_u) {
             (Some(he), Some(t), Some(u)) => (he, t, u),
             _ => panic!("Ray did not intersect any edge from start vertex"),
@@ -2515,28 +2469,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let a = self.half_edges[he_ca].vertex;
         let b = self.half_edges[he_ab].vertex;
         let c = self.half_edges[he_bc].vertex;
-
-        // if self.half_edges[self.vertices[vs[0]].half_edge.unwrap()]
-        //     .face
-        //     .unwrap()
-        //     != face
-        // {
-        //     panic!("Face half-edge does not match the face");
-        // }
-        // if self.half_edges[self.vertices[vs[1]].half_edge.unwrap()]
-        //     .face
-        //     .unwrap()
-        //     != face
-        // {
-        //     panic!("Face half-edge does not match the face");
-        // }
-        // if self.half_edges[self.vertices[vs[2]].half_edge.unwrap()]
-        //     .face
-        //     .unwrap()
-        //     != face
-        // {
-        //     panic!("Face half-edge does not match the face");
-        // }
 
         let subface_1_verts = [a, w, c];
         let subface_2_verts = [c, w, b];
