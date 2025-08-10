@@ -474,6 +474,9 @@ where
         let start = Instant::now();
 
         for fa in 0..a.faces.len() {
+            if a.faces[fa].null {
+                continue;
+            }
             let mut candidates = Vec::new();
             tree_b.query(&a.face_aabb(fa), &mut candidates);
 
@@ -485,6 +488,9 @@ where
             let pa: [&Point<T, N>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
 
             for &fb in &candidates {
+                if b.faces[*fb].null {
+                    continue;
+                }
                 let pb_idx = b.face_vertices(*fb);
                 let pb_vec: Vec<&Point<T, N>> = pb_idx
                     .into_iter()

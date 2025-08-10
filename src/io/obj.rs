@@ -53,7 +53,7 @@ pub fn write_obj<T: Scalar, const N: usize, P: AsRef<Path>>(
 
     // 2) write faces (1-based indices)
     for f in 0..mesh.faces.len() {
-        if mesh.faces[f].removed {
+        if mesh.faces[f].null || mesh.faces[f].removed {
             continue; // skip removed faces
         }
         let vs = mesh.face_vertices(f);
