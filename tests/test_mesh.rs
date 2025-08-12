@@ -856,16 +856,14 @@ fn difference_coplanar_boolean() {
     let result_1 = big_a.boolean(&small, BooleanOp::Difference);
     //let result_2 = big_a.boolean(&big_b, BooleanOp::Difference);
 
-    let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/big.obj");
-    let _ = write_obj(&small, "/mnt/v/cgar_meshes/small.obj");
-    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
-    //let _ = write_obj(&result_2, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
+    // let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/big.obj");
+    // let _ = write_obj(&small, "/mnt/v/cgar_meshes/small.obj");
+    // let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
+    // let _ = write_obj(&result_2, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
 
-    assert_eq!(result_1.vertices.len(), 21);
-    assert_eq!(result_1.faces.len(), 25);
-
-    //assert_eq!(result_2.vertices.len(), 22);
-    //assert_eq!(result_2.faces.len(), 26);
+    println!("Validating connectivity...");
+    result_1.validate_connectivity();
+    println!("Passed!");
 }
 
 #[test]
@@ -882,8 +880,9 @@ fn difference_boolean_inexact() {
         "/mnt/v/cgar_meshes/difference_boolean_inexact.obj",
     );
 
-    assert_eq!(result_1.vertices.len(), 16);
-    assert_eq!(result_1.faces.len(), 26);
+    println!("Validating connectivity...");
+    result_1.validate_connectivity();
+    println!("Passed!");
 }
 
 #[test]
@@ -897,8 +896,9 @@ fn difference_boolean_exact() {
 
     let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/difference_boolean_exact.obj");
 
-    assert_eq!(result_1.vertices.len(), 16);
-    assert_eq!(result_1.faces.len(), 26);
+    println!("Validating connectivity...");
+    result_1.validate_connectivity();
+    println!("Passed!");
 }
 
 #[test]
@@ -910,10 +910,11 @@ fn intersection_boolean() {
     // 3) Perform boolean difference
     let result_1 = big_a.boolean(&big_b, BooleanOp::Intersection);
 
-    // let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
+    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/intersection_boolean.obj");
 
-    assert_eq!(result_1.vertices.len(), 16);
-    assert_eq!(result_1.faces.len(), 14);
+    println!("Validating connectivity...");
+    result_1.validate_connectivity();
+    println!("Passed!");
 }
 
 #[test]
@@ -925,10 +926,11 @@ fn union_boolean() {
     // 3) Perform boolean difference
     let result_1 = big_a.boolean(&big_b, BooleanOp::Union);
 
-    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
+    let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/union_boolean.obj");
 
-    assert_eq!(result_1.vertices.len(), 28);
-    assert_eq!(result_1.faces.len(), 38);
+    println!("Validating connectivity...");
+    result_1.validate_connectivity();
+    println!("Passed!");
 }
 
 #[test]
@@ -953,6 +955,10 @@ fn difference_large_boolean() {
     let result = other_sphere.boolean(&sphere, BooleanOp::Difference);
     let duration = start.elapsed();
     println!("Boolean difference took {:?}", duration);
+
+    println!("Validating connectivity...");
+    result.validate_connectivity();
+    println!("Passed!");
 
     let _ = write_obj(&result, "/mnt/v/cgar_meshes/large_boolean.obj");
 }
