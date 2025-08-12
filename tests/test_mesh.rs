@@ -845,21 +845,17 @@ fn make_cube_exact(origin: [f64; 3], min: [f64; 3], max: [f64; 3]) -> Mesh<CgarR
 fn difference_coplanar_boolean() {
     // 1) Big unit cube [0,1]^3
     let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    // let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    //let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/big_a.obj");
-    //let _ = write_obj(&big_b, "/mnt/v/cgar_meshes/big_b.obj");
 
     // 2) Smaller cube slicing off the top-far corner
     let small = make_cube([0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [1.0, 1.0, 1.0]);
 
     // 3) Perform boolean difference
     let result_1 = big_a.boolean(&small, BooleanOp::Difference);
-    //let result_2 = big_a.boolean(&big_b, BooleanOp::Difference);
 
-    // let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/big.obj");
-    // let _ = write_obj(&small, "/mnt/v/cgar_meshes/small.obj");
-    // let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/test_corner_cube.obj");
-    // let _ = write_obj(&result_2, "/mnt/v/cgar_meshes/test_corner_cube_2.obj");
+    let _ = write_obj(
+        &result_1,
+        "/mnt/v/cgar_meshes/difference_coplanar_boolean.obj",
+    );
 
     println!("Validating connectivity...");
     result_1.validate_connectivity();
@@ -941,10 +937,6 @@ fn difference_large_boolean() {
     let mut other_sphere =
         read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
 
-    println!("Loaded");
-
-    let _ = write_obj(&other_sphere, "/mnt/v/cgar_meshes/sphere.obj");
-
     // translate the second sphere to create a difference
     let translation = Point3::from_vals([0.5, 0.5, 0.5]);
     for v in other_sphere.vertices.iter_mut() {
@@ -959,8 +951,6 @@ fn difference_large_boolean() {
     println!("Validating connectivity...");
     result.validate_connectivity();
     println!("Passed!");
-
-    let _ = write_obj(&result, "/mnt/v/cgar_meshes/large_boolean.obj");
 }
 
 #[test]

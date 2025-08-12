@@ -670,10 +670,6 @@ where
             );
             i += 1;
         }
-        println!("Remaining segments processed in {:.2?}", start.elapsed());
-
-        intersection_segments_a.retain(|segment| !segment.invalidated);
-        intersection_segments_b.retain(|segment| !segment.invalidated);
 
         println!("Intersection segments processed in {:.2?}", start.elapsed());
 
@@ -682,13 +678,21 @@ where
         let mut edges_a = Vec::new();
         // gather all edges from intersection A
         for seg in &intersection_segments_a {
-            edges_a.push(seg.resulting_vertices_pair);
+            if seg.resulting_vertices_pair[0] != usize::MAX
+                && seg.resulting_vertices_pair[1] != usize::MAX
+            {
+                edges_a.push(seg.resulting_vertices_pair);
+            }
         }
 
         let mut edges_b = Vec::new();
         // gather all edges from intersection B
         for seg in &intersection_segments_b {
-            edges_b.push(seg.resulting_vertices_pair);
+            if seg.resulting_vertices_pair[0] != usize::MAX
+                && seg.resulting_vertices_pair[1] != usize::MAX
+            {
+                edges_b.push(seg.resulting_vertices_pair);
+            }
         }
 
         println!(
@@ -731,7 +735,8 @@ where
         let duration = start.elapsed();
         println!("Processing T-junctions done in {:.2?}", duration);
 
-        let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
+        intersection_segments_a.retain(|segment| !segment.invalidated);
+        intersection_segments_b.retain(|segment| !segment.invalidated);
 
         // 6. Create result mesh
         let mut result = Mesh::new();

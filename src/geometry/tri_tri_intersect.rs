@@ -232,7 +232,6 @@ where
     // 5) dedupe
     let mut set = HashSet::new();
     let mut uniq: Vec<Point<T, N>> = Vec::new();
-    println!("adding an intersection:");
     for p in pts {
         if set.insert(p.clone()) {
             uniq.push(p);
