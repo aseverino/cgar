@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque, btree_set::Intersection},
     hash::{Hash, Hasher},
     ops::{Add, Div, Mul, Neg, Sub},
     time::Instant,
@@ -643,26 +643,36 @@ where
         );
         println!("Splits done in {:.2?}", start.elapsed());
 
+        let mut intersection_by_edge_a = HashMap::new();
+        let mut intersection_by_edge_b = HashMap::new();
+
         println!("Processing remaining segments A");
         let start = Instant::now();
         let mut i = 0;
+
         while i < intersection_segments_a.len() {
-            if intersection_segments_a[i].invalidated || !intersection_segments_a[i].split {
-                i += 1;
-                continue;
-            }
-            a.process_segment(&mut splits_a, &mut tree_a, &mut intersection_segments_a, i);
+            process_segment_and_edge_map(
+                &mut a,
+                &mut intersection_segments_a,
+                &mut intersection_by_edge_a,
+                i,
+                &mut splits_a,
+                &mut tree_a,
+            );
             i += 1;
         }
 
         println!("Processing remaining segments B");
         i = 0;
         while i < intersection_segments_b.len() {
-            if intersection_segments_b[i].invalidated || !intersection_segments_b[i].split {
-                i += 1;
-                continue;
-            }
-            b.process_segment(&mut splits_b, &mut tree_b, &mut intersection_segments_b, i);
+            process_segment_and_edge_map(
+                &mut b,
+                &mut intersection_segments_b,
+                &mut intersection_by_edge_b,
+                i,
+                &mut splits_b,
+                &mut tree_b,
+            );
             i += 1;
         }
         println!("Remaining segments processed in {:.2?}", start.elapsed());
@@ -671,6 +681,60 @@ where
         intersection_segments_b.retain(|segment| !segment.invalidated);
 
         println!("Intersection segments processed in {:.2?}", start.elapsed());
+
+        println!("Finding T-junctions");
+        let start = Instant::now();
+        let mut edges_a = Vec::new();
+        // gather all edges from intersection A
+        for seg in &intersection_segments_a {
+            edges_a.push(seg.resulting_vertices_pair);
+        }
+
+        let mut edges_b = Vec::new();
+        // gather all edges from intersection B
+        for seg in &intersection_segments_b {
+            edges_b.push(seg.resulting_vertices_pair);
+        }
+
+        println!(
+            "Found {} edges on A and {} edges on B",
+            edges_a.len(),
+            edges_b.len()
+        );
+
+        // Naming is a bit confusing here, and it may appear at first that the arguments are inverted.
+        // But this is correct. We are getting edges on A that are on a given B segment (edge).
+        let t_junctions_a = find_x_vertices_on_y_edges(&b, &a, &edges_b, &edges_a);
+        // Same as previous, but inverted.
+        let t_junctions_b = find_x_vertices_on_y_edges(&a, &b, &edges_a, &edges_b);
+        let duration = start.elapsed();
+        println!("Finding T-junctions done in {:.2?}", duration);
+
+        println!("Processing T-junctions");
+        let start = Instant::now();
+        for t in t_junctions_a {
+            process_t_junction(
+                &mut a,
+                &mut b,
+                &mut tree_a,
+                &t,
+                &mut intersection_segments_a,
+                &mut intersection_by_edge_a,
+            );
+        }
+
+        for t in t_junctions_b {
+            process_t_junction(
+                &mut b,
+                &mut a,
+                &mut tree_b,
+                &t,
+                &mut intersection_segments_b,
+                &mut intersection_by_edge_b,
+            );
+        }
+        let duration = start.elapsed();
+        println!("Processing T-junctions done in {:.2?}", duration);
 
         let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
 
@@ -707,7 +771,7 @@ where
             if a.faces[fa].removed {
                 continue;
             }
-            println!("Face {}: inside = {}", fa, inside);
+            // println!("Face {}: inside = {}", fa, inside);
 
             if !*inside {
                 let vs = a.face_vertices(fa);
@@ -785,9 +849,6 @@ where
                 );
 
                 println!("B CLASSIFICATION:");
-                for i in intersection_segments_b {
-                    println!("  {:?}", i);
-                }
                 for (fb, inside) in b_classification.iter().enumerate() {
                     if b.faces[fb].removed {
                         continue;
@@ -812,7 +873,7 @@ where
         result.remove_duplicate_vertices();
         result.remove_unused_vertices();
         result.remove_invalidated_faces();
-        // result.build_boundary_loops();
+
         result
     }
 
@@ -1351,7 +1412,6 @@ where
                                     );
                                     seg.split = false;
                                     intersection_segments.push(seg);
-                                    println!("added");
                                 }
                             }
                         }
@@ -1708,4 +1768,284 @@ where
     }
 
     out
+}
+
+struct TJunction<T> {
+    a_vertex: usize,
+    b_edge: [usize; 2],
+    u: T,
+}
+
+/// Find all vertices from `a_edges` (by their vertex indices into `a_vertices`)
+/// that lie on any geometric edge (segment) defined by `b_edges` (indices into `b_vertices`).
+///
+/// Returns every (a_vertex_index, (b_u, b_v)) pair such that:
+///   1. The position of the a-vertex lies on segment (b_u,b_v) within T::tolerance()
+///      (orthogonal distance to the segment <= tol).
+///   2. The a-vertex is NOT within T::tolerance() of either endpoint of (b_u,b_v)
+///      (discard near-endpoint hits to avoid duplicating endpoints).
+/// A single a-vertex may appear multiple times if it lies on multiple distinct b-edges.
+/// Order is stable: vertices follow first appearance while scanning `a_edges` left-to-right;
+/// for each vertex, matching b-edges follow the order in `b_edges`.
+///
+/// Complexity is high: O(Va_unique * Eb).
+/// Must improve this later with spatial indexing.
+fn find_x_vertices_on_y_edges<T: Scalar, const N: usize>(
+    mesh_x: &Mesh<T, N>,
+    mesh_y: &Mesh<T, N>,
+    x_edges: &[[usize; 2]],
+    y_edges: &[[usize; 2]],
+) -> Vec<TJunction<T>>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Neg<Output = T>,
+{
+    use std::collections::HashSet;
+
+    if x_edges.is_empty() || y_edges.is_empty() {
+        return Vec::new();
+    }
+
+    let tol = T::tolerance();
+    let tol2 = &tol * &tol;
+
+    // Collect unique A vertices in first-occurrence order.
+    let mut ordered_a_verts = Vec::new();
+    let mut seen = HashSet::with_capacity(x_edges.len() * 2);
+    for &[u, v] in x_edges {
+        if seen.insert(u) {
+            ordered_a_verts.push(u);
+        }
+        if seen.insert(v) {
+            ordered_a_verts.push(v);
+        }
+    }
+
+    // Precompute B edge data.
+    struct BEdgeInfo<T: Scalar, const N: usize> {
+        u: usize,
+        v: usize,
+        p0: *const Point<T, N>,
+        p1: *const Point<T, N>,
+    }
+    let mut bedges_info = Vec::with_capacity(y_edges.len());
+    for &[u, v] in y_edges {
+        bedges_info.push(BEdgeInfo {
+            u,
+            v,
+            p0: &mesh_y.vertices[u].position as *const _,
+            p1: &mesh_y.vertices[v].position as *const _,
+        });
+    }
+
+    let mut out = Vec::new();
+
+    for &av in &ordered_a_verts {
+        let p = &mesh_x.vertices[av].position;
+
+        for be in &bedges_info {
+            // Safety: pointers originate from immutable slice; never mutated here.
+            let p0 = unsafe { &*be.p0 };
+            let p1 = unsafe { &*be.p1 };
+
+            // Quick degenerate check: skip zero-length B edges.
+            let ab_vec = (p1 - p0).as_vector();
+            let ab_len2 = ab_vec.dot(&ab_vec);
+            if ab_len2.is_zero() {
+                continue;
+            }
+
+            // Bounding box rejection (expanded by tol).
+            // (Manual loop avoids temporary allocations.)
+            let mut outside_bb = false;
+            for i in 0..N {
+                let a_i = p0[i].clone();
+                let b_i = p1[i].clone();
+                let (min_i, max_i) = if a_i <= b_i { (a_i, b_i) } else { (b_i, a_i) };
+                let lo = &min_i - &tol;
+                let hi = &max_i + &tol;
+                if p[i] < lo || p[i] > hi {
+                    outside_bb = true;
+                    break;
+                }
+            }
+            if outside_bb {
+                continue;
+            }
+
+            // Project p onto segment p0->p1
+            let ap = (p - p0).as_vector();
+            let t = &ap.dot(&ab_vec) / &ab_len2;
+
+            // Must be within [0,1] (with small slack) to be on segment.
+            if t < &T::zero() - &tol || t > &T::one() + &tol {
+                continue;
+            }
+
+            // Closest point on infinite line
+            let closest = p0 + &(ab_vec.scale(&t)).0;
+            let diff = (p - &closest).as_vector();
+            let dist2 = diff.dot(&diff);
+            if dist2 > tol2 {
+                continue; // too far from line
+            }
+
+            // Discard if too close to endpoints.
+            let d0_vec = (p - p0).as_vector();
+            let d1_vec = (p - p1).as_vector();
+            let d0_2 = d0_vec.dot(&d0_vec);
+            if d0_2 <= tol2 {
+                continue;
+            }
+            let d1_2 = d1_vec.dot(&d1_vec);
+            if d1_2 <= tol2 {
+                continue;
+            }
+
+            let mut b_edge = [be.u, be.v];
+
+            if be.u > be.v {
+                b_edge = [be.v, be.u];
+            }
+
+            // All tests passed: record match.
+            out.push(TJunction {
+                a_vertex: av,
+                b_edge: b_edge,
+                u: t.clone(),
+            });
+        }
+    }
+
+    out
+}
+
+fn process_segment_and_edge_map<T: Scalar, const N: usize>(
+    mesh: &mut Mesh<T, N>,
+    intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
+    intersections_edge_map: &mut HashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
+    i: usize,
+    splits: &mut Splits<T, N>,
+    tree: &mut AabbTree<T, N, Point<T, N>, usize>,
+) where
+    Mesh<T, N>: BooleanImpl<T, N>,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Neg<Output = T>,
+{
+    if intersection_segments[i].invalidated || !intersection_segments[i].split {
+        return;
+    }
+    mesh.process_segment(splits, tree, intersection_segments, i);
+
+    let mut edge_verts = intersection_segments[i].resulting_vertices_pair;
+
+    if edge_verts[0] > edge_verts[1] {
+        edge_verts = [edge_verts[1], edge_verts[0]];
+    }
+
+    if !intersection_segments[i].invalidated
+        && edge_verts[0] != usize::MAX
+        && edge_verts[1] != usize::MAX
+    {
+        intersections_edge_map.insert(
+            (edge_verts[0], edge_verts[1]),
+            (i, intersection_segments[i].clone()),
+        );
+    }
+}
+
+fn process_t_junction<T: Scalar, const N: usize>(
+    mesh_x: &mut Mesh<T, N>,
+    mesh_y: &mut Mesh<T, N>,
+    tree_x: &mut AabbTree<T, N, Point<T, N>, usize>,
+    t_junction: &TJunction<T>,
+    intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
+    intersections_edge_map: &mut HashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
+) where
+    T: Scalar,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    let edge = mesh_x
+        .edge_map
+        .get(&(t_junction.b_edge[0], t_junction.b_edge[1]))
+        .expect("Edge must exist in edge_map");
+
+    let mut segment = intersections_edge_map
+        .get(&(t_junction.b_edge[0], t_junction.b_edge[1]))
+        .expect("Segment must exist")
+        .clone();
+    let original_vertices_pair = segment.1.resulting_vertices_pair;
+    let original_segment_b = segment.1.segment.b.clone();
+
+    let split_result = mesh_x
+        .split_edge(
+            tree_x,
+            *edge,
+            &mesh_y.vertices[t_junction.a_vertex].position,
+        )
+        .unwrap();
+    segment.1.b = IntersectionEndPoint::new(
+        Some([t_junction.a_vertex, usize::MAX]),
+        None,
+        None,
+        None,
+        None,
+    );
+    segment.1.resulting_vertices_pair = [original_vertices_pair[0], split_result.vertex];
+
+    segment.1.segment.b = mesh_y.vertices[t_junction.a_vertex].position.clone();
+
+    let new_segment = IntersectionSegment::new(
+        segment.1.b.clone(),
+        IntersectionEndPoint::new(
+            Some([original_vertices_pair[1], usize::MAX]),
+            None,
+            None,
+            None,
+            None,
+        ),
+        &Segment::new(&segment.1.segment.b, &original_segment_b),
+        segment.1.initial_face_reference,
+        [split_result.vertex, original_vertices_pair[1]],
+        segment.1.coplanar,
+    );
+
+    intersections_edge_map.remove(&(original_vertices_pair[0], original_vertices_pair[1]));
+    intersection_segments[segment.0] = segment.1.clone();
+
+    let mut edge_verts = segment.1.resulting_vertices_pair;
+
+    if edge_verts[0] > edge_verts[1] {
+        edge_verts = [edge_verts[1], edge_verts[0]];
+    }
+
+    intersections_edge_map.insert((edge_verts[0], edge_verts[1]), segment.clone());
+
+    let mut edge_verts = new_segment.resulting_vertices_pair;
+
+    if edge_verts[0] > edge_verts[1] {
+        edge_verts = [edge_verts[1], edge_verts[0]];
+    }
+
+    intersections_edge_map.insert(
+        (edge_verts[0], edge_verts[1]),
+        (intersection_segments.len(), new_segment.clone()),
+    );
+
+    intersection_segments.push(new_segment);
 }

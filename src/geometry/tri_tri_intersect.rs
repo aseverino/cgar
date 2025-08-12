@@ -235,7 +235,6 @@ where
     println!("adding an intersection:");
     for p in pts {
         if set.insert(p.clone()) {
-            println!("{:?}", p);
             uniq.push(p);
         }
     }

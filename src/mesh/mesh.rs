@@ -312,14 +312,16 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let mut boundary_edges = HashSet::new();
 
         for (seg_idx, seg) in intersection_segments.iter().enumerate() {
-            let direction = intersection_segments[seg_idx].segment.direction();
             let he = self
                 .edge_map
                 .get(&(
                     seg.resulting_vertices_pair[0],
                     seg.resulting_vertices_pair[1],
                 ))
-                .expect("Edge map must contain the segment vertices pair");
+                .expect(&format!(
+                    "Edge map must contain the segment vertices pair. Segment {}",
+                    seg_idx
+                ));
 
             let face0 = self.half_edges[*he]
                 .face
@@ -1688,29 +1690,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         Ok(())
     }
 
-    // pub fn split_edge_by_u(
-    //     &mut self,
-    //     aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
-    //     he: usize,
-    //     u: &T,
-    // ) -> Result<SplitResult, &'static str>
-    // where
-    //     T: Scalar,
-    //     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    //     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    //     for<'a> &'a T: Sub<&'a T, Output = T>
-    //         + Mul<&'a T, Output = T>
-    //         + Add<&'a T, Output = T>
-    //         + Div<&'a T, Output = T>,
-    // {
-    //     let he = self.find_valid_half_edge(he, &u);
-    //     let source = self.half_edges[self.half_edges[he].prev].vertex;
-    //     let segment = self.segment_from_half_edge(he);
-    //     let segment_direction = segment.direction();
-    //     let new_point = &self.vertices[source].position + &segment_direction.scale(&u).0;
-    //     self.split_edge(aabb_tree, he, &new_point)
-    // }
-
     pub fn split_edge(
         &mut self,
         aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
@@ -1729,8 +1708,167 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let he_ca = self.find_valid_half_edge(he, pos);
         let he_ab = self.half_edges[he_ca].next;
         let he_bc = self.half_edges[he_ab].next;
-
         let he_ac = self.half_edges[he_ca].twin;
+
+        let a = self.half_edges[he_ca].vertex;
+        let b = self.half_edges[he_ab].vertex;
+        let c = self.half_edges[he_bc].vertex;
+
+        let w = self.get_or_insert_vertex(pos);
+
+        let original_face_1 = self.half_edges[he_ca].face.unwrap();
+        let original_face_2 = self.half_edges[he_ac].face.unwrap();
+
+        if self.faces[self.half_edges[self.half_edges[he_ca].twin].face.unwrap()].null {
+            // Open borders scenario
+            let ex_he_ba = self.half_edges[he_ab].twin; // b->a
+            let ex_he_cb = self.half_edges[he_bc].twin; // c->b
+
+            // Mark old faces and half-edges removed
+            self.faces[original_face_1].removed = true;
+            self.faces[original_face_2].removed = true; // old single null face replaced by two new nulls
+            self.half_edges[he_ca].removed = true;
+            self.half_edges[he_ac].removed = true;
+
+            // Remove old edge (a,c) / (c,a) from edge_map
+            self.edge_map.remove(&(a, c));
+            self.edge_map.remove(&(c, a));
+
+            // Base indices
+            let base_face_idx = self.faces.len(); // two new real faces
+            let base_he_idx = self.half_edges.len(); // we will add 8 new half-edges:
+            // interior: c->w (0), w->a (1), b->w (2), w->b (3)
+            // border:   w->c (4), a->w (5), (two border twins of above)
+            //           plus their self-loop next/prev initialization
+            //           Actually we need exactly 6 new half-edges:
+            //             interior: c->w, w->a, b->w, w->b (4)
+            //             border:   w->c, a->w (2)  => total 6
+            // (We do NOT add border twins for b-w; that is internal)
+
+            // Create interior half-edges first (face assignment deferred)
+            let he_cw = base_he_idx + 0; // c -> w (face 2 later)
+            let he_wa = base_he_idx + 1; // w -> a (face 1 later)
+            let he_bw = base_he_idx + 2; // b -> w (face 1)
+            let he_wb = base_he_idx + 3; // w -> b (face 2)
+            let bhe_wc = base_he_idx + 4; // w -> c (border null face)
+            let bhe_aw = base_he_idx + 5; // a -> w (border null face)
+
+            // Helper to push a blank half-edge
+            let mut push_he = |to: usize| {
+                let mut he = HalfEdge::new(to);
+                he.face = None;
+                self.half_edges.push(he);
+            };
+
+            // Interior edges
+            push_he(w); // c->w
+            push_he(a); // w->a
+            push_he(w); // b->w
+            push_he(b); // w->b
+            // Border twins
+            push_he(c); // w->c
+            push_he(w); // a->w
+
+            // Set origins implicitly via prev pointers later; ensure vertex field is 'to' (already)
+            // Assign twins
+            self.half_edges[he_cw].twin = bhe_wc;
+            self.half_edges[bhe_wc].twin = he_cw;
+            self.half_edges[he_wa].twin = bhe_aw;
+            self.half_edges[bhe_aw].twin = he_wa;
+            self.half_edges[he_bw].twin = he_wb;
+            self.half_edges[he_wb].twin = he_bw;
+
+            // Build two new real faces:
+            // Face F1: (a,b,w)   cycle: he_ab (a->b), he_bw (b->w), he_wa (w->a)
+            // Face F2: (w,b,c)   cycle: he_wb (w->b), he_bc (b->c), he_cw (c->w)
+
+            // Insert faces
+            self.faces.push(Face::new(he_ab)); // face index = base_face_idx (F1)
+            self.faces.push(Face::new(he_wb)); // face index = base_face_idx+1 (F2)
+
+            // Wire F1 half-edges
+            self.half_edges[he_ab].face = Some(base_face_idx);
+            self.half_edges[he_bw].face = Some(base_face_idx);
+            self.half_edges[he_wa].face = Some(base_face_idx);
+
+            self.half_edges[he_ab].next = he_bw;
+            self.half_edges[he_ab].prev = he_wa;
+            self.half_edges[he_bw].next = he_wa;
+            self.half_edges[he_bw].prev = he_ab;
+            self.half_edges[he_wa].next = he_ab;
+            self.half_edges[he_wa].prev = he_bw;
+
+            // Wire F2 half-edges
+            self.half_edges[he_wb].face = Some(base_face_idx + 1);
+            self.half_edges[he_bc].face = Some(base_face_idx + 1);
+            self.half_edges[he_cw].face = Some(base_face_idx + 1);
+
+            self.half_edges[he_wb].next = he_bc;
+            self.half_edges[he_wb].prev = he_cw;
+            self.half_edges[he_bc].next = he_cw;
+            self.half_edges[he_bc].prev = he_wb;
+            self.half_edges[he_cw].next = he_wb;
+            self.half_edges[he_cw].prev = he_bc;
+
+            // Re-hook external twins (keep adjacency) on edges a-b, b-c
+            // (he_ab twin already points to ex_he_ba, he_bc twin to ex_he_cb)
+            // Ensure those external twins still point back
+            if ex_he_ba != usize::MAX {
+                self.half_edges[ex_he_ba].twin = he_ab;
+            }
+            if ex_he_cb != usize::MAX {
+                self.half_edges[ex_he_cb].twin = he_bc;
+            }
+
+            // Create two new null faces for border half-edges bhe_wc (w->c) and bhe_aw (a->w)
+            let null_face_wc = self.faces.len();
+            self.faces.push(Face::new_null(bhe_wc));
+            self.half_edges[bhe_wc].face = Some(null_face_wc);
+            // self-loop
+            self.half_edges[bhe_wc].next = bhe_wc;
+            self.half_edges[bhe_wc].prev = bhe_wc;
+
+            let null_face_aw = self.faces.len();
+            self.faces.push(Face::new_null(bhe_aw));
+            self.half_edges[bhe_aw].face = Some(null_face_aw);
+            self.half_edges[bhe_aw].next = bhe_aw;
+            self.half_edges[bhe_aw].prev = bhe_aw;
+
+            // Edge map updates
+            self.edge_map.insert((c, w), he_cw);
+            self.edge_map.insert((w, a), he_wa);
+            self.edge_map.insert((b, w), he_bw);
+            self.edge_map.insert((w, b), he_wb);
+            self.edge_map.insert((w, c), bhe_wc);
+            self.edge_map.insert((a, w), bhe_aw);
+
+            // Update representative half-edges at vertices
+            self.vertices[w].half_edge.get_or_insert(he_wb);
+            self.vertices[a].half_edge.get_or_insert(he_ab);
+            self.vertices[b].half_edge.get_or_insert(he_bc);
+            self.vertices[c].half_edge.get_or_insert(he_cw);
+
+            // Record half-edge split lineage
+            self.half_edge_split_map.insert(he_ca, (he_cw, he_wa));
+            self.half_edge_split_map.insert(he_ac, (bhe_aw, bhe_wc));
+
+            // AABB tree updates (invalidate old real face; null face not in tree originally)
+            aabb_tree.invalidate(&original_face_1);
+            // Insert the two new real faces
+            let f1_aabb = self.face_aabb(base_face_idx);
+            let f2_aabb = self.face_aabb(base_face_idx + 1);
+            aabb_tree.insert(f1_aabb, base_face_idx);
+            aabb_tree.insert(f2_aabb, base_face_idx + 1);
+
+            let split_result = SplitResult {
+                kind: SplitResultKind::SplitEdge,
+                vertex: w,
+                new_faces: [base_face_idx, base_face_idx + 1, usize::MAX, usize::MAX],
+            };
+
+            return Ok(split_result);
+        }
+
         let he_cd = self.half_edges[he_ac].next;
         let he_da = self.half_edges[he_cd].next;
 
@@ -1739,17 +1877,11 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         let ex_he_dc = self.half_edges[he_cd].twin;
         let ex_he_ad = self.half_edges[he_da].twin;
 
-        let a = self.half_edges[he_ca].vertex;
-        let b = self.half_edges[he_ab].vertex;
-        let c = self.half_edges[he_bc].vertex;
         let d = self.half_edges[he_cd].vertex;
 
         // Create new vertex at split position
-        let w = self.get_or_insert_vertex(pos);
 
         // let mut new_face_results = Vec::new();
-        let original_face_1 = self.half_edges[he_ca].face.unwrap();
-        let original_face_2 = self.half_edges[he_ac].face.unwrap();
 
         // 1. Build the new faces (4 in total) and create their half-edges (no twins for now)
         let evs = [
