@@ -29,7 +29,6 @@ use crate::{
         spatial_element::SpatialElement,
         vector::{Vector, VectorOps},
     },
-    mesh::face,
     numeric::scalar::Scalar,
     operations::Zero,
 };
@@ -37,13 +36,13 @@ use crate::{
 use super::{face::Face, half_edge::HalfEdge, vertex::Vertex};
 use core::panic;
 use smallvec::*;
+use std::convert::TryInto;
 use std::{
     array::from_fn,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     ops::{Add, Div, Index, IndexMut, Mul, Neg, Sub},
     time::Instant,
 };
-use std::{convert::TryInto, sync::Arc};
 
 #[derive(Debug, Clone, Default)]
 pub struct Triangle {
@@ -370,8 +369,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
     }
 
     pub fn remove_invalidated_faces(&mut self) {
-        let original_count = self.faces.len();
-
         // Filter out invalidated faces
         let mut new_faces = Vec::new();
         let mut face_mapping = vec![None; self.faces.len()];
@@ -2069,10 +2066,8 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             if let Some(f) = he.face {
                 // check that f really contains i somewhere in its cycle…
                 let mut cur = self.faces[f].half_edge;
-                let mut found = false;
                 loop {
                     if cur == i {
-                        found = true;
                         break;
                     }
                     cur = self.half_edges[cur].next;
@@ -2082,7 +2077,7 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
 
         let mut edge_set = HashSet::new();
-        for (i, he) in self.half_edges.iter().enumerate() {
+        for (_i, he) in self.half_edges.iter().enumerate() {
             if he.removed {
                 continue;
             }
@@ -2407,183 +2402,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
             (Some(he), Some(t), Some(u)) => (he, t, u),
             _ => panic!("Ray did not intersect any edge from start vertex"),
         }
-    }
-
-    /// Method 1: Direct 3D parametric intersection
-    fn parametric_line_intersection_3d(
-        &self,
-        p: &Point<T, N>,
-        q: &Point<T, N>,
-        a: &Point<T, N>,
-        b: &Point<T, N>,
-    ) -> Option<(Point<T, N>, T)>
-    where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        let d1 = (q - p).as_vector();
-        let d2 = (b - a).as_vector();
-        let r = (a - p).as_vector();
-
-        // Solve: p + t*d1 = a + s*d2
-        // This gives us: t*d1 - s*d2 = r
-
-        let d1_dot_d1 = d1.dot(&d1);
-        let d1_dot_d2 = d1.dot(&d2);
-        let d2_dot_d2 = d2.dot(&d2);
-        let d1_dot_r = d1.dot(&r);
-        let d2_dot_r = d2.dot(&r);
-
-        let denom = &d1_dot_d1 * &d2_dot_d2 - &d1_dot_d2 * &d1_dot_d2;
-        let eps = T::tolerance();
-
-        if &denom.abs() < &eps {
-            return None; // Lines are parallel
-        }
-
-        let t = (&d2_dot_d2 * &d1_dot_r - &d1_dot_d2 * &d2_dot_r) / denom.clone();
-        let s = (&d1_dot_d1 * &d2_dot_r - &d1_dot_d2 * &d1_dot_r) / denom;
-
-        // Check if intersection is within both line segments
-        let eps_bounds = T::tolerance();
-        if t >= -eps_bounds.clone()
-            && t <= T::one() + eps_bounds.clone()
-            && s >= -eps_bounds.clone()
-            && s <= T::one() + eps_bounds
-        {
-            let intersection = p + &d1.scale(&t).0;
-            return Some((intersection, t));
-        }
-
-        None
-    }
-
-    /// Method 2: Projection-based intersection for a specific axis
-    fn projected_intersection_2d(
-        &self,
-        p: &Point<T, N>,
-        q: &Point<T, N>,
-        a: &Point<T, N>,
-        b: &Point<T, N>,
-        drop_axis: usize,
-    ) -> Option<(Point<T, N>, T)>
-    where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        // Choose two axes to keep (drop the specified axis)
-        let (i0, i1) = match drop_axis {
-            0 => (1, 2),
-            1 => (0, 2),
-            _ => (0, 1),
-        };
-
-        // Project to 2D
-        let p2 = Point::<T, 2>::from_vals([p.coords()[i0].clone(), p.coords()[i1].clone()]);
-        let q2 = Point::<T, 2>::from_vals([q.coords()[i0].clone(), q.coords()[i1].clone()]);
-        let a2 = Point::<T, 2>::from_vals([a.coords()[i0].clone(), a.coords()[i1].clone()]);
-        let b2 = Point::<T, 2>::from_vals([b.coords()[i0].clone(), b.coords()[i1].clone()]);
-
-        // **CHECK FOR DEGENERATE PROJECTIONS FIRST**
-        let segment_2d_len_sq =
-            (&q2[0] - &p2[0]) * (&q2[0] - &p2[0]) + (&q2[1] - &p2[1]) * (&q2[1] - &p2[1]);
-        let edge_2d_len_sq =
-            (&b2[0] - &a2[0]) * (&b2[0] - &a2[0]) + (&b2[1] - &a2[1]) * (&b2[1] - &a2[1]);
-
-        if segment_2d_len_sq < T::tolerance() || edge_2d_len_sq < T::tolerance() {
-            return None; // Degenerate projection
-        }
-
-        // **USE PARAMETRIC 2D INTERSECTION (NOT segment_intersect_2d)**
-        let dir_segment = [&q2[0] - &p2[0], &q2[1] - &p2[1]];
-        let dir_edge = [&b2[0] - &a2[0], &b2[1] - &a2[1]];
-
-        // Solve: p2 + t*dir_segment = a2 + s*dir_edge
-        let denom = &dir_segment[0] * &dir_edge[1] - &dir_segment[1] * &dir_edge[0];
-
-        if denom.abs() <= T::tolerance() {
-            return None; // Parallel in 2D
-        }
-
-        let diff = [&a2[0] - &p2[0], &a2[1] - &p2[1]];
-        let t = (&diff[0] * &dir_edge[1] - &diff[1] * &dir_edge[0]) / denom.clone();
-        let s = (&diff[0] * &dir_segment[1] - &diff[1] * &dir_segment[0]) / denom;
-
-        // Check bounds
-        let eps = T::tolerance();
-        if t >= -eps.clone()
-            && t <= T::one() + eps.clone()
-            && s >= -eps.clone()
-            && s <= T::one() + eps
-        {
-            // Lift back to 3D by interpolating along the original segment
-            let dir_3d = (q - p).as_vector();
-            let intersection_3d = p + &dir_3d.scale(&t).0;
-            return Some((intersection_3d, t));
-        }
-
-        None
-    }
-
-    /// Method 3: Closest approach between line segments
-    fn closest_approach_intersection(
-        &self,
-        p: &Point<T, N>,
-        q: &Point<T, N>,
-        a: &Point<T, N>,
-        b: &Point<T, N>,
-    ) -> Option<(Point<T, N>, T)>
-    where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        let d1 = (q - p).as_vector();
-        let d2 = (b - a).as_vector();
-        let r = (p - a).as_vector();
-
-        let a_val = d1.dot(&d1);
-        let b_val = d1.dot(&d2);
-        let c_val = d2.dot(&d2);
-        let d_val = d1.dot(&r);
-        let e_val = d2.dot(&r);
-
-        let denom = &a_val * &c_val - &b_val * &b_val;
-        let eps = T::tolerance();
-
-        if denom.abs() < eps {
-            return None;
-        }
-
-        let t = (&b_val * &e_val - &c_val * &d_val) / denom.clone();
-        let s = (&a_val * &e_val - &b_val * &d_val) / denom;
-
-        // Check if closest approach is within reasonable bounds and distance
-        if t >= T::from(-0.1) && t <= T::from(1.1) && s >= T::from(-0.1) && s <= T::from(1.1) {
-            let point1 = p + &d1.scale(&t).0;
-            let point2 = a + &d2.scale(&s).0;
-            let distance = point1.distance_to(&point2);
-
-            if distance < T::tolerance() {
-                // Lines are close enough to be considered intersecting
-                let intersection = p + &d1.scale(&t.clone().max(T::zero()).min(T::one())).0;
-                let clamped_t = &t.max(T::zero()).min(T::one());
-                return Some((intersection, clamped_t.clone()));
-            }
-        }
-
-        None
     }
 
     pub fn split_face(
@@ -2914,27 +2732,6 @@ impl<T: Scalar, const N: usize> Mesh<T, N> {
         }
 
         he_idx
-    }
-
-    fn point_in_face(&self, face_idx: usize, point: &Point<T, N>) -> bool
-    where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        let face_vertices = self.face_vertices(face_idx);
-        if face_vertices.len() != 3 {
-            return false;
-        }
-
-        let v0 = &self.vertices[face_vertices[0]].position;
-        let v1 = &self.vertices[face_vertices[1]].position;
-        let v2 = &self.vertices[face_vertices[2]].position;
-
-        point_in_or_on_triangle(point, v0, v1, v2)
     }
 
     pub fn barycentric_coords_on_face(
@@ -3301,34 +3098,6 @@ where
     (p - &proj).as_vector().dot(&(p - &proj).as_vector())
 }
 
-fn is_closed_loop<T: Scalar, const N: usize>(
-    loop_segments: &Vec<usize>,
-    segments: &Vec<IntersectionSegment<T, N>>,
-) -> bool
-where
-    Point<T, N>: PointOps<T, N>,
-{
-    if loop_segments.len() < 3 {
-        return false;
-    }
-
-    let tolerance = T::tolerance();
-    let first_seg = &segments[loop_segments[0]];
-    let last_seg = &segments[*loop_segments.last().unwrap()];
-
-    // Check if the loop forms a closed cycle
-    let first_start = &first_seg.segment.a;
-    let first_end = &first_seg.segment.b;
-    let last_start = &last_seg.segment.a;
-    let last_end = &last_seg.segment.b;
-
-    // Check various connection patterns
-    (first_start.distance_to(last_end) < tolerance)
-        || (first_start.distance_to(last_start) < tolerance)
-        || (first_end.distance_to(last_start) < tolerance)
-        || (first_end.distance_to(last_end) < tolerance)
-}
-
 /// Helper function with improved error handling
 fn get_face_vertices_safe<T: Scalar, const N: usize>(
     mesh: &Mesh<T, N>,
@@ -3336,241 +3105,6 @@ fn get_face_vertices_safe<T: Scalar, const N: usize>(
 ) -> Option<Vec<usize>> {
     // Use existing safe method
     mesh.face_vertices_safe(face_idx)
-}
-
-/// Find shared face using iterative approach (no recursion)
-fn find_shared_face_iterative<T: Scalar, const N: usize>(
-    mesh: &Mesh<T, N>,
-    vertex_a: usize,
-    vertex_b: usize,
-) -> Option<usize> {
-    for (face_idx, _face) in mesh.faces.iter().enumerate() {
-        // Use safe vertex extraction with timeout
-        if let Some(face_vertices) = get_face_vertices_with_timeout(mesh, face_idx, 100) {
-            if face_vertices.contains(&vertex_a) && face_vertices.contains(&vertex_b) {
-                return Some(face_idx);
-            }
-        }
-    }
-    None
-}
-
-/// Safe face vertex extraction with iteration limit
-fn get_face_vertices_with_timeout<T: Scalar, const N: usize>(
-    mesh: &Mesh<T, N>,
-    face_idx: usize,
-    max_iterations: usize,
-) -> Option<Vec<usize>> {
-    if face_idx >= mesh.faces.len() {
-        return None;
-    }
-
-    let face = &mesh.faces[face_idx];
-    if face.removed || face.half_edge >= mesh.half_edges.len() {
-        return None;
-    }
-
-    let mut result = Vec::new();
-    let start_he = face.half_edge;
-    let mut current_he = start_he;
-    let mut iterations = 0;
-
-    loop {
-        iterations += 1;
-        if iterations > max_iterations {
-            // println!("WARNING: Face traversal timeout for face {}", face_idx);
-            return None;
-        }
-
-        if current_he >= mesh.half_edges.len() || mesh.half_edges[current_he].removed {
-            return None;
-        }
-
-        result.push(mesh.half_edges[current_he].vertex);
-
-        current_he = mesh.half_edges[current_he].next;
-        if current_he >= mesh.half_edges.len() || mesh.half_edges[current_he].removed {
-            return None;
-        }
-
-        if current_he == start_he {
-            break;
-        }
-    }
-
-    Some(result)
-}
-
-/// Find connection through adjacent faces (non-recursive)
-fn find_adjacent_face_connection<T: Scalar, const N: usize>(
-    mesh: &Mesh<T, N>,
-    start_vertex: usize,
-    target_vertex: usize,
-) -> Option<AdjacentFaceConnection>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // Find all faces containing start_vertex
-    let start_faces = find_faces_containing_vertex_safe(mesh, start_vertex);
-    let target_faces = find_faces_containing_vertex_safe(mesh, target_vertex);
-
-    // Look for faces that share an edge
-    for &start_face in &start_faces {
-        for &target_face in &target_faces {
-            if start_face == target_face {
-                continue; // Same face already handled
-            }
-
-            if mesh.faces[start_face].removed || mesh.faces[target_face].removed {
-                panic!("removed faces!");
-            }
-
-            // Check if faces are adjacent
-            if let Some(shared_edge) = find_shared_edge_between_faces(mesh, start_face, target_face)
-            {
-                return Some(AdjacentFaceConnection {
-                    start_face,
-                    target_face,
-                    intermediate_vertex: shared_edge.0, // One vertex of shared edge
-                });
-            }
-        }
-    }
-
-    None
-}
-
-#[derive(Debug)]
-struct AdjacentFaceConnection {
-    start_face: usize,
-    target_face: usize,
-    intermediate_vertex: usize,
-}
-
-/// Find faces containing vertex with safety limits
-fn find_faces_containing_vertex_safe<T: Scalar, const N: usize>(
-    mesh: &Mesh<T, N>,
-    vertex: usize,
-) -> Vec<usize> {
-    let mut faces = Vec::new();
-    let max_faces = 1000; // Safety limit
-
-    for (face_idx, face) in mesh.faces.iter().enumerate() {
-        if faces.len() >= max_faces {
-            // println!("WARNING: Too many faces contain vertex {}", vertex);
-            break;
-        }
-
-        if face.removed {
-            continue;
-        }
-
-        let face_vertices = mesh.face_vertices(face_idx);
-
-        if face_vertices.contains(&vertex) {
-            faces.push(face_idx);
-        }
-    }
-
-    faces
-}
-
-/// Find shared edge between two faces
-fn find_shared_edge_between_faces<T: Scalar, const N: usize>(
-    mesh: &Mesh<T, N>,
-    face_a: usize,
-    face_b: usize,
-) -> Option<(usize, usize)> {
-    let vertices_a = mesh.face_vertices(face_a);
-    let vertices_b = mesh.face_vertices(face_b);
-
-    // Check all edges of face_a against face_b
-    for i in 0..vertices_a.len() {
-        let v1 = vertices_a[i];
-        let v2 = vertices_a[(i + 1) % vertices_a.len()];
-
-        // Check if this edge exists in face_b
-        for j in 0..vertices_b.len() {
-            let u1 = vertices_b[j];
-            let u2 = vertices_b[(j + 1) % vertices_b.len()];
-
-            if (v1 == u1 && v2 == u2) || (v1 == u2 && v2 == u1) {
-                return Some((v1, v2));
-            }
-        }
-    }
-
-    None
-}
-
-fn is_manifold_boundary_loop<T: Scalar, const N: usize>(
-    loop_segments: &Vec<usize>,
-    segments: &Vec<IntersectionSegment<T, N>>,
-) -> bool
-where
-    Point<T, N>: PointOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    if loop_segments.len() < 3 {
-        return false;
-    }
-
-    // Check if each vertex has exactly 2 connections (manifold property)
-    let mut vertex_degree = HashMap::new();
-
-    for &seg_idx in loop_segments {
-        if seg_idx >= segments.len() {
-            return false;
-        }
-
-        let seg = &segments[seg_idx];
-
-        // Use quantized coordinates for robust vertex identification
-        let a_key = quantize_point(&seg.segment.a);
-        let b_key = quantize_point(&seg.segment.b);
-
-        *vertex_degree.entry(a_key).or_insert(0) += 1;
-        *vertex_degree.entry(b_key).or_insert(0) += 1;
-    }
-
-    // All vertices should have degree 2 for a manifold loop
-    vertex_degree.values().all(|&degree| degree == 2)
-}
-
-// In quantize_point function
-fn quantize_point<T: Scalar, const N: usize>(point: &Point<T, N>) -> String
-where
-    Point<T, N>: PointOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    let tolerance = T::point_merge_threshold(); // Use point-specific threshold
-
-    if tolerance.is_zero() {
-        // Handle exact arithmetic case
-        let coords: Vec<String> = (0..N).map(|i| format!("{:?}", point[i])).collect();
-        return coords.join(",");
-    }
-
-    let quantized_coords: Vec<i64> = (0..N)
-        .map(|i| {
-            let coord = &point[i];
-            let ratio = coord / &tolerance;
-            let ratio_f64 = ratio.to_f64().unwrap();
-            ratio_f64.round() as i64
-        })
-        .collect();
-    format!("{:?}", quantized_coords)
 }
 
 // Iterative face half-edge traversal to eliminate recursion
@@ -3758,29 +3292,6 @@ where
     Some((u, v, w))
 }
 
-fn point_in_triangle_barycentric<T: Scalar, const N: usize>(bary: &(T, T, T)) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    let (u, v, w) = bary;
-    let zero = T::zero();
-    let one = T::one();
-    let eps = T::tolerance();
-
-    // Allow small negative values due to floating-point error
-    u >= &(&zero - &eps)
-        && v >= &(&zero - &eps)
-        && w >= &(&zero - &eps)
-        && u <= &(&one + &eps)
-        && v <= &(&one + &eps)
-        && w <= &(&one + &eps)
-}
-
 fn ray_segment_intersection_2d<T: Scalar>(
     ray_origin: &Point<T, 2>,
     ray_dir: &Vector<T, 2>,
@@ -3809,204 +3320,6 @@ where
 
     if t.is_positive() && u.is_positive() && (&u - &T::one()).is_negative_or_zero() {
         Some((t, u))
-    } else {
-        None
-    }
-}
-
-fn ray_stays_within_face<T: Scalar, const N: usize>(
-    face_vertices: &[&Point<T, N>], // original 3D vertex positions of the face
-    point_3d: &Point<T, N>,         // point lying on the edge
-    dir_3d: &Vector<T, N>,          // direction to test
-    epsilon: &T,                    // small step value, e.g., 1e-6
-) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // Step 1: Compute basis (u, v) for face plane
-    let edge1 = (face_vertices[1] - face_vertices[0]).as_vector();
-    let edge2 = (face_vertices[2] - face_vertices[0]).as_vector();
-    let normal = edge1.cross(&edge2);
-    let u = edge1.normalized(); // assume non-degenerate
-    let v = normal.cross(&u).normalized();
-
-    // Step 2: Project point and direction into 2D
-    let origin = &face_vertices[0];
-    let to_point = point_3d - origin;
-    let point_2d = Point::<T, 2>::new([to_point.as_vector().dot(&u), to_point.as_vector().dot(&v)]);
-    let dir_2d = Vector::<T, 2>::new([dir_3d.dot(&u), dir_3d.dot(&v)]);
-
-    let offset_point = &point_2d + &(dir_2d.scale(epsilon)).0;
-
-    // Step 3: Project face vertices into 2D
-    let face_2d: Vec<Point<T, 2>> = face_vertices
-        .iter()
-        .map(|v| {
-            let delta = (*v - *origin).as_vector();
-            Point::new([delta.dot(&u), delta.dot(&v.as_vector())])
-        })
-        .collect();
-
-    // Step 4: Run point-in-polygon test for offset_point
-    point_in_polygon_2d(&face_2d, &offset_point)
-}
-
-fn point_in_polygon_2d<T: Scalar, const N: usize>(polygon: &[Point<T, 2>], p: &Point<T, 2>) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    let mut inside = false;
-    let n = polygon.len();
-
-    for i in 0..n {
-        let a = &polygon[i];
-        let b = &polygon[(i + 1) % n];
-
-        let (x, y) = (&p[0], &p[1]);
-        let (x0, y0) = (&a[0], &a[1]);
-        let (x1, y1) = (&b[0], &b[1]);
-
-        let cond1 = (y0 <= y && y < y1) || (y1 <= y && y < y0);
-        if cond1 {
-            let cross = (x1 - x0) * (y - y0) - (x - x0) * (y1 - y0);
-            if cross.is_negative() {
-                inside = !inside;
-            }
-        }
-    }
-
-    inside
-}
-
-fn find_ray_face_boundary_intersection<T: Scalar, const N: usize>(
-    ray_origin: &Point<T, N>,
-    ray_direction: &Vector<T, N>,
-    face_vertices: &[&Point<T, N>; 3],
-    tolerance: &T,
-) -> Option<T>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    let mut min_t = None;
-
-    // Check intersection with each edge of the triangle
-    for i in 0..3 {
-        let edge_start = face_vertices[i];
-        let edge_end = face_vertices[(i + 1) % 3];
-
-        if let Some(t) =
-            ray_line_intersection_2d(ray_origin, ray_direction, edge_start, edge_end, tolerance)
-        {
-            if t > *tolerance {
-                // Ignore trivial hits at starting point
-                match min_t {
-                    None => min_t = Some(t),
-                    Some(current_min) if t < current_min => min_t = Some(t),
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    min_t
-}
-
-fn ray_line_intersection_2d<T: Scalar, const N: usize>(
-    ray_origin: &Point<T, N>,
-    ray_direction: &Vector<T, N>,
-    line_start: &Point<T, N>,
-    line_end: &Point<T, N>,
-    tolerance: &T,
-) -> Option<T>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // Handle degenerate line segment
-    let line_dir = (line_end - line_start).as_vector();
-    let line_length_sq = line_dir.norm_squared();
-
-    if line_length_sq <= tolerance * tolerance {
-        return None; // Degenerate line segment
-    }
-
-    // Project to dominant 2D plane to avoid numerical issues
-    let abs_dir = [
-        ray_direction[0].abs(),
-        ray_direction[1].abs(),
-        ray_direction[2].abs(),
-    ];
-
-    // Choose projection plane by dropping the axis with largest ray direction component
-    let (coord0, coord1) = if abs_dir[0] >= abs_dir[1] && abs_dir[0] >= abs_dir[2] {
-        (1, 2) // Drop X, use YZ plane
-    } else if abs_dir[1] >= abs_dir[2] {
-        (0, 2) // Drop Y, use XZ plane  
-    } else {
-        (0, 1) // Drop Z, use XY plane
-    };
-
-    // Extract 2D coordinates
-    let ray_origin_2d =
-        Point::<T, 2>::new([ray_origin[coord0].clone(), ray_origin[coord1].clone()]);
-
-    let ray_dir_2d =
-        Vector::<T, 2>::new([ray_direction[coord0].clone(), ray_direction[coord1].clone()]);
-
-    let line_start_2d =
-        Point::<T, 2>::new([line_start[coord0].clone(), line_start[coord1].clone()]);
-
-    let line_end_2d = Point::<T, 2>::new([line_end[coord0].clone(), line_end[coord1].clone()]);
-
-    // Check if 2D projection is degenerate
-    let ray_2d_length_sq = ray_dir_2d.norm_squared();
-    let line_2d_length_sq = (&line_end_2d - &line_start_2d).as_vector().norm_squared();
-
-    if ray_2d_length_sq <= tolerance * tolerance || line_2d_length_sq <= tolerance * tolerance {
-        return None; // Degenerate projection
-    }
-
-    // Parametric intersection: ray_origin + t * ray_dir = line_start + s * line_dir
-    let line_dir_2d = (&line_end_2d - &line_start_2d).as_vector();
-    let origin_diff = (&line_start_2d - &ray_origin_2d).as_vector();
-
-    // Solve 2x2 linear system using Cramer's rule
-    let det = ray_dir_2d[0].clone() * line_dir_2d[1].clone()
-        - ray_dir_2d[1].clone() * line_dir_2d[0].clone();
-
-    if det.abs() <= *tolerance {
-        return None; // Parallel lines
-    }
-
-    let t = (origin_diff[0].clone() * line_dir_2d[1].clone()
-        - origin_diff[1].clone() * line_dir_2d[0].clone())
-        / det.clone();
-    let s = (origin_diff[0].clone() * ray_dir_2d[1].clone()
-        - origin_diff[1].clone() * ray_dir_2d[0].clone())
-        / det;
-
-    // Check if intersection is within line segment bounds
-    if s >= T::zero() && s <= T::one() && t > *tolerance {
-        Some(t)
     } else {
         None
     }

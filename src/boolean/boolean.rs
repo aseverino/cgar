@@ -21,8 +21,8 @@
 // SOFTWARE.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque, btree_set::Intersection},
-    hash::{Hash, Hasher},
+    collections::{HashMap, HashSet, VecDeque},
+    hash::Hash,
     ops::{Add, Div, Mul, Neg, Sub},
     time::Instant,
 };
@@ -212,7 +212,7 @@ where
             }
 
             // 3) pick a seed face that lies inside B
-            let (seed_intersection_idx, selected_face) = get_seed_face(
+            let (_seed_intersection_idx, selected_face) = get_seed_face(
                 &self,
                 &other,
                 &tree_b,
@@ -458,9 +458,6 @@ where
         let mut splits_a = Splits::new();
         let mut splits_b = Splits::new();
 
-        let mut coplanar_num = 0;
-        let start = Instant::now();
-
         for fa in 0..a.faces.len() {
             if a.faces[fa].null {
                 continue;
@@ -510,7 +507,6 @@ where
                         }
                     }
                     TriTriIntersectionResult::Coplanar(segment) => {
-                        coplanar_num += 1;
                         if segment.length().is_positive() {
                             Self::create_intersection_segment(
                                 &a,
@@ -534,7 +530,6 @@ where
                     }
                     TriTriIntersectionResult::CoplanarPolygon(vs) => {
                         for segment in vs {
-                            coplanar_num += 1;
                             Self::create_intersection_segment(
                                 &a,
                                 &mut splits_a,
@@ -1291,7 +1286,7 @@ where
                     let len = intersection_segments.len() - 1;
                     let new_intersection = &mut intersection_segments[len];
                     new_intersection.b = seg;
-                } else if let Some((he_next, t_next, _u)) = self
+                } else if let Some((he_next, _t_next, _u)) = self
                     .get_first_half_edge_intersection_on_face(
                         self.half_edges[updated_he_twin]
                             .face
@@ -1435,101 +1430,6 @@ where
         } else {
             panic!("Faces are not adjacent or equal, but they should be. This is a bug.");
         }
-    }
-}
-
-fn face_axes(face_idx: usize) -> (usize, usize, usize) {
-    match face_idx {
-        // top/bottom faces lie in Z-plane → drop Z (axis 2)
-        2 | 3 => (0, 1, 2),
-        // right/left faces lie in Y-plane → drop Y (axis 1)
-        6 | 7 => (0, 2, 1),
-        // front/back faces lie in X-plane → drop X (axis 0)
-        8 | 9 => (1, 2, 0),
-        _ => (0, 1, 2), // fallback
-    }
-}
-
-// fn should_connect_segments<T: Scalar, const N: usize>(
-//     seg1: &IntersectionSegment<T, N>,
-//     seg2: &IntersectionSegment<T, N>,
-//     shared_vertex: usize,
-// ) -> bool {
-//     // Don't connect coplanar segments here (handled separately)
-//     if seg1.coplanar || seg2.coplanar {
-//         return false;
-//     }
-
-//     // Check if segments share exactly one face (continuous boundary condition)
-//     let faces1 = &seg1.resulting_faces;
-//     let faces2 = &seg2.resulting_faces;
-
-//     let shared_faces = faces1.iter().filter(|&&f| faces2.contains(&f)).count();
-
-//     // Only connect if segments share exactly one face (forming a continuous boundary)
-//     shared_faces == 1
-// }
-
-// fn build_coplanar_links<T: Scalar, const N: usize>(
-//     intersection_segments: &mut [IntersectionSegment<T, N>],
-//     segment_indices: &[usize],
-// ) {
-//     // For coplanar segments, build a more restricted connectivity
-//     for &seg_idx in segment_indices {
-//         let [v0, v1] = intersection_segments[seg_idx].resulting_vertices_pair;
-//         let mut connected = Vec::new();
-
-//         for &other_idx in segment_indices {
-//             if other_idx == seg_idx {
-//                 continue;
-//             }
-
-//             let [ov0, ov1] = intersection_segments[other_idx].resulting_vertices_pair;
-
-//             // Only connect if they share exactly one vertex
-//             let shared_vertices = [
-//                 (v0 == ov0) as u8,
-//                 (v0 == ov1) as u8,
-//                 (v1 == ov0) as u8,
-//                 (v1 == ov1) as u8,
-//             ]
-//             .iter()
-//             .sum::<u8>();
-
-//             if shared_vertices == 1 {
-//                 connected.push(other_idx);
-//             }
-//         }
-
-//         connected.sort_unstable();
-//         intersection_segments[seg_idx].links.clear();
-//         intersection_segments[seg_idx]
-//             .links
-//             .extend_from_slice(&connected);
-//     }
-// }
-
-struct SegmentKey<'a, T: Scalar, const N: usize>(&'a Point<T, N>, &'a Point<T, N>);
-
-impl<'a, T: Scalar, const N: usize> PartialEq for SegmentKey<'a, T, N> {
-    fn eq(&self, other: &Self) -> bool {
-        (self.0 == other.0 && self.1 == other.1) || (self.0 == other.1 && self.1 == other.0)
-    }
-}
-impl<'a, T: Scalar, const N: usize> Eq for SegmentKey<'a, T, N> {}
-
-impl<'a, T: Scalar, const N: usize> Hash for SegmentKey<'a, T, N> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash as unordered pair: a ^ b
-        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
-        self.0.hash(&mut hasher_a);
-        let ha = hasher_a.finish();
-
-        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
-        self.1.hash(&mut hasher_b);
-        let hb = hasher_b.finish();
-
-        (ha ^ hb).hash(state);
     }
 }
 
@@ -1677,7 +1577,6 @@ where
 #[derive(Debug, Clone, Copy)]
 pub struct CoplanarTriangle {
     verts: [usize; 3], // (a,b,c) with a<b<c
-    segs: [usize; 3],  // indices into the group's segment list: (ab, bc, ca)
 }
 
 fn ordered(a: usize, b: usize) -> (usize, usize) {
@@ -1710,7 +1609,7 @@ where
     }
 
     // quick accessor for point coords
-    let P = |i: usize| &mesh.vertices[i].position;
+    let get_p = |i: usize| &mesh.vertices[i].position;
 
     // 2) enumerate unique triangles a<b<c s.t. (a,b), (a,c), (b,c) are edges
     let mut verts: Vec<usize> = adj.keys().copied().collect();
@@ -1718,7 +1617,7 @@ where
 
     let mut out = Vec::new();
 
-    for (ai, &a) in verts.iter().enumerate() {
+    for (_, &a) in verts.iter().enumerate() {
         // neighbors of a
         let mut na: Vec<usize> = adj[&a].iter().copied().collect();
         na.sort_unstable();
@@ -1740,8 +1639,8 @@ where
                 }
 
                 // 3) reject collinear (degenerate) triangles
-                let ab = (P(b) - P(a)).as_vector();
-                let ac = (P(c) - P(a)).as_vector();
+                let ab = (get_p(b) - get_p(a)).as_vector();
+                let ac = (get_p(c) - get_p(a)).as_vector();
                 let cr = ab.cross(&ac); // 3D: normal vector
                 let area2 = cr.dot(&cr); // squared area
                 if area2 == T::zero() {
@@ -1759,10 +1658,7 @@ where
                     continue;
                 }
 
-                out.push(CoplanarTriangle {
-                    verts: [a, b, c],
-                    segs: [e_ab, e_bc, e_ca],
-                });
+                out.push(CoplanarTriangle { verts: [a, b, c] });
             }
         }
     }
@@ -1770,10 +1666,9 @@ where
     out
 }
 
-struct TJunction<T> {
+struct TJunction {
     a_vertex: usize,
     b_edge: [usize; 2],
-    u: T,
 }
 
 /// Find all vertices from `a_edges` (by their vertex indices into `a_vertices`)
@@ -1787,150 +1682,12 @@ struct TJunction<T> {
 /// A single a-vertex may appear multiple times if it lies on multiple distinct b-edges.
 /// Order is stable: vertices follow first appearance while scanning `a_edges` left-to-right;
 /// for each vertex, matching b-edges follow the order in `b_edges`.
-///
-/// Complexity is high: O(Va_unique * Eb).
-/// Must improve this later with spatial indexing.
-fn find_x_vertices_on_y_edges_slow<T: Scalar, const N: usize>(
-    mesh_x: &Mesh<T, N>,
-    mesh_y: &Mesh<T, N>,
-    x_edges: &[[usize; 2]],
-    y_edges: &[[usize; 2]],
-) -> Vec<TJunction<T>>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>
-        + Neg<Output = T>,
-{
-    use std::collections::HashSet;
-
-    if x_edges.is_empty() || y_edges.is_empty() {
-        return Vec::new();
-    }
-
-    let tol = T::tolerance();
-    let tol2 = &tol * &tol;
-
-    // Collect unique A vertices in first-occurrence order.
-    let mut ordered_a_verts = Vec::new();
-    let mut seen = HashSet::with_capacity(x_edges.len() * 2);
-    for &[u, v] in x_edges {
-        if seen.insert(u) {
-            ordered_a_verts.push(u);
-        }
-        if seen.insert(v) {
-            ordered_a_verts.push(v);
-        }
-    }
-
-    // Precompute B edge data.
-    struct BEdgeInfo<T: Scalar, const N: usize> {
-        u: usize,
-        v: usize,
-        p0: *const Point<T, N>,
-        p1: *const Point<T, N>,
-    }
-    let mut bedges_info = Vec::with_capacity(y_edges.len());
-    for &[u, v] in y_edges {
-        bedges_info.push(BEdgeInfo {
-            u,
-            v,
-            p0: &mesh_y.vertices[u].position as *const _,
-            p1: &mesh_y.vertices[v].position as *const _,
-        });
-    }
-
-    let mut out = Vec::new();
-
-    for &av in &ordered_a_verts {
-        let p = &mesh_x.vertices[av].position;
-
-        for be in &bedges_info {
-            // Safety: pointers originate from immutable slice; never mutated here.
-            let p0 = unsafe { &*be.p0 };
-            let p1 = unsafe { &*be.p1 };
-
-            // Quick degenerate check: skip zero-length B edges.
-            let ab_vec = (p1 - p0).as_vector();
-            let ab_len2 = ab_vec.dot(&ab_vec);
-            if ab_len2.is_zero() {
-                continue;
-            }
-
-            // Bounding box rejection (expanded by tol).
-            // (Manual loop avoids temporary allocations.)
-            let mut outside_bb = false;
-            for i in 0..N {
-                let a_i = p0[i].clone();
-                let b_i = p1[i].clone();
-                let (min_i, max_i) = if a_i <= b_i { (a_i, b_i) } else { (b_i, a_i) };
-                let lo = &min_i - &tol;
-                let hi = &max_i + &tol;
-                if p[i] < lo || p[i] > hi {
-                    outside_bb = true;
-                    break;
-                }
-            }
-            if outside_bb {
-                continue;
-            }
-
-            // Project p onto segment p0->p1
-            let ap = (p - p0).as_vector();
-            let t = &ap.dot(&ab_vec) / &ab_len2;
-
-            // Must be within [0,1] (with small slack) to be on segment.
-            if t < &T::zero() - &tol || t > &T::one() + &tol {
-                continue;
-            }
-
-            // Closest point on infinite line
-            let closest = p0 + &(ab_vec.scale(&t)).0;
-            let diff = (p - &closest).as_vector();
-            let dist2 = diff.dot(&diff);
-            if dist2 > tol2 {
-                continue; // too far from line
-            }
-
-            // Discard if too close to endpoints.
-            let d0_vec = (p - p0).as_vector();
-            let d1_vec = (p - p1).as_vector();
-            let d0_2 = d0_vec.dot(&d0_vec);
-            if d0_2 <= tol2 {
-                continue;
-            }
-            let d1_2 = d1_vec.dot(&d1_vec);
-            if d1_2 <= tol2 {
-                continue;
-            }
-
-            let mut b_edge = [be.u, be.v];
-
-            if be.u > be.v {
-                b_edge = [be.v, be.u];
-            }
-
-            // All tests passed: record match.
-            out.push(TJunction {
-                a_vertex: av,
-                b_edge: b_edge,
-                u: t.clone(),
-            });
-        }
-    }
-
-    out
-}
-
 fn find_x_vertices_on_y_edges<T: Scalar, const N: usize>(
     mesh_x: &Mesh<T, N>,
     mesh_y: &Mesh<T, N>,
     x_edges: &[[usize; 2]],
     y_edges: &[[usize; 2]],
-) -> Vec<TJunction<T>>
+) -> Vec<TJunction>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Vector<T, N>: VectorOps<T, N>,
@@ -2054,16 +1811,13 @@ where
 
             // Order edge indices and adjust u so it is measured from b_edge[0]
             let (mut be0, mut be1) = (u_idx, v_idx);
-            let mut u_param = t.clone(); // u in [0,1] from original u_idx->v_idx
             if be0 > be1 {
                 std::mem::swap(&mut be0, &mut be1);
-                u_param = &T::one() - &u_param; // reverse parameter if endpoints swapped
             }
 
             out.push(TJunction {
                 a_vertex: xv,
                 b_edge: [be0, be1],
-                u: u_param,
             });
         }
     }
@@ -2114,7 +1868,7 @@ fn process_t_junction<T: Scalar, const N: usize>(
     mesh_x: &mut Mesh<T, N>,
     mesh_y: &mut Mesh<T, N>,
     tree_x: &mut AabbTree<T, N, Point<T, N>, usize>,
-    t_junction: &TJunction<T>,
+    t_junction: &TJunction,
     intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
     intersections_edge_map: &mut HashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
 ) where
