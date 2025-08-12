@@ -1790,7 +1790,7 @@ struct TJunction<T> {
 ///
 /// Complexity is high: O(Va_unique * Eb).
 /// Must improve this later with spatial indexing.
-fn find_x_vertices_on_y_edges<T: Scalar, const N: usize>(
+fn find_x_vertices_on_y_edges_slow<T: Scalar, const N: usize>(
     mesh_x: &Mesh<T, N>,
     mesh_y: &Mesh<T, N>,
     x_edges: &[[usize; 2]],
@@ -1918,6 +1918,152 @@ where
                 a_vertex: av,
                 b_edge: b_edge,
                 u: t.clone(),
+            });
+        }
+    }
+
+    out
+}
+
+fn find_x_vertices_on_y_edges<T: Scalar, const N: usize>(
+    mesh_x: &Mesh<T, N>,
+    mesh_y: &Mesh<T, N>,
+    x_edges: &[[usize; 2]],
+    y_edges: &[[usize; 2]],
+) -> Vec<TJunction<T>>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Neg<Output = T>,
+{
+    use crate::geometry::{Aabb, AabbTree, point::Point};
+    use std::collections::HashSet;
+
+    if x_edges.is_empty() || y_edges.is_empty() {
+        return Vec::new();
+    }
+
+    let tol = T::tolerance();
+    let tol2 = &tol * &tol;
+
+    // Collect unique X-vertices (stable order)
+    let mut ordered_x_verts = Vec::new();
+    let mut seen = HashSet::with_capacity(x_edges.len() * 2);
+    for &[u, v] in x_edges {
+        if seen.insert(u) {
+            ordered_x_verts.push(u);
+        }
+        if seen.insert(v) {
+            ordered_x_verts.push(v);
+        }
+    }
+
+    // Precompute per Y-edge data + build 3D AABB tree (the engine already uses 3D trees).
+    // Each edge AABB is expanded by tol to ensure we don't miss near-segment hits.
+    let mut edge_boxes: Vec<(Aabb<T, 3, Point<T, 3>>, usize)> = Vec::with_capacity(y_edges.len());
+    let mut ab_vecs: Vec<Vector<T, N>> = Vec::with_capacity(y_edges.len());
+    let mut ab_len2s: Vec<T> = Vec::with_capacity(y_edges.len());
+
+    for (ei, &[u, v]) in y_edges.iter().enumerate() {
+        let p0 = &mesh_y.vertices[u].position;
+        let p1 = &mesh_y.vertices[v].position;
+
+        // AABB in 3D with tolerance expansion
+        let mut minx = p0[0].clone().min(p1[0].clone());
+        let mut miny = p0[1].clone().min(p1[1].clone());
+        let mut minz = p0[2].clone().min(p1[2].clone());
+        let mut maxx = p0[0].clone().max(p1[0].clone());
+        let mut maxy = p0[1].clone().max(p1[1].clone());
+        let mut maxz = p0[2].clone().max(p1[2].clone());
+
+        minx = &minx - &tol;
+        miny = &miny - &tol;
+        minz = &minz - &tol;
+        maxx = &maxx + &tol;
+        maxy = &maxy + &tol;
+        maxz = &maxz + &tol;
+
+        let bb = Aabb::<T, 3, Point<T, 3>>::from_points(
+            &Point::<T, 3>::from_vals([minx, miny, minz]),
+            &Point::<T, 3>::from_vals([maxx, maxy, maxz]),
+        );
+        edge_boxes.push((bb, ei));
+
+        let ab = (p1 - p0).as_vector();
+        ab_vecs.push(ab.clone());
+        ab_len2s.push(ab.dot(&ab));
+    }
+
+    let tree_y = AabbTree::<T, 3, _, _>::build(edge_boxes);
+
+    let mut out = Vec::new();
+    let mut candidates = Vec::new();
+
+    for &xv in &ordered_x_verts {
+        let p = &mesh_x.vertices[xv].position;
+
+        // Query box around p with tol in 3D
+        let minq = Point::<T, 3>::from_vals([&p[0] - &tol, &p[1] - &tol, &p[2] - &tol]);
+        let maxq = Point::<T, 3>::from_vals([&p[0] + &tol, &p[1] + &tol, &p[2] + &tol]);
+        let query = Aabb::<T, 3, Point<T, 3>>::from_points(&minq, &maxq);
+
+        candidates.clear();
+        tree_y.query(&query, &mut candidates);
+
+        for &ei in &candidates {
+            let [u_idx, v_idx] = y_edges[*ei];
+            let p0 = &mesh_y.vertices[u_idx].position;
+            let p1 = &mesh_y.vertices[v_idx].position;
+
+            // Skip degenerate edges
+            let ab_len2 = &ab_len2s[*ei];
+            if ab_len2.is_zero() {
+                continue;
+            }
+            let ab_vec = &ab_vecs[*ei];
+
+            // Quick parametric projection
+            let ap = (p - p0).as_vector();
+            let t = &ap.dot(ab_vec) / ab_len2;
+
+            // Segment range test with slack
+            if t < &T::zero() - &tol || t > &T::one() + &tol {
+                continue;
+            }
+
+            // Orthogonal distance test
+            let closest = p0 + &(ab_vec.scale(&t)).0;
+            let diff = (p - &closest).as_vector();
+            if diff.dot(&diff) > tol2 {
+                continue;
+            }
+
+            // Discard near-endpoint hits
+            let d0 = (p - p0).as_vector().dot(&(p - p0).as_vector());
+            if d0 <= tol2 {
+                continue;
+            }
+            let d1 = (p - p1).as_vector().dot(&(p - p1).as_vector());
+            if d1 <= tol2 {
+                continue;
+            }
+
+            // Order edge indices and adjust u so it is measured from b_edge[0]
+            let (mut be0, mut be1) = (u_idx, v_idx);
+            let mut u_param = t.clone(); // u in [0,1] from original u_idx->v_idx
+            if be0 > be1 {
+                std::mem::swap(&mut be0, &mut be1);
+                u_param = &T::one() - &u_param; // reverse parameter if endpoints swapped
+            }
+
+            out.push(TJunction {
+                a_vertex: xv,
+                b_edge: [be0, be1],
+                u: u_param,
             });
         }
     }
