@@ -762,13 +762,23 @@ where
             start.elapsed()
         );
 
-        for (fa, inside) in a_classification.iter().enumerate() {
+        let inside = match op {
+            BooleanOp::Union => false,
+            BooleanOp::Intersection => true,
+            BooleanOp::Difference => false,
+        };
+
+        let include_on_surface = match op {
+            BooleanOp::Union => true,
+            BooleanOp::Intersection => true,
+            BooleanOp::Difference => false,
+        };
+
+        for (fa, fa_inside) in a_classification.iter().enumerate() {
             if a.faces[fa].removed {
                 continue;
             }
-            // println!("Face {}: inside = {}", fa, inside);
-
-            if !*inside {
+            if *fa_inside == inside {
                 let vs = a.face_vertices(fa);
                 result.add_triangle(
                     vid_map[&(VertexSource::A, vs[0])],
@@ -791,10 +801,13 @@ where
                     &a,
                     &mut intersection_segments_b,
                     &mut b_coplanars,
-                    false,
+                    include_on_surface,
                 );
                 for (fb, inside) in b_classification.iter().enumerate() {
-                    if *inside {
+                    if b.faces[fb].removed {
+                        continue;
+                    }
+                    if !*inside {
                         let vs = b.face_vertices(fb);
                         result.add_triangle(
                             vid_map[&(VertexSource::B, vs[0])],
@@ -815,9 +828,12 @@ where
                     &a,
                     &mut intersection_segments_b,
                     &mut b_coplanars,
-                    false,
+                    include_on_surface,
                 );
                 for (fb, inside) in b_classification.iter().enumerate() {
+                    if b.faces[fb].removed {
+                        continue;
+                    }
                     if *inside {
                         let vs = b.face_vertices(fb);
                         result.add_triangle(
@@ -840,7 +856,7 @@ where
                     &a,
                     &mut intersection_segments_b,
                     &mut b_coplanars,
-                    false,
+                    include_on_surface,
                 );
 
                 println!("B CLASSIFICATION:");
