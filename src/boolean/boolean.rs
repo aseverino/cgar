@@ -437,11 +437,6 @@ where
         let mut a = self.clone();
         let mut b = other.clone();
 
-        let start = Instant::now();
-        a.build_boundary_loops();
-        b.build_boundary_loops();
-        println!("Boundary loops built in {:.2?}", start.elapsed());
-
         // 1. Collect ALL intersection segments
         let mut intersection_segments_a = Vec::new();
         let mut intersection_segments_b = Vec::new();

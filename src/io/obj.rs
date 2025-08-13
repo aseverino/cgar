@@ -123,6 +123,5 @@ where
     }
 
     // Rebuild twin connectivity & boundary loops
-    mesh.build_boundary_loops();
     Ok(mesh)
 }

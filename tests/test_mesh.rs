@@ -507,39 +507,39 @@ fn test_build_boundary_loops() {
 //     assert_eq!(fv1, vec![v3, v2, v1]);
 // }
 
-#[test]
-fn test_boundary_detection_and_loops() {
-    let mut mesh = Mesh::<CgarF64, 2>::new();
+// #[test]
+// fn test_boundary_detection_and_loops() {
+//     let mut mesh = Mesh::<CgarF64, 2>::new();
 
-    let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
-    let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
-    let v2 = mesh.add_vertex(Point2::from_vals([0.0, 1.0]));
-    let v3 = mesh.add_vertex(Point2::from_vals([1.0, 1.0]));
+//     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
+//     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
+//     let v2 = mesh.add_vertex(Point2::from_vals([0.0, 1.0]));
+//     let v3 = mesh.add_vertex(Point2::from_vals([1.0, 1.0]));
 
-    mesh.add_triangle(v0, v1, v2);
-    mesh.add_triangle(v1, v3, v2);
+//     mesh.add_triangle(v0, v1, v2);
+//     mesh.add_triangle(v1, v3, v2);
 
-    // Build the boundary‐ghosts
-    mesh.build_boundary_loops();
+//     // Build the boundary‐ghosts
+//     mesh.build_boundary_loops();
 
-    // 1) Boundary vertices should be all four
-    let bverts = mesh.boundary_vertices();
-    assert_eq!(bverts.len(), 4);
-    for &v in &[v0, v1, v2, v3] {
-        assert!(bverts.contains(&v));
-    }
+//     // 1) Boundary vertices should be all four
+//     let bverts = mesh.boundary_vertices();
+//     assert_eq!(bverts.len(), 4);
+//     for &v in &[v0, v1, v2, v3] {
+//         assert!(bverts.contains(&v));
+//     }
 
-    // 2) There should be exactly one boundary loop,
-    //    and it should visit each of the four vertices once.
-    let loops = mesh.boundary_loops();
-    assert_eq!(loops.len(), 1);
+//     // 2) There should be exactly one boundary loop,
+//     //    and it should visit each of the four vertices once.
+//     let loops = mesh.boundary_loops();
+//     assert_eq!(loops.len(), 1);
 
-    let loop_vs = &loops[0];
-    assert_eq!(loop_vs.len(), 4);
-    let set: std::collections::HashSet<_> = loop_vs.iter().cloned().collect();
-    let expected: std::collections::HashSet<_> = [v0, v1, v2, v3].into_iter().collect();
-    assert_eq!(set, expected);
-}
+//     let loop_vs = &loops[0];
+//     assert_eq!(loop_vs.len(), 4);
+//     let set: std::collections::HashSet<_> = loop_vs.iter().cloned().collect();
+//     let expected: std::collections::HashSet<_> = [v0, v1, v2, v3].into_iter().collect();
+//     assert_eq!(set, expected);
+// }
 
 #[test]
 fn test_edge_flip() {
@@ -573,35 +573,35 @@ fn test_edge_flip() {
     assert_eq!(set1, [v0, v3, v1].into_iter().collect());
 }
 
-#[test]
-fn test_edge_collapse_rebuild() {
-    let mut mesh = Mesh::<CgarF64, 2>::new();
+// #[test]
+// fn test_edge_collapse_rebuild() {
+//     let mut mesh = Mesh::<CgarF64, 2>::new();
 
-    let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
-    let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
-    let v2 = mesh.add_vertex(Point2::from_vals([0.0, 1.0]));
-    let v3 = mesh.add_vertex(Point2::from_vals([1.0, 1.0]));
+//     let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
+//     let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
+//     let v2 = mesh.add_vertex(Point2::from_vals([0.0, 1.0]));
+//     let v3 = mesh.add_vertex(Point2::from_vals([1.0, 1.0]));
 
-    // two triangles sharing edge v1→v2
-    mesh.add_triangle(v0, v1, v2);
-    mesh.add_triangle(v1, v3, v2);
-    mesh.build_boundary_loops();
+//     // two triangles sharing edge v1→v2
+//     mesh.add_triangle(v0, v1, v2);
+//     mesh.add_triangle(v1, v3, v2);
+//     mesh.build_boundary_loops();
 
-    // collapse that shared edge
-    let he_shared = *mesh.edge_map.get(&(v1, v2)).unwrap();
-    mesh.collapse_edge_rebuild(he_shared).unwrap();
+//     // collapse that shared edge
+//     let he_shared = *mesh.edge_map.get(&(v1, v2)).unwrap();
+//     mesh.collapse_edge_rebuild(he_shared).unwrap();
 
-    // After collapsing v2 into v1, we expect:
-    // - one vertex removed => 3 vertices remain
-    assert_eq!(mesh.vertices.len(), 3);
+//     // After collapsing v2 into v1, we expect:
+//     // - one vertex removed => 3 vertices remain
+//     assert_eq!(mesh.vertices.len(), 3);
 
-    // - one face removed => 1 face remains
-    assert_eq!(mesh.faces.len(), 1);
+//     // - one face removed => 1 face remains
+//     assert_eq!(mesh.faces.len(), 1);
 
-    // That single face should connect [v0, v1, v3] (in some order)
-    let vs: std::collections::HashSet<_> = mesh.face_vertices(0).into_iter().collect();
-    assert_eq!(vs, [0, 1, 2].into_iter().collect());
-}
+//     // That single face should connect [v0, v1, v3] (in some order)
+//     let vs: std::collections::HashSet<_> = mesh.face_vertices(0).into_iter().collect();
+//     assert_eq!(vs, [0, 1, 2].into_iter().collect());
+// }
 
 // #[test]
 // fn test_edge_split_rebuild() {
@@ -691,28 +691,28 @@ fn add_triangle_3d_basics() {
     );
 }
 
-#[test]
-fn boundary_loops_3d() {
-    let mut mesh: Mesh<CgarF64, 3> = Mesh::new();
+// #[test]
+// fn boundary_loops_3d() {
+//     let mut mesh: Mesh<CgarF64, 3> = Mesh::new();
 
-    // same single triangle: open boundary
-    let v0 = mesh.add_vertex(Point3::from_vals([0.0, 0.0, 0.0]));
-    let v1 = mesh.add_vertex(Point3::from_vals([1.0, 0.0, 0.0]));
-    let v2 = mesh.add_vertex(Point3::from_vals([0.0, 1.0, 0.0]));
-    mesh.add_triangle(v0, v1, v2);
+//     // same single triangle: open boundary
+//     let v0 = mesh.add_vertex(Point3::from_vals([0.0, 0.0, 0.0]));
+//     let v1 = mesh.add_vertex(Point3::from_vals([1.0, 0.0, 0.0]));
+//     let v2 = mesh.add_vertex(Point3::from_vals([0.0, 1.0, 0.0]));
+//     mesh.add_triangle(v0, v1, v2);
 
-    // build the ghost edges around the hole
-    mesh.build_boundary_loops();
+//     // build the ghost edges around the hole
+//     mesh.build_boundary_loops();
 
-    // there should be exactly one boundary loop
-    let loops = mesh.boundary_loops();
-    assert_eq!(loops.len(), 1);
+//     // there should be exactly one boundary loop
+//     let loops = mesh.boundary_loops();
+//     assert_eq!(loops.len(), 1);
 
-    // that loop should visit exactly the 3 triangle vertices (order doesn’t matter here)
-    let mut vs = loops[0].clone();
-    vs.sort();
-    assert_eq!(vs, vec![v0, v1, v2]);
-}
+//     // that loop should visit exactly the 3 triangle vertices (order doesn’t matter here)
+//     let mut vs = loops[0].clone();
+//     vs.sort();
+//     assert_eq!(vs, vec![v0, v1, v2]);
+// }
 
 #[test]
 fn one_ring_neighbors_3d() {

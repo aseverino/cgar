@@ -394,31 +394,6 @@ impl_mesh! {
         false
     }
 
-    /// Returns each boundary loop as a Vec of vertex indices, CCW around the hole.
-    pub fn boundary_loops(&self) -> Vec<Vec<usize>> {
-        let mut loops = Vec::new();
-        let mut seen = HashSet::new();
-
-        for (i, he) in self.half_edges.iter().enumerate() {
-            // only process ghost edges (face == None) once
-            if he.face.is_none() && !seen.contains(&i) {
-                let mut loop_vs = Vec::new();
-                let mut curr = i;
-                loop {
-                    seen.insert(curr);
-                    // each ghost.he.vertex is the “to”-vertex on the boundary
-                    loop_vs.push(self.half_edges[curr].vertex);
-                    curr = self.half_edges[curr].next;
-                    if curr == i {
-                        break;
-                    }
-                }
-                loops.push(loop_vs);
-            }
-        }
-        loops
-    }
-
     pub fn point_in_mesh(
         &self,
         tree: &AabbTree<T, 3, Point<T, 3>, usize>,
