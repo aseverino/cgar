@@ -1047,57 +1047,57 @@ impl_mesh! {
     }
 
     // Iterative face half-edge traversal to eliminate recursion
-pub fn get_face_half_edges_iterative(
-    &self,
-    face_idx: usize,
-) -> Option<Vec<usize>> {
-    if face_idx >= self.faces.len() {
-        return None;
-    }
-
-    let face = &self.faces[face_idx];
-    if face.half_edge == usize::MAX || self.half_edges[face.half_edge].removed {
-        return None;
-    }
-
-    let start_he = face.half_edge;
-    if start_he >= self.half_edges.len() {
-        return None;
-    }
-
-    let mut result = Vec::new();
-    let mut current_he = start_he;
-    let mut iterations = 0;
-    const MAX_ITERATIONS: usize = 50; // Safety limit for triangular faces
-
-    loop {
-        iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            // println!(
-            //     "WARNING: Face {} half-edge traversal exceeded limit",
-            //     face_idx
-            // );
+    pub fn get_face_half_edges_iterative(
+        &self,
+        face_idx: usize,
+    ) -> Option<Vec<usize>> {
+        if face_idx >= self.faces.len() {
             return None;
         }
 
-        if current_he >= self.half_edges.len() {
+        let face = &self.faces[face_idx];
+        if face.half_edge == usize::MAX || self.half_edges[face.half_edge].removed {
             return None;
         }
 
-        result.push(current_he);
-
-        current_he = self.half_edges[current_he].next;
-        if current_he >= self.half_edges.len() {
+        let start_he = face.half_edge;
+        if start_he >= self.half_edges.len() {
             return None;
         }
 
-        if current_he == start_he {
-            break;
+        let mut result = Vec::new();
+        let mut current_he = start_he;
+        let mut iterations = 0;
+        const MAX_ITERATIONS: usize = 50; // Safety limit for triangular faces
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_ITERATIONS {
+                // println!(
+                //     "WARNING: Face {} half-edge traversal exceeded limit",
+                //     face_idx
+                // );
+                return None;
+            }
+
+            if current_he >= self.half_edges.len() {
+                return None;
+            }
+
+            result.push(current_he);
+
+            current_he = self.half_edges[current_he].next;
+            if current_he >= self.half_edges.len() {
+                return None;
+            }
+
+            if current_he == start_he {
+                break;
+            }
         }
+
+        Some(result)
     }
-
-    Some(result)
-}
 }
 
 fn ray_segment_intersection_2d<T: Scalar>(
