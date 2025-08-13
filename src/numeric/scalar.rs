@@ -21,7 +21,6 @@
 // SOFTWARE.
 
 use num_traits::ToPrimitive;
-use rug::Rational;
 
 use crate::{
     numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational},
@@ -91,5 +90,6 @@ pub trait Scalar:
 
     fn point_merge_threshold_squared() -> Self;
 
-    fn approx_eq(self, other: &Self) -> bool;
+    fn approx_eq(&self, other: &Self) -> bool;
+    fn acos(&self) -> Self;
 }

@@ -77,8 +77,12 @@ impl Scalar for CgarF64 {
         CgarF64(tol.0 * tol.0)
     }
 
-    fn approx_eq(self, other: &Self) -> bool {
+    fn approx_eq(&self, other: &Self) -> bool {
         return (self.0 - other.0).abs() < EPS;
+    }
+
+    fn acos(&self) -> Self {
+        CgarF64(self.0.acos())
     }
 }
 

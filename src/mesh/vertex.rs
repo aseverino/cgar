@@ -27,6 +27,7 @@ use std::marker::PhantomData;
 pub struct Vertex<T: Scalar, const N: usize> {
     pub position: Point<T, N>,
     pub half_edge: Option<usize>,
+    pub removed: bool,
     _phantom: PhantomData<T>,
 }
 
@@ -35,6 +36,7 @@ impl<T: Scalar, const N: usize> Vertex<T, N> {
         Self {
             position,
             half_edge: None,
+            removed: false,
             _phantom: PhantomData,
         }
     }

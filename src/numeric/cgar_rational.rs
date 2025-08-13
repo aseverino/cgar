@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use num_traits::ToPrimitive;
-use rug::{Rational, ops::Pow};
+use rug::{Float, Rational, ops::Pow};
 
 use crate::{
     numeric::{cgar_f64::CgarF64, scalar::Scalar},
@@ -78,9 +78,14 @@ impl Scalar for CgarRational {
         &tol * &tol
     }
 
-    fn approx_eq(self, other: &Self) -> bool {
+    fn approx_eq(&self, other: &Self) -> bool {
         // For rational numbers, we can use exact equality
         self.0 == other.0
+    }
+
+    fn acos(&self) -> Self {
+        let f = Float::with_val(128, &self.0);
+        CgarRational::from(f.acos())
     }
 }
 
@@ -189,6 +194,12 @@ impl From<CgarF64> for CgarRational {
 impl From<rug::Rational> for CgarRational {
     fn from(value: rug::Rational) -> Self {
         CgarRational(value)
+    }
+}
+
+impl From<rug::Float> for CgarRational {
+    fn from(value: rug::Float) -> Self {
+        CgarRational(value.to_rational().expect("Invalid Float value"))
     }
 }
 

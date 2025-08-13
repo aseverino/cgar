@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use std::{
-    array,
+    array::{self, from_fn},
     hash::{Hash, Hasher},
     ops::{Add, AddAssign, Div, Index, IndexMut, Mul, Sub, SubAssign},
 };
@@ -36,6 +36,11 @@ use crate::{
     operations::Zero,
 };
 
+#[derive(Clone, Debug)]
+pub struct Point<T: Scalar, const N: usize> {
+    pub coords: [T; N],
+}
+
 pub trait PointOps<T: Scalar, const N: usize>: Sized {
     type Vector: VectorOps<T, N>;
 
@@ -45,11 +50,7 @@ pub trait PointOps<T: Scalar, const N: usize>: Sized {
     fn as_vector(&self) -> Self::Vector;
     fn add_vector(&self, v: &Self::Vector) -> Self;
     fn vector_to(&self, other: &Self) -> Self::Vector;
-}
-
-#[derive(Clone, Debug)]
-pub struct Point<T: Scalar, const N: usize> {
-    pub coords: [T; N],
+    fn midpoint(&self, other: &Self) -> Self;
 }
 
 impl<T: Scalar, const N: usize> Point<T, N> {
@@ -224,6 +225,16 @@ where
             &other[1] - &self[1],
         ]))
     }
+
+    fn midpoint(&self, other: &Self) -> Self {
+        let two: T = T::from(2);
+        Self {
+            coords: from_fn(|i| {
+                let sum = &self.coords[i] + &other.coords[i];
+                &sum / &two
+            }),
+        }
+    }
 }
 
 impl<T> PointOps<T, 3> for Point<T, 3>
@@ -279,6 +290,16 @@ where
             &other[1] - &self[1],
             &other[2] - &self[2],
         ]))
+    }
+
+    fn midpoint(&self, other: &Self) -> Self {
+        let two: T = T::from(2);
+        Self {
+            coords: from_fn(|i| {
+                let sum = &self.coords[i] + &other.coords[i];
+                &sum / &two
+            }),
+        }
     }
 }
 
