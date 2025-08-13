@@ -27,15 +27,29 @@ use std::{
 };
 
 use crate::{
-    geometry::{Point3, spatial_element::SpatialElement},
-    mesh::mesh::Mesh,
+    geometry::{
+        Point3,
+        point::{Point, PointOps},
+        spatial_element::SpatialElement,
+        vector::{Vector, VectorOps},
+    },
+    mesh::basic_types::Mesh,
     numeric::scalar::Scalar,
 };
 
 pub fn write_obj<T: Scalar, const N: usize, P: AsRef<Path>>(
     mesh: &Mesh<T, N>,
     path: P,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
     let file = File::create(path)?;
     let mut out = BufWriter::new(file);
 
@@ -66,7 +80,16 @@ pub fn write_obj<T: Scalar, const N: usize, P: AsRef<Path>>(
 
 /// Read a mesh from a Wavefront OBJ file.
 /// Only supports `v x y z` and `f i j k` lines; ignores others.
-pub fn read_obj<T: Scalar, P: AsRef<Path>>(path: P) -> io::Result<Mesh<T, 3>> {
+pub fn read_obj<T: Scalar, P: AsRef<Path>>(path: P) -> io::Result<Mesh<T, 3>>
+where
+    Point<T, 3>: PointOps<T, 3, Vector = Vector<T, 3>>,
+    Vector<T, 3>: VectorOps<T, 3, Cross = Vector<T, 3>>,
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 

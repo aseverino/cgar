@@ -20,7 +20,28 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod basic_types;
+pub mod core;
 pub mod face;
 pub mod half_edge;
-pub mod mesh;
+pub mod intersection_segment;
+pub mod topology;
 pub mod vertex;
+
+#[macro_export]
+macro_rules! impl_mesh {
+    ($($items:item)*) => {
+        impl<T: Scalar, const N: usize> Mesh<T, N>
+        where
+            Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+            Vector<T, N>: VectorOps<T, N>,
+            for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+                + std::ops::Mul<&'a T, Output = T>
+                + std::ops::Add<&'a T, Output = T>
+                + std::ops::Div<&'a T, Output = T>
+                + std::ops::Neg<Output = T>,
+        {
+            $($items)*
+        }
+    };
+}
