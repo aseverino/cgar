@@ -54,6 +54,14 @@ impl_mesh! {
         edge1.cross(&edge2).normalized()
     }
 
+    pub fn source(&self, he: usize) -> usize {
+        self.half_edges[self.half_edges[he].prev].vertex
+    }
+
+    pub fn target(&self, he: usize) -> usize {
+        self.half_edges[he].vertex
+    }
+
     pub fn face_from_vertices(&self, v0: usize, v1: usize, v2: usize) -> usize {
         // find a face with the given vertex indices
         // It's more efficient to get faces around each vertex and check for a match
@@ -353,16 +361,30 @@ impl_mesh! {
         result
     }
 
-    /// Returns the vertex indices around face `f`,
-    /// in CCW order.
+    #[inline]
     pub fn face_vertices(&self, f: usize) -> [usize; 3] {
-        let vertices: Vec<usize> = self
-            .face_half_edges(f)
-            .into_iter()
-            .map(|he| self.half_edges[he].vertex)
-            .collect();
+        let he0 = self.faces[f].half_edge;
+        let he1 = self.half_edges[he0].next;
+        let he2 = self.half_edges[he1].next;
+        debug_assert_eq!(self.half_edges[he2].next, he0);
 
-        [vertices[0], vertices[1], vertices[2]]
+        let a = self.half_edges[self.half_edges[he0].prev].vertex; // TAIL of he0
+        let b = self.half_edges[he0].vertex;                       // HEAD of he0
+        let c = self.half_edges[he1].vertex;                       // HEAD of he1
+        [a, b, c]
+    }
+
+    /// Collect unique faces incident to `v` (with real faces only)
+    pub fn incident_faces(&self, v: usize) -> std::collections::HashSet<usize> {
+        use std::collections::HashSet;
+        let mut faces = HashSet::new();
+        let ring = self.vertex_ring_ccw(v);
+        for &fopt in &ring.faces_ccw {
+            if let Some(f) = fopt {
+                if !self.faces[f].removed { faces.insert(f); }
+            }
+        }
+        faces
     }
 
     pub fn point_on_half_edge(&self, he: usize, p: &Point<T, N>) -> Option<T>
@@ -759,15 +781,7 @@ impl_mesh! {
     }
 
     pub fn half_edge_between(&self, vi0: usize, vi1: usize) -> Option<usize> {
-        // Check edge_map for direct connection
-        if let Some(&he_idx) = self.edge_map.get(&(vi0, vi1)) {
-            return Some(he_idx);
-        }
-        // Also check the reverse direction (for undirected edge)
-        if let Some(&he_idx) = self.edge_map.get(&(vi1, vi0)) {
-            return Some(he_idx);
-        }
-        None
+        self.edge_map.get(&(vi0, vi1)).copied()
     }
 
     pub fn point_is_on_some_half_edge(&self, face: usize, point: &Point<T, N>) -> Option<(usize, T)>

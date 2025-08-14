@@ -101,69 +101,95 @@ impl_mesh! {
         boundary_edges
     }
 
-    /// Builds boundary loops for the mesh.
+    /// - Border half-edges have `face == None` and a valid interior twin `t = twin(b)`.
+    /// - For each border `b = u->v`, we set:
+    ///       b.next = the next border spoke at vertex v (found by rotating through interior faces)
+    ///       and derive b_prev by setting `half_edges[b.next].prev = b`.
     pub fn build_boundary_loops(&mut self) {
-        let mut seen = HashSet::new();
-        let original_count = self.half_edges.len();
+        let m = self.half_edges.len();
 
-        for start in 0..original_count {
-            if self.half_edges[start].twin != usize::MAX || seen.contains(&start) {
+        // 0) Collect all live border half-edges once
+        let mut borders: Vec<usize> = Vec::new();
+        borders.reserve(m);
+        for i in 0..m {
+            let e = &self.half_edges[i];
+            if !e.removed && e.face.is_none() {
+                borders.push(i);
+            }
+        }
+
+        // 1) Compute next[b] by rotating around the head of `b` until we hit the next border spoke.
+        //    We only traverse interior half-edges' prev/next; we do not read border prev/next here.
+        let mut next_of = vec![usize::MAX; m];
+
+        for &b in &borders {
+            let t0 = self.half_edges[b].twin; // interior v->u (origin = head(b))
+            if t0 >= m || self.half_edges[t0].removed || !self.face_ok(t0) {
+                // Degenerate: keep a safe self-loop; will still derive prev from next below
+                next_of[b] = b;
                 continue;
             }
 
-            // 1) Gather the full hole cycle (may include interior edges)
-            let mut hole_cycle = Vec::new();
-            let mut he = start;
-            let mut steps = 0;
-            loop {
-                // ← add a safety guard
-                if steps > original_count {
-                    panic!(
-                        "build_boundary_loops: boundary cycle failed to close (start={} current_he={})",
-                        start, he
-                    );
+            // Walk around the head vertex via interior spokes until we encounter a border spoke.
+            let mut t = t0;
+            let mut steps = 0usize;
+            let b_next = loop {
+                // CCW around the origin (head of b): twin(prev(t))
+                let prev_t = self.half_edges[t].prev;
+                let cand   = self.half_edges[prev_t].twin; // this is a spoke leaving the same vertex
+
+                if cand >= m || self.half_edges[cand].removed {
+                    // Paranoia: bail to self-loop
+                    break b;
                 }
+                if self.half_edges[cand].face.is_none() {
+                    // Found the next BORDER spoke around the head vertex
+                    break cand;
+                }
+
+                // Keep rotating around the same vertex via the interior side of `cand`
+                t = self.half_edges[cand].twin;
+                if t >= m || self.half_edges[t].removed || !self.face_ok(t) {
+                    // If we lose a valid interior, bail to self-loop
+                    break b;
+                }
+
                 steps += 1;
-                seen.insert(he);
-                hole_cycle.push(he);
-                let prev = self.half_edges[he].prev;
-                let twin = self.half_edges[prev].twin;
-                he = if twin != usize::MAX { twin } else { prev };
-                if he == start {
-                    break;
+                if steps > m {
+                    // Safety bound (should be <= valence at the vertex)
+                    break b;
                 }
+            };
+
+            next_of[b] = b_next;
+        }
+
+        // 2) Write next and derive prev from next to guarantee reciprocity
+        for &b in &borders {
+            let nb = next_of[b];
+            if nb != usize::MAX {
+                self.half_edges[b].next = nb;
             }
-
-            // 2) Filter to *just* the boundary edges
-            let boundary_cycle: Vec<usize> = hole_cycle
-                .into_iter()
-                .filter(|&bhe| bhe < original_count && self.half_edges[bhe].twin == usize::MAX)
-                .collect();
-
-            // 3) Spawn one ghost per boundary half-edge
-            let mut ghosts = Vec::with_capacity(boundary_cycle.len());
-            for &bhe in &boundary_cycle {
-                let origin = {
-                    let prev = self.half_edges[bhe].prev;
-                    self.half_edges[prev].vertex
-                };
-                let mut ghost = HalfEdge::new(origin);
-                ghost.face = None;
-                ghost.twin = bhe;
-                let g_idx = self.half_edges.len();
-                self.half_edges[bhe].twin = g_idx;
-                self.half_edges.push(ghost);
-                ghosts.push(g_idx);
+        }
+        for &b in &borders {
+            let nb = self.half_edges[b].next;
+            if nb < m {
+                self.half_edges[nb].prev = b;
             }
+        }
 
-            // 4) Link the *ghosts* in cycle order
-            let n = ghosts.len();
-            for i in 0..n {
-                let g = ghosts[i];
-                let g_next = ghosts[(i + 1) % n];
-                let g_prev = ghosts[(i + n - 1) % n];
-                self.half_edges[g].next = g_next;
-                self.half_edges[g].prev = g_prev;
+        // 3) Optional sanity checks (enabled in debug builds)
+        #[cfg(debug_assertions)]
+        {
+            for &b in &borders {
+                let he = &self.half_edges[b];
+                let n = he.next;
+                let p = he.prev;
+                assert!(n < m && p < m, "boundary next/prev out of range at {}", b);
+                assert!(self.half_edges[n].face.is_none(), "b.next must be border at {}", b);
+                assert!(self.half_edges[p].face.is_none(), "b.prev must be border at {}", b);
+                assert_eq!(self.half_edges[n].prev, b, "boundary next->prev mismatch at {}", b);
+                assert_eq!(self.half_edges[p].next, b, "boundary prev->next mismatch at {}", b);
             }
         }
     }
@@ -217,29 +243,32 @@ impl_mesh! {
 
         for (i, &(from, to)) in edge_vertices.iter().enumerate() {
             if let Some(&he_idx) = self.edge_map.get(&(from, to)) {
-                // Directed edge already exists. It must be a border edge (face=None) to be reusable.
-                match self.half_edges[he_idx].face {
-                    Some(_) => {
-                        // Already belongs to a real face -> adding another would be non-manifold
-                        debug_assert!(
-                            false,
-                            "add_triangle: directed edge ({},{}) already used by a real face",
-                            from, to
-                        );
-                        // Keep going in release builds; we still wire things so the mesh isn't totally broken.
-                    }
-                    None => {
-                        // Reuse this border half-edge as an interior edge of the new face
-                        self.half_edges[he_idx].face = Some(face_idx);
-                    }
-                }
-                edge_indices[i] = he_idx;
-
-                // Ensure twin linkage is symmetric (should already be)
+                // Directed edge already exists.
                 let twin = self.half_edges[he_idx].twin;
-                self.half_edges[twin].twin = he_idx;
-                self.half_edges[he_idx].twin = twin;
-        } else {
+
+                if self.half_edges[he_idx].face.is_none() {
+                    // This direction is free: assign it to the new face.
+                    self.half_edges[he_idx].face = Some(face_idx);
+                    edge_indices[i] = he_idx;
+                } else if self.half_edges[twin].face.is_none() {
+                    // The opposite direction is free: assign the twin to the new face.
+                    self.half_edges[twin].face = Some(face_idx);
+                    edge_indices[i] = twin; // IMPORTANT: use the direction consistent with this face
+                } else {
+                    debug_assert!(
+                        false,
+                        "add_triangle: non-manifold edge ({},{}) — both directions already bound to faces",
+                        from, to
+                    );
+                    // Fallback: keep mesh wired; pick he_idx to avoid UB.
+                    edge_indices[i] = he_idx;
+                }
+
+                // Ensure twin linkage is symmetric
+                let t = self.half_edges[edge_indices[i]].twin;
+                self.half_edges[t].twin = edge_indices[i];
+                self.half_edges[edge_indices[i]].twin = t;
+            } else {
                 // Create a brand-new interior half-edge for this triangle
                 let he_idx = self.half_edges.len();
                 let mut he = HalfEdge::new(to);
@@ -248,7 +277,7 @@ impl_mesh! {
                 self.edge_map.insert((from, to), he_idx);
                 edge_indices[i] = he_idx;
 
-                // Try to hook twin; otherwise create a border twin with face=None
+                // Create / hook twin (border) if missing
                 if let Some(&rev_idx) = self.edge_map.get(&(to, from)) {
                     // Existing reverse edge becomes the twin
                     self.half_edges[he_idx].twin = rev_idx;
@@ -258,11 +287,10 @@ impl_mesh! {
                     let border_idx = self.half_edges.len();
                     let mut bhe = HalfEdge::new(from);
                     bhe.twin = he_idx;
-                    // Temporary self-loop; `build_boundary_loops()` can rewire later.
+                    // temp self-loop; we will rewire below
                     bhe.next = border_idx;
                     bhe.prev = border_idx;
-                    // NOTE: key change: no ghost/null Face; this border half-edge has face=None.
-                    // bhe.face stays as None by default.
+                    // face stays None (border)
                     self.half_edges.push(bhe);
                     self.edge_map.insert((to, from), border_idx);
 
@@ -282,13 +310,56 @@ impl_mesh! {
         self.half_edges[e2].next = e0;
         self.half_edges[e2].prev = e1;
 
+        // --- Wire boundary next/prev locally for any border twin of these three edges ---
+        // Walk until we hit a BORDER spoke (face=None), skipping interior spokes.
+        let mut wire_border = |h_interior: usize, this: &mut Self| {
+            let b = this.half_edges[h_interior].twin;
+            if this.half_edges[b].removed || this.half_edges[b].face.is_some() {
+                return; // not a border half-edge; nothing to wire
+            }
+
+            // Find b.next: rotate CCW around head(b) via interior edges until next border
+            let mut t = h_interior; // interior with origin=head(b)
+            let b_next = loop {
+                let prev_t = this.half_edges[t].prev;            // ... w->head(b)
+                let cand   = this.half_edges[prev_t].twin;       // head(b) -> w
+                if this.half_edges[cand].face.is_none() && !this.half_edges[cand].removed {
+                    break cand; // next border spoke
+                }
+                t = this.half_edges[cand].twin;                  // stay on interior around head(b)
+                if t == h_interior { break b; }                  // safety: degenerate -> self
+            };
+
+            // Find b.prev: rotate CW around head(b) via interior edges until previous border
+            let mut t = h_interior;
+            let b_prev = loop {
+                let next_t = this.half_edges[t].next;            // ... tail(b)->u
+                let cand   = this.half_edges[next_t].twin;       // head(b) -> u
+                if this.half_edges[cand].face.is_none() && !this.half_edges[cand].removed {
+                    break cand; // previous border spoke
+                }
+                t = this.half_edges[cand].twin;
+                if t == h_interior { break b; }                  // safety
+            };
+
+            // Write both directions to guarantee reciprocity
+            this.half_edges[b].next = b_next;
+            this.half_edges[b_next].prev = b;
+            this.half_edges[b].prev = b_prev;
+            this.half_edges[b_prev].next = b;
+        };
+
+        wire_border(e0, self);
+        wire_border(e1, self);
+        wire_border(e2, self);
+
         // Attach representative half-edges to vertices (don't overwrite if already set)
         self.vertices[v0].half_edge.get_or_insert(e0);
         self.vertices[v1].half_edge.get_or_insert(e1);
         self.vertices[v2].half_edge.get_or_insert(e2);
 
         // Finalize the face record
-            self.faces[face_idx].half_edge = e0;
+        self.faces[face_idx].half_edge = e0;
 
         face_idx
     }
@@ -695,98 +766,12 @@ impl_mesh! {
         Ok(())
     }
 
-    /// Collapse the interior edge `he` by merging its dest‐vertex into its origin‐vertex,
-    /// removing the two incident faces and any degenerate triangles that produce.
-    ///
-    /// This rebuilds the mesh from scratch, so all indices and edge_map are reconstructed.
-    pub fn collapse_edge_rebuild(&mut self, he: usize) -> Result<(), &'static str> {
-        // 1) Preconditions (same as before) …
-        let he_d = self.half_edges[he].twin;
-        if he_d == usize::MAX {
-            return Err("cannot collapse a boundary edge");
-        }
-
-        let f0 = self.half_edges[he].face.ok_or("he has no face")?;
-        let f1 = self.half_edges[he_d].face.ok_or("twin has no face")?;
-
-        // 2) Identify u->v and record the three hole corners c, u, d
-        let he_b = self.half_edges[he].next; // v -> c
-        let he_c = self.half_edges[he].prev; // c -> u
-        let he_e = self.half_edges[he_d].next; // u -> d
-
-        let u = self.half_edges[he_c].vertex; // origin u
-        let c = self.half_edges[he_b].vertex; // one corner c
-        let d = self.half_edges[he_e].vertex; // the other corner d
-
-        // 3) Build old_to_new map & vertex list (same as before) …
-        let remove_v = self.half_edges[he].vertex; // v
-        let mut old_to_new = vec![None; self.vertices.len()];
-        let mut new_positions = Vec::with_capacity(self.vertices.len() - 1);
-        for (i, vert) in self.vertices.iter().enumerate() {
-            if i == remove_v {
-                continue;
-            }
-            let ni = new_positions.len();
-            old_to_new[i] = Some(ni);
-            new_positions.push(vert.position.clone());
-        }
-        // redirect the removed v -> the kept u
-        old_to_new[remove_v] = old_to_new[u];
-
-        // 4) Collect surviving faces
-        let mut new_faces = Vec::new();
-        for (fi, _) in self.faces.iter().enumerate() {
-            if fi == f0 || fi == f1 {
-                continue;
-            }
-            let vs = self.face_vertices(fi);
-            let mapped: [usize; 3] = [
-                old_to_new[vs[0]].unwrap(),
-                old_to_new[vs[1]].unwrap(),
-                old_to_new[vs[2]].unwrap(),
-            ];
-            if mapped[0] != mapped[1] && mapped[1] != mapped[2] && mapped[2] != mapped[0] {
-                new_faces.push(mapped);
-            }
-        }
-
-        // 5) **If no faces survived**, triangulate the hole [c,u,d]
-        if new_faces.is_empty() {
-            let mc = old_to_new[c].unwrap();
-            let mu = old_to_new[u].unwrap();
-            let md = old_to_new[d].unwrap();
-            // One triangle filling the hole:
-            new_faces.push([mc, mu, md]);
-        }
-
-        // 6) Rebuild the mesh
-        let mut new_mesh = Mesh::new();
-        for pos in new_positions {
-            new_mesh.add_vertex(pos);
-        }
-        for tri in new_faces {
-            new_mesh.add_triangle(tri[0], tri[1], tri[2]);
-        }
-        new_mesh.build_boundary_loops();
-
-        *self = new_mesh;
-        Ok(())
-    }
-
     pub fn split_edge(
         &mut self,
         aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
         he: usize,
         pos: &Point<T, N>,
     ) -> Result<SplitResult, &'static str>
-    where
-        T: Scalar,
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
     {
         let he_ca = self.find_valid_half_edge(he, pos);
         let he_ab = self.half_edges[he_ca].next;
