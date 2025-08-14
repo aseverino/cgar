@@ -24,7 +24,6 @@
 pub struct Face {
     pub half_edge: usize, // one of the edges bounding the face
     pub removed: bool,
-    pub null: bool,
 }
 
 impl Face {
@@ -32,15 +31,6 @@ impl Face {
         Self {
             half_edge,
             removed: false,
-            null: false,
-        }
-    }
-
-    pub fn new_null(half_edge: usize) -> Self {
-        Self {
-            half_edge,
-            removed: false,
-            null: true,
         }
     }
 }

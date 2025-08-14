@@ -632,7 +632,7 @@ impl_mesh! {
         loop {
             let current_he = &self.half_edges[current_he_idx];
             if let Some(face_idx) = current_he.face {
-                if !self.faces[face_idx].null && !self.faces[face_idx].removed {
+                if !self.faces[face_idx].removed {
                     result.push(face_idx); // valid half_edges should always point to valid faces
                 }
             }

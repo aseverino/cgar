@@ -201,72 +201,46 @@ impl_mesh! {
     }
 
     /// Adds a triangle face given three vertex indices (in CCW order).
-    /// If a given bordering face is inexistent, a "null" face is added.
+    /// Border (outside) half-edges have `face = None` instead of pointing to a ghost/null face.
     /// Returns the index of the newly created face.
     pub fn add_triangle(&mut self, v0: usize, v1: usize, v2: usize) -> usize {
         // CCW triangle directed edges
         let edge_vertices = [(v0, v1), (v1, v2), (v2, v0)];
 
-        // Pre-scan: find reusable border half-edges (owned by null faces)
-        let mut reuse_he: [Option<usize>; 3] = [None, None, None];
-        let mut reuse_face_idx: Option<usize> = None;
-        let mut extra_promoted_nulls: Vec<usize> = Vec::new();
-
-        for (i, &(from, to)) in edge_vertices.iter().enumerate() {
-            if let Some(&he_idx) = self.edge_map.get(&(from, to)) {
-                if let Some(fidx) = self.half_edges[he_idx].face {
-                    if self.faces[fidx].null {
-                        reuse_he[i] = Some(he_idx);
-                        if let Some(chosen) = reuse_face_idx {
-                            if chosen != fidx {
-                                // This is another (different) null face; we’ll retire it later.
-                                extra_promoted_nulls.push(fidx);
-                            }
-                        } else {
-                            reuse_face_idx = Some(fidx);
-                        }
-                    } else {
-                        // Directed edge already belongs to a real face -> non-manifold if we add another.
-                        debug_assert!(
-                            false,
-                            "add_triangle: directed edge ({},{}) already used by a real face",
-                            from, to
-                        );
-                    }
-                }
-            }
-        }
-
-        // Decide which face index to use for the new triangle
-        let face_idx = if let Some(fidx) = reuse_face_idx {
-            // We’ll flip this null face to real below.
-            fidx
-        } else {
-            // Reserve a new real face slot NOW so the index stays stable
-            let idx = self.faces.len();
-            // Temporary placeholder; will set .half_edge and null flag after edges are wired
-            self.faces.push(Face::new(0));
-            idx
-        };
+        // Reserve a new real face slot NOW so the index stays stable
+        let face_idx = self.faces.len();
+        // Temporary placeholder; will set .half_edge after edges are wired
+        self.faces.push(Face::new(0));
 
         // Build/reuse the 3 half-edges that bound this new face
         let mut edge_indices = [usize::MAX; 3];
 
         for (i, &(from, to)) in edge_vertices.iter().enumerate() {
-            if let Some(he_idx) = reuse_he[i] {
-                // Reuse a border half-edge: promote its face to this real face index
-                self.half_edges[he_idx].face = Some(face_idx);
+            if let Some(&he_idx) = self.edge_map.get(&(from, to)) {
+                // Directed edge already exists. It must be a border edge (face=None) to be reusable.
+                match self.half_edges[he_idx].face {
+                    Some(_) => {
+                        // Already belongs to a real face -> adding another would be non-manifold
+                        debug_assert!(
+                            false,
+                            "add_triangle: directed edge ({},{}) already used by a real face",
+                            from, to
+                        );
+                        // Keep going in release builds; we still wire things so the mesh isn't totally broken.
+                    }
+                    None => {
+                        // Reuse this border half-edge as an interior edge of the new face
+                        self.half_edges[he_idx].face = Some(face_idx);
+                    }
+                }
                 edge_indices[i] = he_idx;
-            } else if let Some(&existing_idx) = self.edge_map.get(&(from, to)) {
-                // Exists but not null (already used by a real face) -> non-manifold; keep assert.
-                debug_assert!(
-                    false,
-                    "add_triangle: reusing non-null directed edge ({},{})",
-                    from, to
-                );
-                edge_indices[i] = existing_idx; // keep mesh consistent in release builds
-            } else {
-                // Create a brand-new half-edge for this triangle
+
+                // Ensure twin linkage is symmetric (should already be)
+                let twin = self.half_edges[he_idx].twin;
+                self.half_edges[twin].twin = he_idx;
+                self.half_edges[he_idx].twin = twin;
+        } else {
+                // Create a brand-new interior half-edge for this triangle
                 let he_idx = self.half_edges.len();
                 let mut he = HalfEdge::new(to);
                 he.face = Some(face_idx);
@@ -274,31 +248,30 @@ impl_mesh! {
                 self.edge_map.insert((from, to), he_idx);
                 edge_indices[i] = he_idx;
 
-                // Try to hook twin; otherwise create a border twin + a null face
+                // Try to hook twin; otherwise create a border twin with face=None
                 if let Some(&rev_idx) = self.edge_map.get(&(to, from)) {
+                    // Existing reverse edge becomes the twin
                     self.half_edges[he_idx].twin = rev_idx;
                     self.half_edges[rev_idx].twin = he_idx;
                 } else {
-                    // Create border half-edge (to -> from) owned by a new null face
+                    // Create border half-edge (to -> from). It lives "outside", so face=None.
                     let border_idx = self.half_edges.len();
                     let mut bhe = HalfEdge::new(from);
                     bhe.twin = he_idx;
-                    // temporary self-loop; an outer ring builder can rewire later
+                    // Temporary self-loop; `build_boundary_loops()` can rewire later.
                     bhe.next = border_idx;
                     bhe.prev = border_idx;
+                    // NOTE: key change: no ghost/null Face; this border half-edge has face=None.
+                    // bhe.face stays as None by default.
                     self.half_edges.push(bhe);
                     self.edge_map.insert((to, from), border_idx);
 
                     self.half_edges[he_idx].twin = border_idx;
-
-                    let nf = self.faces.len();
-                    self.faces.push(Face::new_null(border_idx));
-                    self.half_edges[border_idx].face = Some(nf);
                 }
             }
         }
 
-        // Link the triangle ring
+        // Link the triangle ring (three interior half-edges)
         let e0 = edge_indices[0];
         let e1 = edge_indices[1];
         let e2 = edge_indices[2];
@@ -309,33 +282,17 @@ impl_mesh! {
         self.half_edges[e2].next = e0;
         self.half_edges[e2].prev = e1;
 
-        // Attach representative half-edges to vertices
+        // Attach representative half-edges to vertices (don't overwrite if already set)
         self.vertices[v0].half_edge.get_or_insert(e0);
         self.vertices[v1].half_edge.get_or_insert(e1);
         self.vertices[v2].half_edge.get_or_insert(e2);
 
         // Finalize the face record
-        if let Some(_reused) = reuse_face_idx {
-            // Flip null → real, and point it at one of the boundary half-edges
-            self.faces[face_idx].null = false; // or self.faces[face_idx].null = false;
             self.faces[face_idx].half_edge = e0;
-        } else {
-            // We reserved a new face earlier; fill its boundary pointer now
-            self.faces[face_idx].half_edge = e0;
-            // ensure it’s not null
-            self.faces[face_idx].null = false;
-        }
-
-        // Any *other* null faces that had their sole half-edge promoted are now empty → retire them
-        for f in extra_promoted_nulls {
-            if f != face_idx && self.faces[f].null {
-                self.faces[f].removed = true;
-                // Optional: self.faces[f].half_edge = usize::MAX;
-            }
-        }
 
         face_idx
     }
+
 
     pub fn remove_invalidated_faces(&mut self) {
         // Filter out invalidated faces
@@ -505,8 +462,8 @@ impl_mesh! {
         // 1. Find used vertices
         let mut used = vec![false; self.vertices.len()];
         for face_idx in 0..self.faces.len() {
-            // Skip null or removed faces
-            if self.faces[face_idx].null || self.faces[face_idx].removed {
+            // Skip removed faces
+            if self.faces[face_idx].removed {
                 continue;
             }
             for &v_idx in &self.face_vertices(face_idx) {
@@ -531,8 +488,8 @@ impl_mesh! {
             new_mesh.add_vertex(v.position.clone());
         }
         for face_idx in 0..self.faces.len() {
-            // Skip null or removed faces
-            if self.faces[face_idx].null || self.faces[face_idx].removed {
+            // Skip removed faces
+            if self.faces[face_idx].removed {
                 continue;
             }
             let vs = self.face_vertices(face_idx);
@@ -548,7 +505,7 @@ impl_mesh! {
         let mut face_aabbs = Vec::with_capacity(self.faces.len());
 
         for (face_idx, face) in self.faces.iter().enumerate() {
-            if face.removed || face.null {
+            if face.removed {
                 continue;
             }
 
@@ -843,16 +800,15 @@ impl_mesh! {
         let w = self.get_or_insert_vertex(pos);
 
         let original_face_1 = self.half_edges[he_ca].face.unwrap();
-        let original_face_2 = self.half_edges[he_ac].face.unwrap();
+        let original_face_2 = self.half_edges[he_ac].face;
 
-        if self.faces[self.half_edges[self.half_edges[he_ca].twin].face.unwrap()].null {
+        if original_face_2.is_none() {
             // Open borders scenario
             let ex_he_ba = self.half_edges[he_ab].twin; // b->a
             let ex_he_cb = self.half_edges[he_bc].twin; // c->b
 
             // Mark old faces and half-edges removed
             self.faces[original_face_1].removed = true;
-            self.faces[original_face_2].removed = true; // old single null face replaced by two new nulls
             self.half_edges[he_ca].removed = true;
             self.half_edges[he_ac].removed = true;
 
@@ -947,16 +903,12 @@ impl_mesh! {
             }
 
             // Create two new null faces for border half-edges bhe_wc (w->c) and bhe_aw (a->w)
-            let null_face_wc = self.faces.len();
-            self.faces.push(Face::new_null(bhe_wc));
-            self.half_edges[bhe_wc].face = Some(null_face_wc);
+            self.half_edges[bhe_wc].face = None;
             // self-loop
             self.half_edges[bhe_wc].next = bhe_wc;
             self.half_edges[bhe_wc].prev = bhe_wc;
 
-            let null_face_aw = self.faces.len();
-            self.faces.push(Face::new_null(bhe_aw));
-            self.half_edges[bhe_aw].face = Some(null_face_aw);
+            self.half_edges[bhe_aw].face = None;
             self.half_edges[bhe_aw].next = bhe_aw;
             self.half_edges[bhe_aw].prev = bhe_aw;
 
@@ -994,6 +946,8 @@ impl_mesh! {
 
             return Ok(split_result);
         }
+
+        let original_face_2 = original_face_2.unwrap();
 
         let he_cd = self.half_edges[he_ac].next;
         let he_da = self.half_edges[he_cd].next;
