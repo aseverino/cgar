@@ -22,6 +22,7 @@
 
 pub mod basic_types;
 pub mod core;
+pub mod edge_collapse;
 pub mod face;
 pub mod half_edge;
 pub mod intersection_segment;
