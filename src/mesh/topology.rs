@@ -39,7 +39,7 @@ use crate::{
         vector::*,
     },
     impl_mesh,
-    mesh::basic_types::{Mesh, PointInMeshResult, RayCastResult},
+    mesh::basic_types::{Mesh, PairRing, PointInMeshResult, RayCastResult, VertexRing},
     numeric::scalar::Scalar,
     operations::Zero,
 };
@@ -1086,6 +1086,168 @@ impl_mesh! {
         }
 
         Some(result)
+    }
+
+    #[inline]
+    pub fn rot_ccw_around_vertex(&self, h: usize) -> usize {
+        // CCW around the *origin* (tail) of h. Works for interior and border
+        // once boundary loops have valid prev/next.
+        let prev = self.half_edges[h].prev;
+        self.half_edges[prev].twin
+    }
+
+    pub fn vertex_ring_ccw(&self, v: usize) -> VertexRing {
+        use std::collections::HashSet;
+
+        // --- Seed: ensure we start from an OUTGOING half-edge of v ---
+        let mut seed = match self.vertices[v].half_edge {
+            Some(h) => h,
+            None => {
+                // No incident half-edge recorded — return an empty, harmless ring.
+                return VertexRing {
+                    center: v,
+                    halfedges_ccw: vec![],
+                    neighbors_ccw: vec![],
+                    faces_ccw: vec![],
+                    is_border: true,
+                };
+            }
+        };
+        if self.source(seed) != v {
+            seed = self.half_edges[seed].twin;
+        }
+
+        // If the cached seed is removed, rotate to find a live outgoing spoke.
+        // If *all* spokes are removed, return an empty ring.
+        {
+            let mut cur = seed;
+            let mut seen = HashSet::new();
+            while self.half_edges[cur].removed && seen.insert(cur) {
+                cur = self.rot_ccw_around_vertex(cur);
+                if cur == seed { break; }
+            }
+            if self.half_edges[cur].removed {
+                return VertexRing {
+                    center: v,
+                    halfedges_ccw: vec![],
+                    neighbors_ccw: vec![],
+                    faces_ccw: vec![],
+                    is_border: true,
+                };
+            }
+            seed = cur;
+        }
+
+        // --- Traverse once around v in CCW order ---
+        let mut halfedges = Vec::new();
+        let mut neighbors = Vec::new();
+        let mut faces     = Vec::new();
+        let mut is_border = false;
+
+        let start = seed;
+        let mut cur = start;
+        let mut seen = HashSet::new();
+
+        loop {
+            // Emit only live spokes (but still rotate across anything, since wiring is valid)
+            if !self.half_edges[cur].removed {
+                // neighbor is the head of the half-edge
+                neighbors.push(self.half_edges[cur].vertex);
+
+                // face entry is None for border or if the face is marked removed
+                let f = if self.face_ok(cur) { self.half_edges[cur].face } else { None };
+                if f.is_none() { is_border = true; }
+                faces.push(f);
+
+                halfedges.push(cur);
+            }
+
+            let nxt = self.rot_ccw_around_vertex(cur);
+            if nxt == start { break; }
+
+            // Safety guard against accidental loops if wiring is corrupt
+            if !seen.insert(nxt) { break; }
+
+            cur = nxt;
+        }
+
+        VertexRing {
+            center: v,
+            halfedges_ccw: halfedges,
+            neighbors_ccw: neighbors,
+            faces_ccw: faces,
+            is_border,
+        }
+    }
+
+    #[inline]
+    pub fn face_ok(&self, h: usize) -> bool {
+        match self.half_edges[h].face {
+            Some(f) => !self.faces[f].removed,
+            None => false,
+        }
+    }
+
+    pub fn ring_pair(&self, v0: usize, v1: usize) -> Option<PairRing> {
+        if v0 == v1 { return None; }
+
+        // Exact directed incidences
+        let he_v0v1 = self.half_edge_between(v0, v1)?;
+        let he_v1v0 = self.half_edge_between(v1, v0)?;
+
+        let ring0 = self.vertex_ring_ccw(v0);
+        let ring1 = self.vertex_ring_ccw(v1);
+
+        // Index by the EXACT half-edge ids
+        let idx_v1_in_ring0 = ring0.halfedges_ccw.iter().position(|&h| h == he_v0v1)?;
+        let idx_v0_in_ring1 = ring1.halfedges_ccw.iter().position(|&h| h == he_v1v0)?;
+
+        // (Optional sanity while debugging)
+        debug_assert_eq!(ring0.neighbors_ccw[idx_v1_in_ring0], v1);
+        debug_assert_eq!(ring1.neighbors_ccw[idx_v0_in_ring1], v0);
+
+        // Third (opposite) vertex only if the incident face exists and is not removed
+        let opposite_a = if self.face_ok(he_v0v1) {
+            let hn = self.half_edges[he_v0v1].next;
+            Some(self.half_edges[hn].vertex)
+        } else { None };
+
+        let opposite_b = if self.face_ok(he_v1v0) {
+            let hn = self.half_edges[he_v1v0].next;
+            Some(self.half_edges[hn].vertex)
+        } else { None };
+
+        use std::collections::HashSet;
+        let set0: HashSet<_> = ring0.neighbors_ccw.iter().copied().filter(|&x| x != v1).collect();
+        let set1: HashSet<_> = ring1.neighbors_ccw.iter().copied().filter(|&x| x != v0).collect();
+
+        let is_border_edge = !(self.face_ok(he_v0v1) && self.face_ok(he_v1v0));
+
+        Some(PairRing {
+            v0, v1,
+            ring0, ring1,
+            idx_v1_in_ring0: Some(idx_v1_in_ring0),
+            idx_v0_in_ring1: Some(idx_v0_in_ring1),
+            opposite_a,
+            opposite_b,
+            common_neighbors: set0.intersection(&set1).copied().collect(),
+            union_neighbors:  set0.union(&set1).copied().collect(),
+            is_border_edge,
+        })
+    }
+
+    /// Convenience: the classic triangle-mesh link condition for collapsing edge (v0,v1).
+    /// Accepts borders: on border, common neighbors must be exactly {a} or {b}.
+    pub fn collapse_link_condition_triangle(&self, v0: usize, v1: usize) -> bool {
+        let Some(pr) = self.ring_pair(v0, v1) else { return false; };
+
+        // Gather expected opposite set (ignoring None)
+        let mut expected = std::collections::HashSet::new();
+        if let Some(a) = pr.opposite_a { expected.insert(a); }
+        if let Some(b) = pr.opposite_b { expected.insert(b); }
+
+        // Intersection of neighbor sets should equal expected
+        pr.common_neighbors == expected
     }
 }
 

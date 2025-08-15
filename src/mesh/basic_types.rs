@@ -75,6 +75,44 @@ pub enum VertexSource {
     B,
 }
 
+/// CCW one-ring snapshot around a vertex.
+#[derive(Debug, Clone)]
+pub struct VertexRing {
+    pub center: usize,
+    pub halfedges_ccw: Vec<usize>, // outgoing half-edges from `center`
+    pub neighbors_ccw: Vec<usize>, // target(vertex) of each half-edge
+    pub faces_ccw: Vec<Option<usize>>, // incident face for each wedge
+    pub is_border: bool,
+}
+
+/// CCW one-ring snapshots around the two endpoints of an edge (v0,v1),
+/// plus convenient derived info for edge-collapse checks.
+#[derive(Debug, Clone)]
+pub struct PairRing {
+    pub v0: usize,
+    pub v1: usize,
+    pub ring0: VertexRing, // CCW ring around v0
+    pub ring1: VertexRing, // CCW ring around v1
+
+    /// index in ring0.neighbors_ccw where neighbor == v1 (if edge exists)
+    pub idx_v1_in_ring0: Option<usize>,
+    /// index in ring1.neighbors_ccw where neighbor == v0 (if edge exists)
+    pub idx_v0_in_ring1: Option<usize>,
+
+    /// The two “opposite” vertices across the edge (v0,v1):
+    /// a = third vertex of face(v0->v1), b = third vertex of face(v1->v0)
+    /// None for borders/removed faces.
+    pub opposite_a: Option<usize>,
+    pub opposite_b: Option<usize>,
+
+    /// Neighbor sets (excluding {v0,v1})
+    pub common_neighbors: std::collections::HashSet<usize>,
+    pub union_neighbors: std::collections::HashSet<usize>,
+
+    /// True if the edge is on the border (i.e., one of the incident faces is None/removed).
+    pub is_border_edge: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Mesh<T: Scalar, const N: usize> {
     pub vertices: Vec<Vertex<T, N>>,
