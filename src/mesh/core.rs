@@ -23,7 +23,8 @@
 use std::{
     array::from_fn,
     collections::{HashMap, HashSet},
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Sub},
+    process::Output,
 };
 
 use smallvec::*;
@@ -33,6 +34,7 @@ use crate::{
         Aabb, AabbTree,
         point::{Point, PointOps},
         spatial_element::SpatialElement,
+        util::proj_along,
         vector::{Vector, VectorOps},
     },
     impl_mesh,
@@ -1309,6 +1311,124 @@ impl_mesh! {
         aabb_tree.invalidate(&face);
 
         Some(split_result)
+    }
+
+    /// Tangential (Taubin/Desbrun style) smoothing.
+    /// - `sweeps`: number of Jacobi sweeps
+    /// - `step`:   blend factor in (0,1], e.g. 0.2
+    /// Returns true if any vertex moved.
+    pub fn smooth_tangential(&mut self, sweeps: usize, step: f64) -> bool
+    where
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        T: Add<Output = T>
+        + Sub<Output = T>
+        + Mul<Output = T>
+        + Div<Output = T>,
+    {
+        if sweeps == 0 { return false; }
+
+        // Epsilons
+        let eps2 = T::from(1e-30);            // for d·d in proj (length^2)
+        let eps4 = T::from(1e-60);            // for area^2 checks (length^4), tune per scale
+        let alpha = T::from(step);
+
+        let nverts = self.vertices.len();
+        let mut moved_any = false;
+
+        for _ in 0..sweeps {
+            // Jacobi proposals
+            let mut proposal: Vec<Option<Point<T, N>>> = vec![None; nverts];
+
+            for v in 0..nverts {
+                let ring = self.vertex_ring_ccw(v);
+                if ring.neighbors_ccw.is_empty() { continue; }
+
+                // Dedup neighbors
+                use std::collections::HashSet;
+                let mut seen = HashSet::new();
+                let mut nbrs = Vec::with_capacity(ring.neighbors_ccw.len());
+                for &n in &ring.neighbors_ccw {
+                    if n != v && seen.insert(n) { nbrs.push(n); }
+                }
+                if nbrs.is_empty() { continue; }
+
+                // Umbrella Laplacian: average displacement
+                let pv = &self.vertices[v].position;
+                let mut sum = Vector::<T, N>::default();
+                for &n in &nbrs {
+                    sum = sum + (&self.vertices[n].position - &pv).as_vector();
+                }
+                let inv_deg = T::from(1.0) / T::from(nbrs.len() as f64);
+                let delta = sum.scale(&inv_deg).0;
+
+                // Tangent projection
+                let delta_tan = if !ring.is_border {
+                    // Interior: remove normal component
+                    let mut nsum = Vector::<T, N>::default();
+                    for &fopt in &ring.faces_ccw {
+                        if let Some(f) = fopt {
+                            if !self.faces[f].removed {
+                                let [a, b, c] = self.face_vertices(f);
+                                let pa = &self.vertices[a].position;
+                                let pb = &self.vertices[b].position;
+                                let pc = &self.vertices[c].position;
+                                nsum = nsum + (pb - pa).as_vector().cross(&(pc - pa).as_vector());
+                            }
+                        }
+                    }
+                    let proj_n = proj_along(&delta.as_vector(), &nsum, &eps2);
+                    &delta.as_vector() - &proj_n
+                } else {
+                    // Border: move along boundary tangent if identifiable; else no projection
+                    let mut b_opt = None;
+                    for (i, &he) in ring.halfedges_ccw.iter().enumerate() {
+                        if ring.faces_ccw[i].is_none() { b_opt = Some(he); break; }
+                    }
+                    if let Some(b) = b_opt {
+                        let prev_b = self.half_edges[b].prev;      // border HE whose head is v
+                        let n0 = self.source(prev_b);              // previous boundary vertex
+                        let n1 = self.half_edges[b].vertex;        // next boundary vertex
+                        let t  = (&self.vertices[n1].position - &self.vertices[n0].position).as_vector();
+                        proj_along(&delta.as_vector(), &t, &eps2)
+                    } else {
+                        delta.as_vector()
+                    }
+                };
+
+                // Proposed position
+                let p_new = pv + &delta_tan.scale(&alpha).0;
+
+                // Reject if any incident face degenerates
+                let mut ok = true;
+                for &fopt in &ring.faces_ccw {
+                    if let Some(f) = fopt {
+                        if !self.faces[f].removed {
+                            let a2x4 = self.area2x4_after_move(f, v, &p_new);
+                            if a2x4 <= eps4 { ok = false; break; }
+                        }
+                    }
+                }
+
+                if ok { proposal[v] = Some(p_new); }
+            }
+
+            // Apply proposals (with a small movement threshold)
+            let mut moved_this_sweep = false;
+            for v in 0..nverts {
+                if let Some(p) = proposal[v].take() {
+                    let dv = (&p - &self.vertices[v].position).as_vector();
+                    if dv.dot(&dv) > T::from(1e-30) { // tiny threshold
+                        self.vertices[v].position = p;
+                        moved_this_sweep = true;
+                    }
+                }
+            }
+
+            moved_any |= moved_this_sweep;
+            if !moved_this_sweep { break; }
+        }
+
+        moved_any
     }
 }
 

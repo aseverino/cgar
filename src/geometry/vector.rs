@@ -75,6 +75,12 @@ impl<T: Scalar, const N: usize> SpatialElement<T, N> for Vector<T, N> {
     }
 }
 
+impl<T: Scalar, const N: usize> Default for Vector<T, N> {
+    fn default() -> Self {
+        Vector::from(Point::default())
+    }
+}
+
 // conveniences
 impl<T: Scalar, const N: usize> From<Point<T, N>> for Vector<T, N> {
     fn from(p: Point<T, N>) -> Self {

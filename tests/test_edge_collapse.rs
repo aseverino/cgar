@@ -505,3 +505,26 @@ fn test_collapse_on_fully_interior_edge() {
     assert_eq!(ring.halfedges_ccw.len(), ring.neighbors_ccw.len());
     let _ = write_obj(&mesh, "/mnt/v/cgar_meshes/grid4x4_collapse.obj");
 }
+
+#[test]
+fn test_tangential_smooth_grid_moves_on_irregular_sampling() {
+    let mut m = create_grid4x4_mesh();
+    let id = |x: usize, y: usize| -> usize { y * 4 + x };
+
+    // Tangential (in-plane) perturbations
+    m.vertices[id(1, 1)].position.coords[0] += &CgarF64(0.15); // shift center in +x
+    m.vertices[id(2, 1)].position.coords[1] -= &CgarF64(0.10); // shift neighbor in -y
+    m.vertices[id(1, 2)].position.coords[0] -= &CgarF64(0.07); // small shift
+
+    let _ = write_obj(&m, "/mnt/v/cgar_meshes/deformed_4x4.obj");
+
+    let before = m.faces.iter().filter(|f| !f.removed).count();
+    let moved = m.smooth_tangential(3, 0.2);
+    assert!(
+        moved,
+        "with in-plane irregularity, tangential smoothing should move vertices"
+    );
+    let after = m.faces.iter().filter(|f| !f.removed).count();
+    assert_eq!(before, after); // smoothing doesn't delete faces
+    let _ = write_obj(&m, "/mnt/v/cgar_meshes/deformed_4x4_tangential_smooth.obj");
+}

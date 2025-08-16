@@ -1249,6 +1249,29 @@ impl_mesh! {
         // Intersection of neighbor sets should equal expected
         pr.common_neighbors == expected
     }
+
+    /// Compute area-squared (2*Area)^2 of face `f` if vertex `mv` moved to `p_star`.
+    #[inline]
+    pub fn area2x4_after_move(
+        &self,
+        f: usize,
+        mv: usize,
+        p_star: &Point<T, N>,
+    ) -> T
+    {
+        let [i, j, k] = self.face_vertices(f);
+        let p = |idx: usize| -> &Point<T, N> {
+            if idx == mv {
+                p_star
+            } else {
+                &self.vertices[idx].position
+            }
+        };
+        let ab = (p(j) - p(i)).as_vector();
+        let ac = (p(k) - p(i)).as_vector();
+        let n = ab.cross(&ac);
+        n.dot(&n)
+    }
 }
 
 fn ray_segment_intersection_2d<T: Scalar>(

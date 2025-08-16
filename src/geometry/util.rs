@@ -512,3 +512,26 @@ where
         None
     }
 }
+
+/// Project `v` onto direction `d` (no sqrt). If `d` is near-zero, returns zero.
+#[inline]
+pub fn proj_along<T: Scalar, const N: usize>(
+    v: &Vector<T, N>,
+    d: &Vector<T, N>,
+    eps: &T,
+) -> Vector<T, N>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Neg<Output = T>,
+{
+    let dd = d.dot(&d);
+    if &dd <= &eps {
+        return Vector::default();
+    }
+    d.scale(&(v.dot(&d) / dd))
+}
