@@ -1258,6 +1258,7 @@ impl_mesh! {
         mv: usize,
         p_star: &Point<T, N>,
     ) -> T
+    where     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     {
         let [i, j, k] = self.face_vertices(f);
         let p = |idx: usize| -> &Point<T, N> {
