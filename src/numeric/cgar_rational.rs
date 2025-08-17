@@ -21,11 +21,11 @@
 // SOFTWARE.
 
 use num_traits::ToPrimitive;
-use rug::{Float, Rational, ops::Pow};
+use rug::{Rational, ops::Pow};
 
 use crate::{
     numeric::{cgar_f64::CgarF64, scalar::Scalar},
-    operations::{Abs, Sqrt},
+    operations::Abs,
 };
 
 use std::{
@@ -81,11 +81,6 @@ impl Scalar for CgarRational {
     fn approx_eq(&self, other: &Self) -> bool {
         // For rational numbers, we can use exact equality
         self.0 == other.0
-    }
-
-    fn acos(&self) -> Self {
-        let f = Float::with_val(128, &self.0);
-        CgarRational::from(f.acos())
     }
 }
 
@@ -270,26 +265,6 @@ impl crate::operations::Zero for CgarRational {
 impl crate::operations::One for CgarRational {
     fn one() -> Self {
         CgarRational(Rational::from(1))
-    }
-}
-
-impl Sqrt for CgarRational {
-    fn sqrt(&self) -> Self {
-        let sqrt_val = self.0.to_f64().sqrt();
-        CgarRational::from(sqrt_val)
-    }
-}
-
-impl crate::operations::Pow for CgarRational {
-    fn pow(&self, exp: i32) -> Self {
-        CgarRational(self.0.clone().pow(exp))
-    }
-}
-
-impl crate::operations::Round for CgarRational {
-    fn round(&self) -> Self {
-        let rounded = self.0.to_f64().round();
-        CgarRational::from(rounded)
     }
 }
 

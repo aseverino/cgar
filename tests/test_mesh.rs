@@ -27,6 +27,7 @@ use cgar::boolean::boolean::BooleanOp;
 use cgar::geometry::spatial_element::SpatialElement;
 use cgar::geometry::{Aabb, Point2, Point3, Vector3};
 use cgar::io::obj::{read_obj, write_obj};
+use cgar::io::off::{read_off, write_off};
 use cgar::mesh::basic_types::Mesh;
 use cgar::mesh::core;
 use cgar::numeric::cgar_f64::CgarF64;
@@ -870,7 +871,10 @@ fn difference_boolean_inexact() {
     let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
 
     // 3) Perform boolean difference
+    let start = Instant::now();
     let result_1 = big_a.boolean(&big_b, BooleanOp::Difference);
+    let duration = start.elapsed();
+    println!("Boolean difference took {:?}", duration);
 
     let _ = write_obj(
         &result_1,
@@ -889,7 +893,10 @@ fn difference_boolean_exact() {
     let big_b = make_cube_exact([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
 
     // 3) Perform boolean difference
+    let start = Instant::now();
     let result_1 = big_a.boolean(&big_b, BooleanOp::Union);
+    let duration = start.elapsed();
+    println!("Boolean difference took {:?}", duration);
 
     let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/difference_boolean_exact.obj");
 
@@ -952,6 +959,8 @@ fn difference_large_boolean() {
     println!("Validating connectivity...");
     result.validate_connectivity();
     println!("Passed!");
+
+    let _ = write_obj(&result, "/mnt/v/cgar_meshes/difference_large_boolean.obj");
 }
 
 #[test]

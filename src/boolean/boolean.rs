@@ -454,7 +454,7 @@ where
 
                 match tri_tri_intersection(&pa, &pb) {
                     TriTriIntersectionResult::Proper(segment) => {
-                        if segment.length().is_positive() {
+                        if segment.length2().is_positive() {
                             Self::create_intersection_segment(
                                 &a,
                                 &mut splits_a,
@@ -476,7 +476,7 @@ where
                         }
                     }
                     TriTriIntersectionResult::Coplanar(segment) => {
-                        if segment.length().is_positive() {
+                        if segment.length2().is_positive() {
                             Self::create_intersection_segment(
                                 &a,
                                 &mut splits_a,
@@ -1088,24 +1088,22 @@ where
                 let e2_v1 = mesh.vertices[vertex].position.clone();
                 let e2_v2 = mesh.vertices[v2].position.clone();
 
-                let e1 = (e1_v2 - e1_v1).as_vector().normalized();
-                let e2 = (e2_v2 - e2_v1).as_vector().normalized();
+                let e1 = (e1_v2 - e1_v1).as_vector();
+                let e2 = (e2_v2 - e2_v1).as_vector();
 
-                let d = direction.normalized();
-
-                let c1 = e1.cross(&d);
-                let c2 = d.cross(&e2);
+                let c1 = e1.cross(&direction);
+                let c2 = direction.cross(&e2);
                 let total = e1.cross(&e2);
 
                 let is_between = if total.dot(&total) > T::zero() {
                     c1.dot(&total) >= T::zero() && c2.dot(&total) >= T::zero()
                 } else {
-                    d.dot(&e1) >= T::zero()
+                    direction.dot(&e1) >= T::zero()
                 };
 
                 // Face normal alignment test
                 let normal = mesh.face_normal(face);
-                let n_dot_d = normal.dot(&d);
+                let n_dot_d = normal.dot(&direction);
                 let is_aligned = n_dot_d.is_zero();
 
                 if is_between && is_aligned {

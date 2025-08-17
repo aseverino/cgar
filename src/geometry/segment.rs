@@ -37,8 +37,11 @@ where
     fn a(&self) -> &Point<T, N>;
     fn b(&self) -> &Point<T, N>;
 
-    fn length(&self) -> T {
-        self.a().distance_to(self.b())
+    /// Squared length (no sqrt).
+    #[inline]
+    fn length2(&self) -> T {
+        let ab = (self.b() - self.a()).as_vector();
+        ab.dot(&ab)
     }
 
     fn midpoint(&self) -> Point<T, N>;
@@ -140,7 +143,7 @@ where
 
     fn direction(&self) -> Vector<T, N> {
         // Calculate the direction vector from point a to point b
-        (&self.b - &self.a).as_vector().normalized()
+        (&self.b - &self.a).as_vector()
     }
 
     fn inverse(&self) -> Self {

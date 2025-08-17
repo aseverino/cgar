@@ -40,12 +40,10 @@ where
 
     fn dot(&self, other: &Self) -> T;
     fn cross(&self, other: &Self) -> Self::Cross;
-    fn norm(&self) -> T;
-    fn norm_squared(&self) -> T;
-    fn normalized(&self) -> Self;
     fn scale(&self, s: &T) -> Self;
     fn axpy(&mut self, a: &T, x: &Self);
     fn any_perpendicular(&self) -> Vector<T, N>;
+    fn norm2(&self) -> T;
 }
 
 #[derive(Clone, Debug)]
@@ -176,19 +174,6 @@ where
         &self[0] * &o[1] - &self[1] * &o[0]
     }
 
-    fn norm(&self) -> T {
-        self.norm_squared().sqrt()
-    }
-
-    fn norm_squared(&self) -> T {
-        &(&self[0] * &self[0]) + &(&self[1] * &self[1])
-    }
-
-    fn normalized(&self) -> Self {
-        let n = self.norm();
-        Self::from(Point::from_vals([&self[0] / &n, &self[1] / &n]))
-    }
-
     fn scale(&self, s: &T) -> Self {
         Self::from(Point::from_vals([&self[0] * &s, &self[1] * &s]))
     }
@@ -202,6 +187,10 @@ where
 
     fn any_perpendicular(&self) -> Vector<T, 2> {
         unimplemented!("any_perpendicular is not implemented for 2D vectors");
+    }
+
+    fn norm2(&self) -> T {
+        self[0].clone() * self[0].clone() + self[1].clone() * self[1].clone()
     }
 }
 
@@ -224,23 +213,6 @@ where
             &(&self[1] * &o[2]) - &(&self[2] * &o[1]),
             &(&self[2] * &o[0]) - &(&self[0] * &o[2]),
             &(&self[0] * &o[1]) - &(&self[1] * &o[0]),
-        ]))
-    }
-
-    fn norm(&self) -> T {
-        self.norm_squared().sqrt()
-    }
-
-    fn norm_squared(&self) -> T {
-        &(&(&self[0] * &self[0]) + &(&self[1] * &self[1])) + &(&self[2] * &self[2])
-    }
-
-    fn normalized(&self) -> Self {
-        let n = self.norm();
-        Self::from(Point::from_vals([
-            &self[0] / &n,
-            &self[1] / &n,
-            &self[2] / &n,
         ]))
     }
 
@@ -267,6 +239,12 @@ where
         } else {
             self.cross(&Vector::new([T::zero(), T::zero(), T::one()]))
         }
+    }
+
+    fn norm2(&self) -> T {
+        self[0].clone() * self[0].clone()
+            + self[1].clone() * self[1].clone()
+            + self[2].clone() * self[2].clone()
     }
 }
 

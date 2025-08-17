@@ -519,7 +519,7 @@ fn test_tangential_smooth_grid_moves_on_irregular_sampling() {
     let _ = write_obj(&m, "/mnt/v/cgar_meshes/deformed_4x4.obj");
 
     let before = m.faces.iter().filter(|f| !f.removed).count();
-    let moved = m.smooth_tangential(3, 0.2);
+    let moved = m.smooth_tangential(3, CgarF64(0.2));
     assert!(
         moved,
         "with in-plane irregularity, tangential smoothing should move vertices"

@@ -25,7 +25,7 @@ use num_traits::ToPrimitive;
 use crate::{
     geometry::util::EPS,
     numeric::{cgar_rational::CgarRational, scalar::Scalar},
-    operations::{Abs, Pow, Round, Sqrt},
+    operations::Abs,
 };
 
 use std::{
@@ -79,10 +79,6 @@ impl Scalar for CgarF64 {
 
     fn approx_eq(&self, other: &Self) -> bool {
         return (self.0 - other.0).abs() < EPS;
-    }
-
-    fn acos(&self) -> Self {
-        CgarF64(self.0.acos())
     }
 }
 
@@ -271,24 +267,6 @@ impl crate::operations::Zero for CgarF64 {
 impl crate::operations::One for CgarF64 {
     fn one() -> Self {
         CgarF64(1.0)
-    }
-}
-
-impl Sqrt for CgarF64 {
-    fn sqrt(&self) -> Self {
-        CgarF64(self.0.sqrt())
-    }
-}
-
-impl Pow for CgarF64 {
-    fn pow(&self, exp: i32) -> Self {
-        CgarF64(self.0.powi(exp))
-    }
-}
-
-impl Round for CgarF64 {
-    fn round(&self) -> Self {
-        CgarF64(self.0.round())
     }
 }
 

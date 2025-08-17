@@ -44,9 +44,9 @@ pub trait Scalar:
     + for<'a> SubAssign<&'a Self>
     + Debug
     + Abs
-    + Pow
-    + Round
-    + Sqrt
+    // + Pow
+    // + Round
+    // + Sqrt
     + Zero
     + One
     + Neg<Output = Self>
@@ -91,5 +91,5 @@ pub trait Scalar:
     fn point_merge_threshold_squared() -> Self;
 
     fn approx_eq(&self, other: &Self) -> bool;
-    fn acos(&self) -> Self;
+    // fn acos(&self) -> Self;
 }

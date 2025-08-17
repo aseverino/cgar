@@ -52,7 +52,7 @@ impl_mesh! {
             .map(|v| &self.vertices[v].position);
         let edge1 = (face_vertices[1] - face_vertices[0]).as_vector();
         let edge2 = (face_vertices[2] - face_vertices[0]).as_vector();
-        edge1.cross(&edge2).normalized()
+        edge1.cross(&edge2)
     }
 
     pub fn source(&self, he: usize) -> usize {
@@ -251,13 +251,13 @@ impl_mesh! {
     pub fn face_area(&self, f: usize) -> T
     {
         match N {
-            2 => self.face_area_2d(f),
-            3 => self.face_area_3d(f),
+            2 => self.face_area_2(f),
+            3 => self.face_area_3(f),
             _ => panic!("face_area only supports 2D and 3D"),
         }
     }
 
-    fn face_area_2d(&self, f: usize) -> T
+    fn face_area_2(&self, f: usize) -> T
     {
         let face_vertices = self.face_vertices(f);
         if face_vertices.len() != 3 {
@@ -271,32 +271,31 @@ impl_mesh! {
         let ab = b - a;
         let ac = c - a;
 
-        let ab_2d = Vector::<T, 2>::from_vals([ab[0].clone(), ab[1].clone()]);
-        let ac_2d = Vector::<T, 2>::from_vals([ac[0].clone(), ac[1].clone()]);
+        let ab_2 = Vector::<T, 2>::from_vals([ab[0].clone(), ab[1].clone()]);
+        let ac_2 = Vector::<T, 2>::from_vals([ac[0].clone(), ac[1].clone()]);
 
-        let cross_product = ab_2d.cross(&ac_2d);
+        let cross_product = ab_2.cross(&ac_2);
         cross_product.abs() / T::from_num_den(2, 1)
     }
 
-    fn face_area_3d(&self, f: usize) -> T
+    fn face_area_3(&self, f: usize) -> T
     {
         let face_vertices = self.face_vertices(f);
-        if face_vertices.len() != 3 {
-            panic!("face_area only works for triangular faces");
-        }
+        assert!(face_vertices.len() == 3, "face_area only works for triangular faces");
 
         let a = &self.vertices[face_vertices[0]].position;
         let b = &self.vertices[face_vertices[1]].position;
         let c = &self.vertices[face_vertices[2]].position;
 
-        let ab = b - a;
-        let ac = c - a;
+        let ab = (b - a).as_vector();
+        let ac = (c - a).as_vector();
 
-        let ab_3d = Vector::<T, 3>::from_vals([ab[0].clone(), ab[1].clone(), ab[2].clone()]);
-        let ac_3d = Vector::<T, 3>::from_vals([ac[0].clone(), ac[1].clone(), ac[2].clone()]);
+        let ab_3 = Vector::<T, 3>::from_vals([ab[0].clone(), ab[1].clone(), ab[2].clone()]);
+        let ac_3 = Vector::<T, 3>::from_vals([ac[0].clone(), ac[1].clone(), ac[2].clone()]);
 
-        let cross_product = ab_3d.cross(&ac_3d);
-        cross_product.norm() / T::from_num_den(2, 1)
+        let cross = ab_3.cross(&ac_3);
+        // area^2 = ||cross||^2 / 4
+        cross.norm2() / T::from_num_den(4, 1)
     }
 
     /// Enumerate all outgoing half-edges from `v` exactly once,

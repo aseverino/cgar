@@ -28,7 +28,7 @@ use crate::{
         vector::{Vector, VectorOps},
     },
     numeric::scalar::Scalar,
-    operations::{Abs, Pow, Sqrt},
+    operations::Abs,
 };
 
 pub trait Kernel2 {

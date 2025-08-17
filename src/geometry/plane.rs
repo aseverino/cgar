@@ -93,9 +93,8 @@ where
     where
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     {
-        let n = self.normal.normalized();
-        let u = n.any_perpendicular().normalized();
-        let v = n.cross(&u).normalized();
+        let u = self.normal.any_perpendicular();
+        let v = self.normal.cross(&u);
         (u, v)
     }
 

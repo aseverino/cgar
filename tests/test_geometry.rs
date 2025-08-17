@@ -31,12 +31,12 @@ use cgar::{
     numeric::cgar_f64::CgarF64,
 };
 
-#[test]
-fn test_distance_2() {
-    let p1 = Point2::<CgarF64>::from_vals([0.0, 0.0]);
-    let p2 = Point2::from_vals([3.0, 4.0]);
-    assert_eq!(p1.distance_to(&p2), 5.0.into());
-}
+// #[test]
+// fn test_distance_2() {
+//     let p1 = Point2::<CgarF64>::from_vals([0.0, 0.0]);
+//     let p2 = Point2::from_vals([3.0, 4.0]);
+//     assert_eq!(p1.distance_to(&p2), 5.0.into());
+// }
 
 #[test]
 fn test_vector_cross_2() {
@@ -45,22 +45,22 @@ fn test_vector_cross_2() {
     assert_eq!(v1.cross(&v2), 1.0.into());
 }
 
-#[test]
-fn test_segment_length_2() {
-    let s = Segment2::new(
-        &Point2::<CgarF64>::from_vals([0.0, 0.0]),
-        &Point2::from_vals([0.0, 5.0]),
-    );
-    assert_eq!(s.length(), 5.0.into());
-}
+// #[test]
+// fn test_segment_length_2() {
+//     let s = Segment2::new(
+//         &Point2::<CgarF64>::from_vals([0.0, 0.0]),
+//         &Point2::from_vals([0.0, 5.0]),
+//     );
+//     assert_eq!(s.length(), 5.0.into());
+// }
 
-#[test]
-fn test_distance_3() {
-    let p1 = Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]);
-    let p2 = Point3::<CgarF64>::from_vals([1.0, 2.0, 2.0]);
-    // √(1² + 2² + 2²) = √9 = 3
-    assert_eq!(p1.distance_to(&p2), 3.0.into());
-}
+// #[test]
+// fn test_distance_3() {
+//     let p1 = Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]);
+//     let p2 = Point3::<CgarF64>::from_vals([1.0, 2.0, 2.0]);
+//     // √(1² + 2² + 2²) = √9 = 3
+//     assert_eq!(p1.distance_to(&p2), 3.0.into());
+// }
 
 #[test]
 fn test_vector_cross_3() {
@@ -70,11 +70,11 @@ fn test_vector_cross_3() {
     assert_eq!(v1.cross(&v2), Vector3::from_vals([0.0, 0.0, 1.0]));
 }
 
-#[test]
-fn test_segment_length_3() {
-    let a = Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]);
-    let b = Point3::<CgarF64>::from_vals([0.0, 3.0, 4.0]);
-    let s = Segment3::<CgarF64>::new(&a, &b);
-    // length is √(0² + 3² + 4²) = 5
-    assert_eq!(s.length(), 5.0.into());
-}
+// #[test]
+// fn test_segment_length_3() {
+//     let a = Point3::<CgarF64>::from_vals([0.0, 0.0, 0.0]);
+//     let b = Point3::<CgarF64>::from_vals([0.0, 3.0, 4.0]);
+//     let s = Segment3::<CgarF64>::new(&a, &b);
+//     // length is √(0² + 3² + 4²) = 5
+//     assert_eq!(s.length(), 5.0.into());
+// }

@@ -22,4 +22,5 @@
 
 pub mod cgar_f64;
 pub mod cgar_rational;
+pub mod lazy_exact;
 pub mod scalar;
