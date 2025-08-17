@@ -104,7 +104,7 @@ where
             .collect::<Vec<_>>();
         // Create a new Point with the calculated coordinates
         let a: [T; N] = coords.try_into().expect("Invalid length for Point");
-        Point::from_vals(a)
+        Point::<T, N>::from_vals(a)
 
         // Point::from_vals([
         //     &(&self.a[0] + &self.b[0]) / &T::from(2),

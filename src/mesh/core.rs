@@ -42,7 +42,7 @@ use crate::{
         basic_types::*, face::Face, half_edge::HalfEdge, intersection_segment::IntersectionSegment,
         vertex::Vertex,
     },
-    numeric::scalar::Scalar,
+    numeric::{cgar_f64::CgarF64, scalar::Scalar},
 };
 
 impl_mesh! {
@@ -574,7 +574,7 @@ impl_mesh! {
         *self = new_mesh;
     }
 
-    pub fn build_face_tree(&self) -> AabbTree<T, N, Point<T, N>, usize> {
+    pub fn build_face_tree(&self) -> AabbTree<CgarF64, N, Point<CgarF64, N>, usize> {
         let mut face_aabbs = Vec::with_capacity(self.faces.len());
 
         for (face_idx, face) in self.faces.iter().enumerate() {
@@ -608,8 +608,8 @@ impl_mesh! {
             let p2 = &self.vertices[v2_idx].position;
 
             // Find min/max for each coordinate dimension
-            let mut min_coords = from_fn(|_| T::from(0));
-            let mut max_coords = from_fn(|_| T::from(0));
+            let mut min_coords = from_fn(|_| CgarF64::from(0));
+            let mut max_coords = from_fn(|_| CgarF64::from(0));
 
             for i in 0..N {
                 // Direct comparison without intermediate storage
@@ -633,8 +633,8 @@ impl_mesh! {
                     coord2
                 };
 
-                min_coords[i] = min_val.clone();
-                max_coords[i] = max_val.clone();
+                min_coords[i] = min_val.clone().into();
+                max_coords[i] = max_val.clone().into();
             }
 
             let aabb =
@@ -643,17 +643,16 @@ impl_mesh! {
             face_aabbs.push((aabb, face_idx));
         }
 
-        let tree = AabbTree::build(face_aabbs);
-
+        let tree = AabbTree::<CgarF64, N, Point<CgarF64, N>, usize>::build(face_aabbs);
         tree
     }
 
     /// Compute the AABB of face `f`.
-    pub fn face_aabb(&self, f: usize) -> Aabb<T, N, Point<T, N>> {
+    pub fn face_aabb(&self, f: usize) -> Aabb<CgarF64, N, Point<CgarF64, N>> {
         let face = &self.faces[f];
         if face.removed || face.half_edge == usize::MAX || self.half_edges[face.half_edge].removed {
             // Return degenerate AABB for invalid faces
-            let origin = Point::<T, N>::from_vals(from_fn(|_| T::from(0)));
+            let origin = Point::<CgarF64, N>::from_vals(from_fn(|_| CgarF64::from(0)));
             return Aabb::from_points(&origin, &origin);
         }
 
@@ -661,7 +660,7 @@ impl_mesh! {
 
         // Safety checks
         if hes[1] >= self.half_edges.len() || hes[2] >= self.half_edges.len() {
-            let origin = Point::<T, N>::from_vals(from_fn(|_| T::from(0)));
+            let origin = Point::<CgarF64, N>::from_vals(from_fn(|_| CgarF64::from(0)));
             return Aabb::from_points(&origin, &origin);
         }
 
@@ -674,7 +673,7 @@ impl_mesh! {
             || v1_idx >= self.vertices.len()
             || v2_idx >= self.vertices.len()
         {
-            let origin = Point::<T, N>::from_vals(from_fn(|_| T::from(0)));
+            let origin = Point::<CgarF64, N>::from_vals(from_fn(|_| CgarF64::from(0)));
             return Aabb::from_points(&origin, &origin);
         }
 
@@ -770,7 +769,7 @@ impl_mesh! {
 
     pub fn split_edge(
         &mut self,
-        aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
+        aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
         he: usize,
         pos: &Point<T, N>,
     ) -> Result<SplitResult, &'static str>
@@ -1112,18 +1111,10 @@ impl_mesh! {
 
     pub fn split_face(
         &mut self,
-        aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
+        aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
         face: usize,
         p: &Point<T, N>,
     ) -> Option<SplitResult>
-    where
-        T: Scalar,
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
     {
         let face = self.find_valid_face(face, p);
         if self.faces[face].removed {
@@ -1488,7 +1479,7 @@ impl_mesh! {
             // Robust degenerate test using kernel
             if kernel::triangle_is_degenerate::<T, N>(
                 // construct a temporary Point<T,N> from (axp, ayp, azp) in-place style
-                &Point::from_vals(from_fn(|i| arr[i].clone())),
+                &Point::<T, N>::from_vals(from_fn(|i| arr[i].clone())),
                 b,
                 c,
             ) {
@@ -1543,8 +1534,9 @@ pub fn compute_triangle_aabb<T: Scalar, const N: usize>(
     p0: &Point<T, N>,
     p1: &Point<T, N>,
     p2: &Point<T, N>,
-) -> Aabb<T, N, Point<T, N>>
+) -> Aabb<CgarF64, N, Point<CgarF64, N>>
 where
+    T: Into<CgarF64>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -1573,5 +1565,8 @@ where
         }
     }
 
-    Aabb::from_points(&Point::from_vals(min_coords), &Point::from_vals(max_coords))
+    Aabb::from_points(
+        &Point::from_vals(min_coords.into()),
+        &Point::from_vals(max_coords.into()),
+    )
 }

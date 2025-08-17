@@ -207,7 +207,7 @@ where
     }
 
     fn as_vector(&self) -> Self::Vector {
-        Vector(Point::from_vals([self[0].clone(), self[1].clone()]))
+        Vector(Point::<T, 2>::from_vals([self[0].clone(), self[1].clone()]))
     }
 
     fn add_vector(&self, v: &Self::Vector) -> Self
@@ -220,7 +220,7 @@ where
     }
 
     fn vector_to(&self, other: &Self) -> Self::Vector {
-        Vector(Point::from_vals([
+        Vector(Point::<T, 2>::from_vals([
             &other[0] - &self[0],
             &other[1] - &self[1],
         ]))
@@ -268,7 +268,7 @@ where
     }
 
     fn as_vector(&self) -> Self::Vector {
-        Vector(Point::from_vals([
+        Vector(Point::<T, 3>::from_vals([
             self[0].clone(),
             self[1].clone(),
             self[2].clone(),
@@ -285,7 +285,7 @@ where
     }
 
     fn vector_to(&self, other: &Self) -> Self::Vector {
-        Vector(Point::from_vals([
+        Vector(Point::<T, 3>::from_vals([
             &other[0] - &self[0],
             &other[1] - &self[1],
             &other[2] - &self[2],

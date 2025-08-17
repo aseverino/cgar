@@ -24,7 +24,7 @@ use num_traits::ToPrimitive;
 
 use crate::{
     geometry::util::EPS,
-    numeric::{cgar_rational::CgarRational, scalar::Scalar},
+    numeric::{cgar_rational::CgarRational, lazy_exact::LazyExact, scalar::Scalar},
     operations::{Abs, One},
 };
 
@@ -193,6 +193,12 @@ impl From<rug::Rational> for CgarF64 {
 impl From<CgarRational> for CgarF64 {
     fn from(value: CgarRational) -> Self {
         CgarF64(value.0.to_f64())
+    }
+}
+
+impl From<LazyExact> for CgarF64 {
+    fn from(value: LazyExact) -> Self {
+        value.approx()
     }
 }
 

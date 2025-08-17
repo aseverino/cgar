@@ -23,7 +23,7 @@
 use num_traits::ToPrimitive;
 
 use crate::{
-    numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational},
+    numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational, lazy_exact::LazyExact},
     operations::*,
 };
 
@@ -44,9 +44,6 @@ pub trait Scalar:
     + for<'a> SubAssign<&'a Self>
     + Debug
     + Abs
-    // + Pow
-    // + Round
-    // + Sqrt
     + Zero
     + One
     + Neg<Output = Self>
@@ -60,6 +57,8 @@ pub trait Scalar:
     + From<rug::Rational>
     + From<CgarF64>
     + From<CgarRational>
+    + From<LazyExact>
+    + Into<CgarF64>
 {
     fn min(self, other: Self) -> Self {
         if self < other { self } else { other }

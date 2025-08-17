@@ -24,7 +24,7 @@ use num_traits::ToPrimitive;
 use rug::{Rational, ops::Pow};
 
 use crate::{
-    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    numeric::{cgar_f64::CgarF64, lazy_exact::LazyExact, scalar::Scalar},
     operations::Abs,
 };
 
@@ -195,6 +195,12 @@ impl From<rug::Rational> for CgarRational {
 impl From<rug::Float> for CgarRational {
     fn from(value: rug::Float) -> Self {
         CgarRational(value.to_rational().expect("Invalid Float value"))
+    }
+}
+
+impl From<LazyExact> for CgarRational {
+    fn from(value: LazyExact) -> Self {
+        value.exact()
     }
 }
 

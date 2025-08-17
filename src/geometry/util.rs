@@ -206,12 +206,12 @@ where
         // parameter t along BC
         let t = (&d4 - &d3) / ((&d4 - &d3) + (&d5 - &d6));
         // B + t*(C–B)
-        let proj = Point::from_vals([
+        let proj = Point::<T, 3>::from_vals([
             &b[0] + &(&(&c[0] - &b[0]) * &t),
             &b[1] + &(&(&c[1] - &b[1]) * &t),
             &b[2] + &(&(&c[2] - &b[2]) * &t),
         ]);
-        let diff = Point::from_vals([&p[0] - &proj[0], &p[1] - &proj[1], &p[2] - &proj[2]]);
+        let diff = Point::<T, 3>::from_vals([&p[0] - &proj[0], &p[1] - &proj[1], &p[2] - &proj[2]]);
         return &diff[0] * &diff[0] + &diff[1] * &diff[1] + &diff[2] * &diff[2];
     }
 

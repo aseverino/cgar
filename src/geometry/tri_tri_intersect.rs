@@ -570,7 +570,7 @@ fn coplanar_axes<T: Scalar, const N: usize>(n: &Vector<T, N>) -> (usize, usize, 
 
 /// Project a 3D point onto a 2D plane using the provided axes.
 fn project_to_2d<T: Scalar, const N: usize>(p: &Point<T, N>, i0: usize, i1: usize) -> Point2<T> {
-    Point2::from_vals([p[i0].clone(), p[i1].clone()])
+    Point2::<T>::from_vals([p[i0].clone(), p[i1].clone()])
 }
 
 /// Back-project a 2D point into 3D, using a reference 3D point for the dropped axis.
@@ -696,8 +696,8 @@ where
     let lerp3 = |t: &T| {
         let ox = &dx * t;
         let oy = &dy * t;
-        let p2 = Point2::from_vals([&a[0] + &ox, &a[1] + &oy]);
-        back_project_to_3d(&p2, i0, i1, drop, a3) // drop axis from a3
+        let p2 = Point2::<T>::from_vals([&a[0] + &ox, &a[1] + &oy]);
+        back_project_to_3d::<T, N>(&p2, i0, i1, drop, a3) // drop axis from a3
     };
     let pa = lerp3(&t0);
     let pb = lerp3(&t1);

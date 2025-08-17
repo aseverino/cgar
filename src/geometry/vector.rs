@@ -58,7 +58,7 @@ impl<T: Scalar, const N: usize> SpatialElement<T, N> for Vector<T, N> {
     where
         V: Into<T>,
     {
-        Vector(Point::from_vals(vals.map(|v| v.into())))
+        Vector(Point::<T, N>::from_vals(vals.map(|v| v.into())))
     }
 
     fn coords(&self) -> &[T; N] {
@@ -175,7 +175,7 @@ where
     }
 
     fn scale(&self, s: &T) -> Self {
-        Self::from(Point::from_vals([&self[0] * &s, &self[1] * &s]))
+        Self::from(Point::<T, 2>::from_vals([&self[0] * &s, &self[1] * &s]))
     }
 
     fn axpy(&mut self, a: &T, x: &Self) {
@@ -209,7 +209,7 @@ where
     }
 
     fn cross(&self, o: &Self) -> Self::Cross {
-        Vector::from(Point::from_vals([
+        Vector::from(Point::<T, 3>::from_vals([
             &(&self[1] * &o[2]) - &(&self[2] * &o[1]),
             &(&self[2] * &o[0]) - &(&self[0] * &o[2]),
             &(&self[0] * &o[1]) - &(&self[1] * &o[0]),
@@ -217,7 +217,7 @@ where
     }
 
     fn scale(&self, s: &T) -> Self {
-        Self::from(Point::from_vals([
+        Self::from(Point::<T, 3>::from_vals([
             &self[0] * &s,
             &self[1] * &s,
             &self[2] * &s,
@@ -333,7 +333,7 @@ where
     type Output = Self;
 
     fn neg(self) -> Self {
-        Vector::from(Point::from_vals(from_fn(|i| {
+        Vector::from(Point::<T, N>::from_vals(from_fn(|i| {
             &self[i] * &T::from_num_den(-1, 1)
         })))
     }

@@ -184,18 +184,18 @@ where
     let q2 = &seg2.b;
 
     // Direction vectors
-    let d1 = Vector3::from(Point3::from_vals([
+    let d1 = Vector3::<T>::from(Point3::<T>::from_vals([
         &p2[0] - &p1[0],
         &p2[1] - &p1[1],
         &p2[2] - &p1[2],
     ]));
-    let d2 = Vector3::from(Point3::from_vals([
+    let d2 = Vector3::<T>::from(Point3::<T>::from_vals([
         &q2[0] - &q1[0],
         &q2[1] - &q1[1],
         &q2[2] - &q1[2],
     ]));
 
-    let r = Vector3::from(Point3::from_vals([
+    let r = Vector3::<T>::from(Point3::<T>::from_vals([
         &p1[0] - &q1[0],
         &p1[1] - &q1[1],
         &p1[2] - &q1[2],
@@ -246,7 +246,7 @@ where
     };
 
     // Compute closest points on each segment
-    let s_clamped = if s < zero {
+    let s_clamped: T = if s < zero {
         zero.clone()
     } else if s > T::from(1) {
         T::from(1)
@@ -262,13 +262,13 @@ where
         t
     };
 
-    let closest_p = Point3::from_vals([
+    let closest_p = Point3::<T>::from_vals([
         &p1[0] + &(&d1[0] * &s_clamped),
         &p1[1] + &(&d1[1] * &s_clamped),
         &p1[2] + &(&d1[2] * &s_clamped),
     ]);
 
-    let closest_q = Point3::from_vals([
+    let closest_q = Point3::<T>::from_vals([
         &q1[0] + &(&d2[0] * &t_clamped),
         &q1[1] + &(&d2[1] * &t_clamped),
         &q1[2] + &(&d2[2] * &t_clamped),

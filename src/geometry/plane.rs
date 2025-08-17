@@ -77,13 +77,13 @@ where
         if n[2].abs().is_positive() {
             // solve for z: n·x = d → z = (d - n.x * 0 - n.y * 0) / n.z
             let z = &(&-(&self.d) / (&n[2]));
-            Point::from_vals([zero.clone(), zero.clone(), z.clone()])
+            Point::<T, 3>::from_vals([zero.clone(), zero.clone(), z.clone()])
         } else if n[1].abs().is_positive() {
             let y = &-&self.d / &n[1];
-            Point::from_vals([zero.clone(), y, zero.clone()])
+            Point::<T, 3>::from_vals([zero.clone(), y, zero.clone()])
         } else if n[0].abs().is_positive() {
             let x = &-&self.d / &n[0];
-            Point::from_vals([x, zero.clone(), zero.clone()])
+            Point::<T, 3>::from_vals([x, zero.clone(), zero.clone()])
         } else {
             panic!("Invalid plane: zero normal");
         }

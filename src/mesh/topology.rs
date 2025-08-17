@@ -41,7 +41,7 @@ use crate::{
     impl_mesh,
     kernel::{self, predicates::TrianglePoint},
     mesh::basic_types::{Mesh, PairRing, PointInMeshResult, RayCastResult, Triangle, VertexRing},
-    numeric::scalar::Scalar,
+    numeric::{cgar_f64::CgarF64, scalar::Scalar},
     operations::Zero,
 };
 
@@ -115,16 +115,19 @@ impl_mesh! {
 
     pub fn faces_containing_point_aabb(
         &self,
-        aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
+        aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
         p: &Point<T, N>,
     ) -> Vec<usize>
-    where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>, {
+    where
+        T: Into<CgarF64>,
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    {
         let tolerance = T::query_tolerance();
 
         // **OPTIMIZED: Tighter query AABB**
         let query_aabb = Aabb::from_points(
-            &Point::<T, N>::from_vals(from_fn(|i| &p[i] - &tolerance)),
-            &Point::<T, N>::from_vals(from_fn(|i| &p[i] + &tolerance)),
+            &Point::<CgarF64, N>::from_vals(from_fn(|i| (&p[i] - &tolerance).into())),
+            &Point::<CgarF64, N>::from_vals(from_fn(|i| (&p[i] + &tolerance).into())),
         );
 
         let mut candidates = Vec::new();
@@ -135,8 +138,8 @@ impl_mesh! {
             // Try with much larger search radius before rebuilding
             let large_tolerance = T::tolerance() * T::from(100.0);
             let large_query_aabb = Aabb::from_points(
-                &Point::<T, N>::from_vals(from_fn(|i| &p[i] - &large_tolerance)),
-                &Point::<T, N>::from_vals(from_fn(|i| &p[i] + &large_tolerance)),
+                &Point::<CgarF64, N>::from_vals(from_fn(|i| (&p[i] - &large_tolerance).into())),
+                &Point::<CgarF64, N>::from_vals(from_fn(|i| (&p[i] + &large_tolerance).into())),
             );
 
             aabb_tree.query(&large_query_aabb, &mut candidates);
@@ -418,9 +421,9 @@ impl_mesh! {
 
     pub fn point_in_mesh(
         &self,
-        tree: &AabbTree<T, N, Point<T, N>, usize>,
+        tree: &AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
         p: &Point<T, N>,
-    ) -> PointInMeshResult where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    ) -> PointInMeshResult where T: Into<CgarF64>, Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     {
         let mut inside_count = 0;
         let mut total_rays = 0;
@@ -436,12 +439,12 @@ impl_mesh! {
         ];
 
         let rays = vec![
-            Vector::from_vals(from_fn(|i| arr_rays[0][i].clone())),
-            Vector::from_vals(from_fn(|i| arr_rays[1][i].clone())),
-            Vector::from_vals(from_fn(|i| arr_rays[2][i].clone())),
-            Vector::from_vals(from_fn(|i| arr_rays[3][i].clone())),
-            Vector::from_vals(from_fn(|i| arr_rays[4][i].clone())),
-            Vector::from_vals(from_fn(|i| arr_rays[5][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[0][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[1][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[2][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[3][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[4][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[5][i].clone())),
         ];
 
         for r in rays {
@@ -474,19 +477,21 @@ impl_mesh! {
         &self,
         p: &Point<T, N>,
         dir: &Vector<T, N>,
-        tree: &AabbTree<T, N, Point<T, N>, usize>,
+        tree: &AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
     ) -> Option<RayCastResult>
-    where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    where
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     {
         let mut hits: Vec<T> = Vec::new();
         let mut touches_surface = false;
 
         // Create ray AABB for tree query
         let far_multiplier = T::from(1000.0);
-        let far_point = Point::<T, N>::from_vals(from_fn(|i|
-            &p[i] + &(&dir[i] * &far_multiplier))
+        let far_point = Point::<CgarF64, N>::from_vals(from_fn(|i|
+            (&p[i] + &(&dir[i] * &far_multiplier))).into()
         );
-        let ray_aabb = Aabb::from_points(p, &far_point);
+        let p_f = Point::<CgarF64, N>::from_vals(from_fn(|i| p[i].clone().into()));
+        let ray_aabb = Aabb::<CgarF64, N, Point<CgarF64, N>>::from_points(&p_f, &far_point);
 
         // Query tree for faces that intersect ray
         let mut candidate_faces = Vec::new();
