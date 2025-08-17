@@ -21,6 +21,7 @@
 // SOFTWARE.
 
 use std::{
+    array::from_fn,
     collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
     ops::{Add, Div, Mul, Neg, Sub},
@@ -38,6 +39,7 @@ use crate::{
         vector::{Vector, VectorOps},
     },
     impl_mesh,
+    io::obj::write_obj,
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
@@ -86,16 +88,6 @@ where
         + std::ops::Div<&'a T, Output = T>
         + std::ops::Neg<Output = T>,
 {
-    fn filter_degenerate_segments(segments: &mut Vec<IntersectionSegment<T, N>>) {
-        let tolerance = T::tolerance();
-
-        // Only filter truly degenerate segments
-        segments.retain(|seg| {
-            let length = seg.segment.length();
-            if length < tolerance { false } else { true }
-        });
-    }
-
     fn classify_faces_inside_intersection_loops(
         &mut self,
         other: &Mesh<T, N>,
@@ -106,26 +98,20 @@ where
         // build adjacency & boundary‐map
         let adj = self.build_face_adjacency_graph();
 
-        let tree_b = AabbTree::<T, 3, _, _>::build(
+        let tree_b = AabbTree::<T, N, _, _>::build(
             (0..other.faces.len())
                 .map(|i| {
                     let aabb_n = other.face_aabb(i);
+                    let min = aabb_n.min();
+                    let max = aabb_n.max();
                     // Convert Aabb<T, N, Point<T, N>> to Aabb<T, 3, Point<T, 3>>
-                    let aabb3 = Aabb::<T, 3, Point<T, 3>>::from_points(
-                        &Point::<T, 3>::from_vals([
-                            aabb_n.min()[0].clone(),
-                            aabb_n.min()[1].clone(),
-                            aabb_n.min()[2].clone(),
-                        ]),
-                        &Point::<T, 3>::from_vals([
-                            aabb_n.max()[0].clone(),
-                            aabb_n.max()[1].clone(),
-                            aabb_n.max()[2].clone(),
-                        ]),
+                    let aabb3 = Aabb::<T, N, Point<T, N>>::from_points(
+                        &Point::<T, N>::from_vals(from_fn(|i| min[i].clone())),
+                        &Point::<T, N>::from_vals(from_fn(|i| max[i].clone())),
                     );
                     (aabb3, i)
                 })
-                .collect::<Vec<(Aabb<T, 3, Point<T, 3>>, usize)>>(),
+                .collect::<Vec<(Aabb<T, N, Point<T, N>>, usize)>>(),
         );
 
         let mut visited = vec![false; self.faces.len()];
@@ -138,8 +124,7 @@ where
                     continue;
                 }
                 let c = self.face_centroid(f).0;
-                let c3 = Point::<T, 3>::from_vals([c[0].clone(), c[1].clone(), c[2].clone()]);
-                match other.point_in_mesh(&tree_b, &c3) {
+                match other.point_in_mesh(&tree_b, &c) {
                     PointInMeshResult::Inside => inside[f] = true,
                     PointInMeshResult::OnSurface if include_on_surface => inside[f] = true,
                     _ => {}
@@ -717,6 +702,8 @@ where
                 );
             }
         }
+
+        let _ = write_obj(&result, "/mnt/v/cgar_meshes/a.obj");
 
         // Handle B faces based on operation
         match op {
@@ -1383,7 +1370,7 @@ where
     fn get_seed_face(
         a: &Mesh<T, N>,
         b: &Mesh<T, N>,
-        tree_b: &AabbTree<T, 3, Point<T, 3>, usize>,
+        tree_b: &AabbTree<T, N, Point<T, N>, usize>,
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
         boundary_faces: &HashSet<usize>,
         include_on_surface: bool,
@@ -1433,8 +1420,8 @@ where
                         continue;
                     }
                     let c = a.face_centroid(f).0;
-                    let c3 = Point::<T, 3>::from_vals([c[0].clone(), c[1].clone(), c[2].clone()]);
-                    let point_in_mesh = b.point_in_mesh(&tree_b, &c3);
+
+                    let point_in_mesh = b.point_in_mesh(&tree_b, &c);
                     if point_in_mesh == PointInMeshResult::Inside {
                         selected_face = f;
                         return true;

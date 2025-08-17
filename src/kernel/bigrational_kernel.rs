@@ -20,16 +20,84 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::geometry::{Point2, Segment2, Vector2};
-use crate::kernel::kernel::Kernel2;
-use crate::numeric::cgar_rational::CgarRational;
+use crate::{
+    geometry::{
+        Point3,
+        point::{Point, PointOps},
+        segment::Segment,
+        vector::{Vector, VectorOps},
+    },
+    kernel::{
+        kernel::{Kernel2, Kernel3},
+        orientation::orient,
+        predicates::{are_collinear, are_equal, is_point_on_segment},
+    },
+    numeric::cgar_rational::CgarRational,
+};
 
-/// Kernel using rug::Rational (arbitrary-precision rationals backed by GMP)
-pub struct BigRationalKernel;
+// pub struct BigRationalKernel;
 
-impl Kernel2 for BigRationalKernel {
-    type FT = CgarRational;
-    type Point2 = Point2<CgarRational>;
-    type Segment2 = Segment2<CgarRational>;
-    type Vector2 = Vector2<CgarRational>;
-}
+// impl Kernel2 for BigRationalKernel {
+//     type FT = CgarRational;
+//     type Point2 = Point<CgarRational, 2>;
+//     type Segment2 = Segment<CgarRational, 2>;
+//     type Vector2 = Vector<CgarRational, 2>;
+
+//     #[inline]
+//     fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> Self::FT {
+//         orient::<CgarRational, 2>(&[a.clone(), b.clone(), c.clone()])
+//     }
+
+//     #[inline]
+//     fn are_equal2(a: &Self::Point2, b: &Self::Point2) -> bool {
+//         are_equal(a, b)
+//     }
+
+//     #[inline]
+//     fn are_collinear2(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> bool {
+//         are_collinear(a, b, c)
+//     }
+
+//     #[inline]
+//     fn is_point_on_segment2(p: &Self::Point2, s: &Self::Segment2) -> bool {
+//         is_point_on_segment(p, s)
+//     }
+// }
+
+// impl Kernel3 for BigRationalKernel
+// where
+//     Point3<CgarRational>: PointOps<CgarRational, 3>,
+// {
+//     type FT = CgarRational;
+//     type Point3 = Point<CgarRational, 3>;
+//     type Segment3 = Segment<CgarRational, 3>;
+//     type Vector3 = Vector<CgarRational, 3>;
+
+//     #[inline]
+//     fn orient3d(
+//         a: &Self::Point3,
+//         b: &Self::Point3,
+//         c: &Self::Point3,
+//         d: &Self::Point3,
+//     ) -> Self::FT {
+//         let ab = (&b.clone() - a).as_vector();
+//         let ac = (&c.clone() - a).as_vector();
+//         let ad = (&d.clone() - a).as_vector();
+//         ab.cross(&ac).dot(&ad)
+//     }
+
+//     #[inline]
+//     fn are_equal3(a: &Self::Point3, b: &Self::Point3) -> bool {
+//         are_equal(a, b)
+//     }
+
+//     #[inline]
+//     fn are_collinear3(a: &Self::Point3, b: &Self::Point3, c: &Self::Point3) -> bool {
+//         are_collinear(a, b, c)
+//     }
+
+//     #[inline]
+//     fn is_point_on_segment3(p: &Self::Point3, s: &Self::Segment3) -> bool {
+//         is_point_on_segment(p, s)
+//     }
+// }

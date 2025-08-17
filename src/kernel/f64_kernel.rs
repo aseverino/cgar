@@ -20,31 +20,102 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::geometry::{Point2, Segment2, Vector2};
-use crate::kernel::kernel::Kernel2;
-use crate::numeric::cgar_f64::CgarF64;
+use crate::{
+    geometry::{
+        Point3,
+        point::{Point, PointOps},
+        segment::Segment,
+        vector::{Vector, VectorOps},
+    },
+    kernel::{
+        kernel::{Kernel2, Kernel3},
+        orientation::orient,
+        predicates::{are_collinear, are_equal, is_point_on_segment, point_u_on_segment},
+    },
+    numeric::cgar_f64::CgarF64,
+};
 
 pub struct F64Kernel;
 
 impl Kernel2 for F64Kernel {
     type FT = CgarF64;
-    type Point2 = Point2<CgarF64>;
-    type Segment2 = Segment2<CgarF64>;
-    type Vector2 = Vector2<CgarF64>;
+    type Point2 = Point<CgarF64, 2>;
+    type Segment2 = Segment<CgarF64, 2>;
+    type Vector2 = Vector<CgarF64, 2>;
 
-    // fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> f64 {
-    //     orient2d(a, b, c)
-    // }
+    #[inline]
+    fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> Self::FT {
+        orient::<CgarF64, 2>(&[a.clone(), b.clone(), c.clone()])
+    }
 
-    // fn are_equal(a: &Self::Point2, b: &Self::Point2, eps: f64) -> bool {
-    //     are_equal(a, b, &eps)
-    // }
+    #[inline]
+    fn are_equal2(a: &Self::Point2, b: &Self::Point2) -> bool {
+        are_equal(a, b)
+    }
 
-    // fn are_collinear(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2, eps: f64) -> bool {
-    //     are_collinear(a, b, c, &eps)
-    // }
+    #[inline]
+    fn are_collinear2(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> bool {
+        are_collinear(a, b, c)
+    }
 
-    // fn is_point_on_segment(p: &Self::Point2, s: &Self::Segment2, eps: f64) -> bool {
-    //     is_point_on_segment(p, s, &eps)
-    // }
+    #[inline]
+    fn is_point_on_segment2(p: &Self::Point2, s: &Self::Segment2) -> bool {
+        is_point_on_segment(p, s)
+    }
+
+    #[inline]
+    fn point_u_on_segment2(
+        a: &Self::Point2,
+        b: &Self::Point2,
+        p: &Self::Point2,
+    ) -> Option<Self::FT> {
+        point_u_on_segment(a, b, p)
+    }
+}
+
+impl Kernel3 for F64Kernel
+where
+    Point3<CgarF64>: PointOps<CgarF64, 3>,
+{
+    type FT = CgarF64;
+    type Point3 = Point<CgarF64, 3>;
+    type Segment3 = Segment<CgarF64, 3>;
+    type Vector3 = Vector<CgarF64, 3>;
+
+    #[inline]
+    fn orient3d(
+        a: &Self::Point3,
+        b: &Self::Point3,
+        c: &Self::Point3,
+        d: &Self::Point3,
+    ) -> Self::FT {
+        let ab = (&b.clone() - a).as_vector();
+        let ac = (&c.clone() - a).as_vector();
+        let ad = (&d.clone() - a).as_vector();
+        ab.cross(&ac).dot(&ad)
+    }
+
+    #[inline]
+    fn are_equal3(a: &Self::Point3, b: &Self::Point3) -> bool {
+        are_equal(a, b)
+    }
+
+    #[inline]
+    fn are_collinear3(a: &Self::Point3, b: &Self::Point3, c: &Self::Point3) -> bool {
+        are_collinear(a, b, c)
+    }
+
+    #[inline]
+    fn is_point_on_segment3(p: &Self::Point3, s: &Self::Segment3) -> bool {
+        is_point_on_segment(p, s)
+    }
+
+    #[inline]
+    fn point_u_on_segment3(
+        a: &Self::Point3,
+        b: &Self::Point3,
+        p: &Self::Point3,
+    ) -> Option<Self::FT> {
+        point_u_on_segment(a, b, p)
+    }
 }

@@ -20,10 +20,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::geometry::point::Point;
+use crate::geometry::point::PointOps;
 use crate::geometry::segment::Segment;
+use crate::geometry::vector::VectorOps;
+use crate::geometry::{point::Point, vector::Vector};
 use crate::numeric::scalar::Scalar;
 use std::ops::{Add, Div, Mul, Sub};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TrianglePoint {
+    Off,
+    On,
+    In,
+}
 
 pub fn are_equal<T: Scalar, const N: usize>(p1: &Point<T, N>, p2: &Point<T, N>) -> bool
 where
@@ -71,6 +80,21 @@ where
     true
 }
 
+pub fn triangle_is_degenerate<T: Scalar, const N: usize>(
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    c: &Point<T, N>,
+) -> bool
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    // Coincidence or collinearity → zero area
+    are_equal(a, b) || are_equal(a, c) || are_equal(b, c) || are_collinear(a, b, c)
+}
+
 pub fn is_point_on_segment<T, const N: usize>(p: &Point<T, N>, seg: &Segment<T, N>) -> bool
 where
     T: Scalar,
@@ -100,4 +124,102 @@ where
     }
 
     true
+}
+
+pub fn point_u_on_segment<T: Scalar + PartialOrd, const N: usize>(
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    p: &Point<T, N>,
+) -> Option<T>
+where
+    Point<T, N>: PointOps<T, N, Vector = crate::geometry::vector::Vector<T, N>>,
+    crate::geometry::vector::Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    // Direction and offset
+    let ab = (b - a).as_vector();
+    let ap = (p - a).as_vector();
+
+    // Degenerate segment?
+    let ab2 = ab.dot(&ab);
+    if ab2.is_zero() {
+        return if are_equal(a, p) {
+            Some(T::zero())
+        } else if are_equal(b, p) {
+            Some(T::one())
+        } else {
+            None
+        };
+    }
+
+    // Must be collinear with AB
+    if !are_collinear(a, b, p) {
+        return None;
+    }
+
+    // Parametric coordinate along AB
+    let u = ap.dot(&ab) / ab2;
+    if u < T::zero() || u > T::one() {
+        None
+    } else {
+        Some(u)
+    }
+}
+
+pub fn point_in_or_on_triangle<T: Scalar, const N: usize>(
+    p: &Point<T, N>,
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    c: &Point<T, N>,
+) -> TrianglePoint
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    // Barycentric setup
+    let v0 = (c - a).as_vector();
+    let v1 = (b - a).as_vector();
+    let v2 = (p - a).as_vector();
+
+    let dot00 = v0.dot(&v0);
+    let dot01 = v0.dot(&v1);
+    let dot02 = v0.dot(&v2);
+    let dot11 = v1.dot(&v1);
+    let dot12 = v1.dot(&v2);
+
+    let denom = &dot00 * &dot11 - &dot01 * &dot01;
+
+    // Degenerate triangle (zero/near-zero area)
+    if denom.abs() < T::tolerance() {
+        return TrianglePoint::Off;
+    }
+
+    let inv = T::one() / denom;
+    let u = &(&dot11 * &dot02 - &dot01 * &dot12) * &inv;
+    let v = &(&dot00 * &dot12 - &dot01 * &dot02) * &inv;
+    let sum_uv = &u + &v;
+    let w = &T::one() - &sum_uv;
+
+    // Classification with tolerance
+    let e = T::tolerance();
+    let neg_e = e.clone().neg();
+
+    // Outside if any barycentric is below -eps or u+v exceeds 1+eps
+    if u < neg_e || v < neg_e || sum_uv > &T::one() + &e {
+        return TrianglePoint::Off;
+    }
+
+    // On if any barycentric is within eps of the boundary
+    if u <= e || v <= e || w <= e {
+        return TrianglePoint::On;
+    }
+
+    TrianglePoint::In
 }

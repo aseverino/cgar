@@ -39,7 +39,8 @@ use crate::{
         vector::*,
     },
     impl_mesh,
-    mesh::basic_types::{Mesh, PairRing, PointInMeshResult, RayCastResult, VertexRing},
+    kernel::{self, predicates::TrianglePoint},
+    mesh::basic_types::{Mesh, PairRing, PointInMeshResult, RayCastResult, Triangle, VertexRing},
     numeric::scalar::Scalar,
     operations::Zero,
 };
@@ -78,7 +79,7 @@ impl_mesh! {
     }
 
     pub fn plane_from_face(&self, face_idx: usize) -> Plane<T, N> where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,{
-        let verts = self.face_vertices(face_idx); // [usize; 3]
+        let verts = self.face_vertices(face_idx); // [usize; N]
         let v0 = &self.vertices[verts[0]].position;
         let v1 = &self.vertices[verts[1]].position;
         let v2 = &self.vertices[verts[2]].position;
@@ -87,30 +88,30 @@ impl_mesh! {
     }
 
     /// Find existing vertex near position using spatial hash
-    fn find_nearby_vertex(&self, pos: &Point<T, N>, tolerance: T) -> Option<usize>
-    {
-        let center_key = self.position_to_hash_key(pos);
+    // fn find_nearby_vertex(&self, pos: &Point<T, N>, tolerance: T) -> Option<usize>
+    // {
+    //     let center_key = self.position_to_hash_key(pos);
 
-        // Check center cell and 26 neighboring cells (3x3x3 grid)
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for dz in -1..=1 {
-                    let key = (center_key.0 + dx, center_key.1 + dy, center_key.2 + dz);
+    //     // Check center cell and 26 neighboring cells (3x3x3 grid)
+    //     for dx in -1..=1 {
+    //         for dy in -1..=1 {
+    //             for dz in -1..=1 {
+    //                 let key = (center_key.0 + dx, center_key.1 + dy, center_key.2 + dz);
 
-                    if let Some(candidates) = self.vertex_spatial_hash.get(&key) {
-                        for &vi in candidates {
-                            if vi < self.vertices.len()
-                                && self.vertices[vi].position.distance_to(pos) < tolerance
-                            {
-                                return Some(vi);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
+    //                 if let Some(candidates) = self.vertex_spatial_hash.get(&key) {
+    //                     for &vi in candidates {
+    //                         if vi < self.vertices.len()
+    //                             && self.vertices[vi].position.distance_to(pos) < tolerance
+    //                         {
+    //                             return Some(vi);
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     None
+    // }
 
     pub fn faces_containing_point_aabb(
         &self,
@@ -209,7 +210,7 @@ impl_mesh! {
                 continue;
             }
 
-            if point_in_triangle(p, a, b, c) {
+            if kernel::point_in_or_on_triangle(p, a, b, c) == TrianglePoint::In {
                 result.push(*face_idx);
             }
         }
@@ -392,7 +393,7 @@ impl_mesh! {
         let start = &self.vertices[self.half_edges[self.half_edges[he].prev].vertex].position;
         let end = &self.vertices[self.half_edges[he].vertex].position;
 
-        point_on_segment(start, end, p)
+        kernel::point_u_on_segment(start, end, p)
     }
 
     pub fn segment_from_half_edge(&self, he: usize) -> Segment<T, N> {
@@ -418,21 +419,30 @@ impl_mesh! {
 
     pub fn point_in_mesh(
         &self,
-        tree: &AabbTree<T, 3, Point<T, 3>, usize>,
-        p: &Point<T, 3>,
-    ) -> PointInMeshResult
+        tree: &AabbTree<T, N, Point<T, N>, usize>,
+        p: &Point<T, N>,
+    ) -> PointInMeshResult where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     {
         let mut inside_count = 0;
         let mut total_rays = 0;
         let mut on_surface = false;
 
+        let arr_rays = [
+            [T::one(), T::zero(), T::zero()],
+            [T::zero(), T::one(), T::zero()],
+            [T::zero(), T::zero(), T::one()],
+            [T::from(-1.0), T::zero(), T::zero()],
+            [T::zero(), T::from(-1.0), T::zero()],
+            [T::zero(), T::zero(), T::from(-1.0)],
+        ];
+
         let rays = vec![
-            Vector::from_vals([T::one(), T::zero(), T::zero()]),
-            Vector::from_vals([T::zero(), T::one(), T::zero()]),
-            Vector::from_vals([T::zero(), T::zero(), T::one()]),
-            Vector::from_vals([T::from(-1.0), T::zero(), T::zero()]),
-            Vector::from_vals([T::zero(), T::from(-1.0), T::zero()]),
-            Vector::from_vals([T::zero(), T::zero(), T::from(-1.0)]),
+            Vector::from_vals(from_fn(|i| arr_rays[0][i].clone())),
+            Vector::from_vals(from_fn(|i| arr_rays[1][i].clone())),
+            Vector::from_vals(from_fn(|i| arr_rays[2][i].clone())),
+            Vector::from_vals(from_fn(|i| arr_rays[3][i].clone())),
+            Vector::from_vals(from_fn(|i| arr_rays[4][i].clone())),
+            Vector::from_vals(from_fn(|i| arr_rays[5][i].clone())),
         ];
 
         for r in rays {
@@ -463,21 +473,20 @@ impl_mesh! {
 
     fn cast_ray(
         &self,
-        p: &Point<T, 3>,
-        dir: &Vector<T, 3>,
-        tree: &AabbTree<T, 3, Point<T, 3>, usize>,
+        p: &Point<T, N>,
+        dir: &Vector<T, N>,
+        tree: &AabbTree<T, N, Point<T, N>, usize>,
     ) -> Option<RayCastResult>
+    where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     {
         let mut hits: Vec<T> = Vec::new();
         let mut touches_surface = false;
 
         // Create ray AABB for tree query
         let far_multiplier = T::from(1000.0);
-        let far_point = Point::<T, 3>::from_vals([
-            &p[0] + &(&dir[0] * &far_multiplier),
-            &p[1] + &(&dir[1] * &far_multiplier),
-            &p[2] + &(&dir[2] * &far_multiplier),
-        ]);
+        let far_point = Point::<T, N>::from_vals(from_fn(|i|
+            &p[i] + &(&dir[i] * &far_multiplier))
+        );
         let ray_aabb = Aabb::from_points(p, &far_point);
 
         // Query tree for faces that intersect ray
@@ -489,17 +498,20 @@ impl_mesh! {
             let vs_idxs = self.face_vertices(*fi);
 
             // Use references to existing vertex positions
-            let v0 = &self.vertices[vs_idxs[0]].position;
-            let v1 = &self.vertices[vs_idxs[1]].position;
-            let v2 = &self.vertices[vs_idxs[2]].position;
+            let vs = [ &self.vertices[vs_idxs[0]].position,
+            &self.vertices[vs_idxs[1]].position,
+            &self.vertices[vs_idxs[2]].position ];
 
-            if let Some(t) = self.ray_triangle_intersection(&p.coords(), dir, [v0, v1, v2]) {
-                if t.abs() <= T::tolerance() {
-                    touches_surface = true;
-                } else if t > T::tolerance() {
-                    hits.push(t);
+            if N == 3 {
+                if let Some(t) = ray_triangle_intersection(&p, &dir, from_fn(|i| vs[i])) {
+                    if t.abs() <= T::tolerance() {
+                        touches_surface = true;
+                    } else if t > T::tolerance() {
+                        hits.push(t);
+                    }
                 }
             }
+
         }
 
         if hits.is_empty() {
@@ -535,79 +547,6 @@ impl_mesh! {
         } else {
             None
         }
-    }
-
-    /// Robust ray-triangle intersection using Möller-Trumbore algorithm
-    fn ray_triangle_intersection(
-        &self,
-        ray_origin: &[T; 3],
-        ray_dir: &Vector<T, 3>,
-        triangle: [&Point<T, N>; 3],
-    ) -> Option<T>
-    {
-        // Triangle vertices
-        let v0 = triangle[0];
-        let v1 = triangle[1];
-        let v2 = triangle[2];
-
-        // Triangle edges
-        let edge1 = Vector::<T, 3>::from_vals([&v1[0] - &v0[0], &v1[1] - &v0[1], &v1[2] - &v0[2]]);
-
-        let edge2 = Vector::<T, 3>::from_vals([&v2[0] - &v0[0], &v2[1] - &v0[1], &v2[2] - &v0[2]]);
-
-        // Cross product: ray_dir x edge2
-        let h = Vector::<T, 3>::from_vals([
-            &ray_dir[1] * &edge2[2] - &ray_dir[2] * &edge2[1],
-            &ray_dir[2] * &edge2[0] - &ray_dir[0] * &edge2[2],
-            &ray_dir[0] * &edge2[1] - &ray_dir[1] * &edge2[0],
-        ]);
-
-        // Determinant
-        let a = edge1.dot(&h);
-
-        if a.abs().is_zero() {
-            return None; // Ray is parallel to triangle
-        }
-
-        let f = T::one() / a;
-
-        // Vector from v0 to ray origin
-        let s = Vector::<T, 3>::from_vals([
-            &ray_origin[0] - &v0[0],
-            &ray_origin[1] - &v0[1],
-            &ray_origin[2] - &v0[2],
-        ]);
-
-        // Calculate u parameter
-        let u = &f * &s.dot(&h);
-
-        if u < T::zero() || u > T::one() {
-            return None; // Intersection outside triangle
-        }
-
-        // Cross product: s x edge1
-        let q = Vector::<T, 3>::from_vals([
-            &s[1] * &edge1[2] - &s[2] * &edge1[1],
-            &s[2] * &edge1[0] - &s[0] * &edge1[2],
-            &s[0] * &edge1[1] - &s[1] * &edge1[0],
-        ]);
-
-        // Calculate v parameter
-        let v = &f * &ray_dir.dot(&q);
-
-        if v < T::zero() || &u + &v > T::one() {
-            return None; // Intersection outside triangle
-        }
-
-        // Calculate t parameter (distance along ray)
-        let t = &f * &edge2.dot(&q);
-        Some(t)
-
-        // if t.is_positive() {
-        //     Some(t) // Valid intersection
-        // } else {
-        //     None // Intersection behind ray origin or too close
-        // }
     }
 
     pub fn faces_around_face(&self, face: usize) -> [usize; 3] {
@@ -803,7 +742,7 @@ impl_mesh! {
             let ps = &self.vertices[src].position;
             let pd = &self.vertices[dst].position;
             // Is point on segment [ps, pd]?
-            if let Some(u) = point_position_on_segment(ps, pd, point) {
+            if let Some(u) = kernel::point_u_on_segment(ps, pd, point) {
                 return Some((he, u));
             }
         }
@@ -828,12 +767,12 @@ impl_mesh! {
         if let Some(mapping) = self.face_split_map.get(&face_idx) {
             for tri in &mapping.new_faces {
                 let [i0, i1, i2] = tri.vertices;
-                if point_in_or_on_triangle(
+                if kernel::point_in_or_on_triangle(
                     point,
                     &self.vertices[i0].position,
                     &self.vertices[i1].position,
                     &self.vertices[i2].position,
-                ) {
+                ) != TrianglePoint::Off {
                     // recurse into that sub-face
                     return self.find_valid_face(tri.face_idx, point);
                 }
@@ -870,7 +809,7 @@ impl_mesh! {
                     let target = &self.vertices[self.half_edges[child_a].vertex].position;
                     let twin_he = self.find_valid_half_edge(self.half_edges[child_a].twin, target);
                     let origin = &self.vertices[self.half_edges[twin_he].vertex].position;
-                    if point_position_on_segment(origin, point_hint, target).is_some() {
+                    if kernel::point_u_on_segment(origin, point_hint, target).is_some() {
                         // println!("A find_valid_half_edge: Found valid half-edge {}", child_a);
                         he_idx = child_a;
                         continue;
@@ -881,7 +820,7 @@ impl_mesh! {
                     let target = &self.vertices[self.half_edges[child_b].vertex].position;
                     let twin_he = self.find_valid_half_edge(self.half_edges[child_b].twin, target);
                     let origin = &self.vertices[self.half_edges[twin_he].vertex].position;
-                    if point_position_on_segment(origin, point_hint, target).is_some() {
+                    if kernel::point_u_on_segment(origin, point_hint, target).is_some() {
                         // println!("B find_valid_half_edge: Found valid half-edge {}", child_b);
                         he_idx = child_b;
                         continue;
@@ -921,7 +860,7 @@ impl_mesh! {
         let v1 = &self.vertices[face_vertices[1]].position;
         let v2 = &self.vertices[face_vertices[2]].position;
 
-        if point_in_or_on_triangle(point, v0, v1, v2) {
+        if kernel::point_in_or_on_triangle(point, v0, v1, v2) != TrianglePoint::Off {
             barycentric_coords(point, v0, v1, v2)
         } else {
             None
@@ -1275,35 +1214,174 @@ impl_mesh! {
     }
 }
 
-fn ray_segment_intersection_2d<T: Scalar>(
-    ray_origin: &Point<T, 2>,
-    ray_dir: &Vector<T, 2>,
-    seg_a: &Point<T, 2>,
-    seg_b: &Point<T, 2>,
+pub fn ray_segment_intersection_2d<T>(
+    o: &crate::geometry::point::Point<T, 2>,
+    d: &crate::geometry::vector::Vector<T, 2>,
+    a: &crate::geometry::point::Point<T, 2>,
+    b: &crate::geometry::point::Point<T, 2>,
 ) -> Option<(T, T)>
 where
-    Point<T, 2>: PointOps<T, 2, Vector = Vector<T, 2>>,
-    Vector<T, 2>: VectorOps<T, 2, Cross = T>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
+    T: crate::numeric::scalar::Scalar + PartialOrd + Clone,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    let v1 = (ray_origin - seg_a).as_vector();
-    let v2 = (seg_b - seg_a).as_vector();
-    let v3 = Vector::new([-ray_dir[1].clone(), ray_dir[0].clone()]);
-
-    let denom = v2.dot(&v3);
-    if denom.abs().is_zero() {
-        return None; // parallel
+    // Ray direction must be non-zero
+    let rx = d[0].clone();
+    let ry = d[1].clone();
+    let rr = &rx * &rx + &ry * &ry;
+    if rr.is_zero() {
+        return None;
     }
 
-    let t = &v2.cross(&v1) / &denom;
-    let u = &v1.dot(&v3) / &denom;
+    // Segment direction s = b - a
+    let sx = &b[0] - &a[0];
+    let sy = &b[1] - &a[1];
 
-    if t.is_positive() && u.is_positive() && (&u - &T::one()).is_negative_or_zero() {
-        Some((t, u))
-    } else {
-        None
+    // Vector from ray origin to segment start q = a - o
+    let qx = &a[0] - &o[0];
+    let qy = &a[1] - &o[1];
+
+    // Cross products
+    let rxs = &rx * &sy - &ry * &sx;
+    let qxr = &qx * &ry - &qy * &rx; // cross(q, r)
+    let qxs = &qx * &sy - &qy * &sx; // cross(q, s)
+
+    // Parallel?
+    if rxs.is_zero() {
+        // Collinear if q x r == 0 (use kernel-backed collinearity to be safe)
+        // Faster short-circuit via cross check, then confirm with kernel to avoid false positives.
+        let collinear = qxr.is_zero()
+            && kernel::are_collinear(o, &(Point::<T, 2>::from([&o[0] + &rx, &o[1] + &ry])), a)
+            && kernel::are_collinear(o, &(Point::<T, 2>::from([&o[0] + &rx, &o[1] + &ry])), b);
+
+        if !collinear {
+            return None; // parallel disjoint
+        }
+
+        // Collinear overlap: project endpoints onto the ray to get [t0, t1] on the ray
+        // t = ((p - o) · r) / |r|^2
+        let t0 = &(&qx * &rx + &qy * &ry) / &rr;
+        let t1 = &t0 + &(&(&sx * &rx + &sy * &ry) / &rr);
+
+        let (tmin, tmax) = if t0 <= t1 { (t0, t1) } else { (t1, t0) };
+        if tmax < T::zero() {
+            return None; // entire segment lies behind the ray
+        }
+
+        // Hit point is the closest point along the ray that overlaps the segment
+        let t_hit = if tmin >= T::zero() { tmin } else { T::zero() };
+
+        // Compute intersection point p_hit = o + t_hit * r
+        let px = &o[0] + &(&rx * &t_hit);
+        let py = &o[1] + &(&ry * &t_hit);
+        let p_hit = crate::geometry::point::Point::<T, 2>::from([px, py]);
+
+        // Get segment parameter u in [0,1] using the kernel helper (handles degenerate [a==b] cleanly)
+        if let Some(u) = crate::kernel::point_u_on_segment(a, b, &p_hit) {
+            return Some((t_hit, u));
+        }
+        return None;
     }
+
+    // Skew lines: unique intersection
+    // Solve:
+    //   t = cross(q, s) / cross(r, s)
+    //   u = cross(q, r) / cross(r, s)
+    let t = &qxs / &rxs;
+    let u = &qxr / &rxs;
+
+    if t < T::zero() || u < T::zero() || u > T::one() {
+        return None;
+    }
+    Some((t, u))
+}
+
+#[derive(Debug)]
+enum RayTriCore<T> {
+    // Unique solution: the ray intersects the triangle's plane with well-defined (t,u,v)
+    Skew { t: T, u: T, v: T },
+    // Ray direction lies in the triangle plane; 'coplanar' reports if origin also lies in that plane
+    Parallel { coplanar: bool },
+    // Triangle is degenerate (edges don't span a 2D plane)
+    Degenerate,
+}
+
+/// Robust ray-triangle intersection using Möller-Trumbore algorithm
+fn ray_triangle_intersection<T: Scalar, const N: usize>(
+    ray_origin: &Point<T, N>,
+    ray_dir: &Vector<T, N>,
+    triangle: [&Point<T, N>; N],
+) -> Option<T>
+where
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    if N != 3 {
+        panic!("Currently, only 3 dimensions are supported.");
+    }
+    // Triangle vertices
+    let v0 = triangle[0];
+    let v1 = triangle[1];
+    let v2 = triangle[2];
+
+    // Triangle edges
+    let edge1 = Vector::<T, 3>::from_vals([&v1[0] - &v0[0], &v1[1] - &v0[1], &v1[2] - &v0[2]]);
+
+    let edge2 = Vector::<T, 3>::from_vals([&v2[0] - &v0[0], &v2[1] - &v0[1], &v2[2] - &v0[2]]);
+
+    // Cross product: ray_dir x edge2
+    let h = Vector::<T, 3>::from_vals([
+        &ray_dir[1] * &edge2[2] - &ray_dir[2] * &edge2[1],
+        &ray_dir[2] * &edge2[0] - &ray_dir[0] * &edge2[2],
+        &ray_dir[0] * &edge2[1] - &ray_dir[1] * &edge2[0],
+    ]);
+
+    // Determinant
+    let a = edge1.dot(&h);
+
+    if a.abs().is_zero() {
+        return None; // Ray is parallel to triangle
+    }
+
+    let f = T::one() / a;
+
+    // Vector from v0 to ray origin
+    let s = Vector::<T, 3>::from_vals([
+        &ray_origin[0] - &v0[0],
+        &ray_origin[1] - &v0[1],
+        &ray_origin[2] - &v0[2],
+    ]);
+
+    // Calculate u parameter
+    let u = &f * &s.dot(&h);
+
+    if u < T::zero() || u > T::one() {
+        return None; // Intersection outside triangle
+    }
+
+    // Cross product: s x edge1
+    let q = Vector::<T, 3>::from_vals([
+        &s[1] * &edge1[2] - &s[2] * &edge1[1],
+        &s[2] * &edge1[0] - &s[0] * &edge1[2],
+        &s[0] * &edge1[1] - &s[1] * &edge1[0],
+    ]);
+
+    let ray_dir_3 =
+        Vector::<T, 3>::from_vals([ray_dir[0].clone(), ray_dir[1].clone(), ray_dir[2].clone()]);
+
+    // Calculate v parameter
+    let v = &f * &ray_dir_3.dot(&q);
+
+    if v < T::zero() || &u + &v > T::one() {
+        return None; // Intersection outside triangle
+    }
+
+    // Calculate t parameter (distance along ray)
+    let t = &f * &edge2.dot(&q);
+    Some(t)
 }

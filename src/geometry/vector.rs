@@ -44,6 +44,7 @@ where
     fn norm_squared(&self) -> T;
     fn normalized(&self) -> Self;
     fn scale(&self, s: &T) -> Self;
+    fn axpy(&mut self, a: &T, x: &Self);
     fn any_perpendicular(&self) -> Vector<T, N>;
 }
 
@@ -192,6 +193,13 @@ where
         Self::from(Point::from_vals([&self[0] * &s, &self[1] * &s]))
     }
 
+    fn axpy(&mut self, a: &T, x: &Self) {
+        for i in 0..2 {
+            let ax_i = &x[i] * a;
+            self[i] = &self[i] + &ax_i;
+        }
+    }
+
     fn any_perpendicular(&self) -> Vector<T, 2> {
         unimplemented!("any_perpendicular is not implemented for 2D vectors");
     }
@@ -242,6 +250,13 @@ where
             &self[1] * &s,
             &self[2] * &s,
         ]))
+    }
+
+    fn axpy(&mut self, a: &T, x: &Self) {
+        for i in 0..3 {
+            let ax_i = &x[i] * a;
+            self[i] = &self[i] + &ax_i;
+        }
     }
 
     fn any_perpendicular(&self) -> Vector<T, 3> {

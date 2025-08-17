@@ -121,40 +121,6 @@ where
     None
 }
 
-pub fn point_in_or_on_triangle<T: Scalar, const N: usize>(
-    p: &Point<T, N>,
-    a: &Point<T, N>,
-    b: &Point<T, N>,
-    c: &Point<T, N>,
-) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // barycentric coordinates
-    let v0 = (c - a).as_vector();
-    let v1 = (b - a).as_vector();
-    let v2 = (p - a).as_vector();
-    let dot00 = v0.dot(&v0);
-    let dot01 = v0.dot(&v1);
-    let dot02 = v0.dot(&v2);
-    let dot11 = v1.dot(&v1);
-    let dot12 = v1.dot(&v2);
-
-    let inv = &T::one() / &(&dot00 * &dot11 - &dot01 * &dot01);
-    let u = &(&dot11 * &dot02 - &dot01 * &dot12) * &inv;
-    let v = &(&dot00 * &dot12 - &dot01 * &dot02) * &inv;
-
-    // allow on‐edge within small epsilon
-    let e = T::tolerance();
-    let neg_e = e.clone().neg();
-    u >= neg_e && v >= neg_e && u + v <= T::one() + e
-}
-
 /// Standard squared‐distance from a point to a triangle in 3D
 /// (see Christer Ericson, *Real-Time Collision Detection*)
 pub fn distance_point_triangle_squared<T: Scalar>(
@@ -418,43 +384,6 @@ where
     Some((u, v, w))
 }
 
-pub fn point_in_triangle<T: Scalar, const N: usize>(
-    p: &Point<T, N>,
-    a: &Point<T, N>,
-    b: &Point<T, N>,
-    c: &Point<T, N>,
-) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    let v0 = (c - a).as_vector();
-    let v1 = (b - a).as_vector();
-    let v2 = (p - a).as_vector();
-
-    let dot00 = v0.dot(&v0);
-    let dot01 = v0.dot(&v1);
-    let dot11 = v1.dot(&v1);
-    let dot02 = v0.dot(&v2);
-    let dot12 = v1.dot(&v2);
-
-    let denom = &dot00 * &dot11 - &dot01 * &dot01;
-    if denom.abs().is_zero() {
-        return false; // Degenerate triangle
-    }
-
-    let inv_denom = T::one() / denom;
-    let u = &(&dot11 * &dot02 - &dot01 * &dot12) * &inv_denom;
-    let v = &(&dot00 * &dot12 - &dot01 * &dot02) * &inv_denom;
-
-    let eps = T::tolerance();
-    u >= -eps.clone() && v >= -eps.clone() && (&u + &v) <= (T::one() + eps)
-}
-
 fn should_split_edge<T: Scalar>(edge_length: &T, split_point_distance: &T) -> bool
 where
     T: Scalar,
@@ -475,43 +404,43 @@ where
         && (edge_length - &split_point_distance) > min_split_distance
 }
 
-pub fn point_position_on_segment<T: Scalar, const N: usize>(
-    a: &Point<T, N>,
-    b: &Point<T, N>,
-    p: &Point<T, N>,
-) -> Option<T>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    let ab = (b - a).as_vector();
-    let ap = (p - a).as_vector();
+// pub fn point_position_on_segment<T: Scalar, const N: usize>(
+//     a: &Point<T, N>,
+//     b: &Point<T, N>,
+//     p: &Point<T, N>,
+// ) -> Option<T>
+// where
+//     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+//     Vector<T, N>: VectorOps<T, N>,
+//     for<'a> &'a T: Sub<&'a T, Output = T>
+//         + Mul<&'a T, Output = T>
+//         + Add<&'a T, Output = T>
+//         + Div<&'a T, Output = T>,
+// {
+//     let ab = (b - a).as_vector();
+//     let ap = (p - a).as_vector();
 
-    let ab_len_squared = ab.norm_squared();
-    if ab_len_squared.is_zero() {
-        return None; // segment is degenerate
-    }
+//     let ab_len_squared = ab.norm_squared();
+//     if ab_len_squared.is_zero() {
+//         return None; // segment is degenerate
+//     }
 
-    let u = ap.dot(&ab) / ab_len_squared;
+//     let u = ap.dot(&ab) / ab_len_squared;
 
-    // Reconstruct point on segment line
-    let proj = ab.scale(&u);
-    let rejection = &ap - &proj;
+//     // Reconstruct point on segment line
+//     let proj = ab.scale(&u);
+//     let rejection = &ap - &proj;
 
-    // If rejection is non-zero, p is not on the line
-    if rejection.norm_squared().is_zero()
-        && u.is_positive_or_zero()
-        && (&u - &T::one()).is_negative_or_zero()
-    {
-        Some(u)
-    } else {
-        None
-    }
-}
+//     // If rejection is non-zero, p is not on the line
+//     if rejection.norm_squared().is_zero()
+//         && u.is_positive_or_zero()
+//         && (&u - &T::one()).is_negative_or_zero()
+//     {
+//         Some(u)
+//     } else {
+//         None
+//     }
+// }
 
 /// Project `v` onto direction `d` (no sqrt). If `d` is near-zero, returns zero.
 #[inline]

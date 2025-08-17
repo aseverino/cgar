@@ -20,28 +20,54 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::operations::{Abs, Pow, Sqrt};
+// ...existing code...
+use crate::{
+    geometry::{
+        point::Point,
+        segment::Segment,
+        vector::{Vector, VectorOps},
+    },
+    numeric::scalar::Scalar,
+    operations::{Abs, Pow, Sqrt},
+};
 
 pub trait Kernel2 {
-    type FT: Clone + PartialOrd + Abs + Pow + Sqrt;
+    type FT: Scalar;
     type Point2;
     type Segment2;
     type Vector2;
 
-    // fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> Self::FT;
-    // fn are_equal(a: &Self::Point2, b: &Self::Point2, eps: Self::FT) -> bool;
-    // fn are_collinear(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2, eps: Self::FT) -> bool;
-    // fn is_point_on_segment(p: &Self::Point2, s: &Self::Segment2, eps: Self::FT) -> bool;
+    // Sign of oriented area (CCW>0, CW<0, 0 if collinear)
+    fn orient2d(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> Self::FT;
+
+    // Convenience predicates
+    fn are_equal2(a: &Self::Point2, b: &Self::Point2) -> bool;
+    fn are_collinear2(a: &Self::Point2, b: &Self::Point2, c: &Self::Point2) -> bool;
+    fn is_point_on_segment2(p: &Self::Point2, s: &Self::Segment2) -> bool;
+    fn point_u_on_segment2(
+        a: &Self::Point2,
+        b: &Self::Point2,
+        p: &Self::Point2,
+    ) -> Option<Self::FT>;
 }
 
 pub trait Kernel3 {
-    type FT: Clone + PartialOrd + Abs + Pow + Sqrt;
+    type FT: Scalar;
     type Point3;
     type Segment3;
     type Vector3;
 
-    // fn orient3d(a: &Self::Point3, b: &Self::Point3, c: &Self::Point3) -> Self::FT;
-    // fn are_equal(a: &Self::Point3, b: &Self::Point3, eps: Self::FT) -> bool;
-    // fn are_collinear(a: &Self::Point3, b: &Self::Point3, c: &Self::Point3, eps: Self::FT) -> bool;
-    // fn is_point_on_segment(p: &Self::Point3, s: &Self::Segment3, eps: Self::FT) -> bool;
+    // Signed volume of tetra (a,b,c,d): ((b-a) x (c-a)) · (d-a)
+    fn orient3d(a: &Self::Point3, b: &Self::Point3, c: &Self::Point3, d: &Self::Point3)
+    -> Self::FT;
+
+    // Convenience predicates
+    fn are_equal3(a: &Self::Point3, b: &Self::Point3) -> bool;
+    fn are_collinear3(a: &Self::Point3, b: &Self::Point3, c: &Self::Point3) -> bool;
+    fn is_point_on_segment3(p: &Self::Point3, s: &Self::Segment3) -> bool;
+    fn point_u_on_segment3(
+        a: &Self::Point3,
+        b: &Self::Point3,
+        p: &Self::Point3,
+    ) -> Option<Self::FT>;
 }

@@ -37,7 +37,7 @@ use crate::{
         util::proj_along,
         vector::{Vector, VectorOps},
     },
-    impl_mesh,
+    impl_mesh, kernel,
     mesh::{
         basic_types::*, face::Face, half_edge::HalfEdge, intersection_segment::IntersectionSegment,
         vertex::Vertex,
@@ -439,7 +439,7 @@ impl_mesh! {
                     let pos_i = &self.vertices[group[i]].position;
                     let pos_j = &self.vertices[group[j]].position;
 
-                    if pos_i.distance_to(pos_j) <= tolerance {
+                    if kernel::are_equal(pos_i, pos_j) {
                         // Mark j as duplicate of i
                         vertex_mapping[group[j]] = group[i];
                         duplicates.insert(group[j]);
@@ -690,7 +690,7 @@ impl_mesh! {
         let key = self.position_to_hash_key(pos);
         if let Some(bucket) = self.vertex_spatial_hash.get(&key) {
             for &vi in bucket {
-                if self.vertices[vi].position == *pos {
+                if kernel::are_equal(&self.vertices[vi].position, pos) {
                     return vi; // reuse
                 }
             }
@@ -1317,118 +1317,225 @@ impl_mesh! {
     /// - `sweeps`: number of Jacobi sweeps
     /// - `step`:   blend factor in (0,1], e.g. 0.2
     /// Returns true if any vertex moved.
-    pub fn smooth_tangential(&mut self, sweeps: usize, step: f64) -> bool
+    pub fn smooth_tangential(&mut self, v: usize, alpha: T) -> bool
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-        T: Add<Output = T>
-        + Sub<Output = T>
-        + Mul<Output = T>
-        + Div<Output = T>,
+        T: Scalar + PartialOrd + Clone,
+        for<'a> &'a T:
+            core::ops::Add<&'a T, Output = T> +
+            core::ops::Sub<&'a T, Output = T> +
+            core::ops::Mul<&'a T, Output = T> +
+            core::ops::Div<&'a T, Output = T>,
     {
-        if sweeps == 0 { return false; }
+        // Only defined for 3D meshes
+        if N != 3 { return false; }
 
-        // Epsilons
-        let eps2 = T::from(1e-30);            // for d·d in proj (length^2)
-        let eps4 = T::from(1e-60);            // for area^2 checks (length^4), tune per scale
-        let alpha = T::from(step);
-
-        let nverts = self.vertices.len();
-        let mut moved_any = false;
-
-        for _ in 0..sweeps {
-            // Jacobi proposals
-            let mut proposal: Vec<Option<Point<T, N>>> = vec![None; nverts];
-
-            for v in 0..nverts {
-                let ring = self.vertex_ring_ccw(v);
-                if ring.neighbors_ccw.is_empty() { continue; }
-
-                // Dedup neighbors
-                use std::collections::HashSet;
-                let mut seen = HashSet::new();
-                let mut nbrs = Vec::with_capacity(ring.neighbors_ccw.len());
-                for &n in &ring.neighbors_ccw {
-                    if n != v && seen.insert(n) { nbrs.push(n); }
-                }
-                if nbrs.is_empty() { continue; }
-
-                // Umbrella Laplacian: average displacement
-                let pv = &self.vertices[v].position;
-                let mut sum = Vector::<T, N>::default();
-                for &n in &nbrs {
-                    sum = sum + (&self.vertices[n].position - &pv).as_vector();
-                }
-                let inv_deg = T::from(1.0) / T::from(nbrs.len() as f64);
-                let delta = sum.scale(&inv_deg).0;
-
-                // Tangent projection
-                let delta_tan = if !ring.is_border {
-                    // Interior: remove normal component
-                    let mut nsum = Vector::<T, N>::default();
-                    for &fopt in &ring.faces_ccw {
-                        if let Some(f) = fopt {
-                            if !self.faces[f].removed {
-                                let [a, b, c] = self.face_vertices(f);
-                                let pa = &self.vertices[a].position;
-                                let pb = &self.vertices[b].position;
-                                let pc = &self.vertices[c].position;
-                                nsum = nsum + (pb - pa).as_vector().cross(&(pc - pa).as_vector());
-                            }
-                        }
-                    }
-                    let proj_n = proj_along(&delta.as_vector(), &nsum, &eps2);
-                    &delta.as_vector() - &proj_n
-                } else {
-                    // Border: move along boundary tangent if identifiable; else no projection
-                    let mut b_opt = None;
-                    for (i, &he) in ring.halfedges_ccw.iter().enumerate() {
-                        if ring.faces_ccw[i].is_none() { b_opt = Some(he); break; }
-                    }
-                    if let Some(b) = b_opt {
-                        let prev_b = self.half_edges[b].prev;      // border HE whose head is v
-                        let n0 = self.source(prev_b);              // previous boundary vertex
-                        let n1 = self.half_edges[b].vertex;        // next boundary vertex
-                        let t  = (&self.vertices[n1].position - &self.vertices[n0].position).as_vector();
-                        proj_along(&delta.as_vector(), &t, &eps2)
-                    } else {
-                        delta.as_vector()
-                    }
-                };
-
-                // Proposed position
-                let p_new = pv + &delta_tan.scale(&alpha).0;
-
-                // Reject if any incident face degenerates
-                let mut ok = true;
-                for &fopt in &ring.faces_ccw {
-                    if let Some(f) = fopt {
-                        if !self.faces[f].removed {
-                            let a2x4 = self.area2x4_after_move(f, v, &p_new);
-                            if a2x4 <= eps4 { ok = false; break; }
-                        }
-                    }
-                }
-
-                if ok { proposal[v] = Some(p_new); }
-            }
-
-            // Apply proposals (with a small movement threshold)
-            let mut moved_this_sweep = false;
-            for v in 0..nverts {
-                if let Some(p) = proposal[v].take() {
-                    let dv = (&p - &self.vertices[v].position).as_vector();
-                    if dv.dot(&dv) > T::from(1e-30) { // tiny threshold
-                        self.vertices[v].position = p;
-                        moved_this_sweep = true;
-                    }
-                }
-            }
-
-            moved_any |= moved_this_sweep;
-            if !moved_this_sweep { break; }
+        // Vertex existence and outgoing half-edge
+        if v >= self.vertices.len() || self.vertices[v].removed {
+            return false;
         }
 
-        moved_any
+        // Optional: skip boundary vertices (keeps silhouette stable)
+        // We treat "boundary" as having any incident half-edge without a face.
+        let is_boundary = {
+            let mut boundary = false;
+            for he in self.vertex_ring_ccw(v).halfedges_ccw {
+                if self.half_edges[he].face.is_none() {
+                    boundary = true;
+                    break;
+                }
+            }
+            boundary
+        };
+        if is_boundary {
+            return false;
+        }
+
+        // Gather the ordered 1-ring as half-edges originating at v, then build the neighbor index cycle.
+        // Assumes `vertex_ring(v)` yields a CCW ring of half-edges around v where each `he` has:
+        //   - to-vertex = half_edges[he].vertex = b
+        //   - next(he) has to-vertex = c (forming triangle (a, b, c))
+        // Duplicates may appear on degenerate/border cases; we will guard against them.
+        let ring_hes = self.vertex_ring_ccw(v);
+        if ring_hes.neighbors_ccw.is_empty() { return false; }
+
+        // Current position a
+        let a = self.vertices[v].position.clone();
+
+        // Accumulate:
+        // - area-weighted normal n = sum over faces ( (b-a) x (c-a) )
+        // - unnormalized Laplacian direction d = sum over neighbors (b - a)
+        let mut n0 = T::zero();
+        let mut n1 = T::zero();
+        let mut n2 = T::zero();
+
+        let mut d0 = T::zero();
+        let mut d1 = T::zero();
+        let mut d2 = T::zero();
+
+        let mut valence = 0usize;
+
+        for &he in ring_hes.halfedges_ccw.iter() {
+            // Skip invalid or removed half-edges
+            if he >= self.half_edges.len() || self.half_edges[he].removed {
+                continue;
+            }
+
+            // Neighbor b = head of he
+            let b_idx = self.half_edges[he].vertex;
+            if b_idx >= self.vertices.len() || self.vertices[b_idx].removed {
+                continue;
+            }
+            let b = &self.vertices[b_idx].position;
+
+            // Add Laplacian term (b - a)
+            {
+                let bx0 = &b[0] - &a[0];
+                let by1 = &b[1] - &a[1];
+                let bz2 = &b[2] - &a[2];
+                d0 = &d0 + &bx0;
+                d1 = &d1 + &by1;
+                d2 = &d2 + &bz2;
+                valence += 1;
+            }
+
+            // If this half-edge has a face, we can accumulate a face normal (b - a) x (c - a)
+            if let Some(_) = self.half_edges[he].face {
+                let he_next = self.half_edges[he].next;
+                if he_next >= self.half_edges.len() || self.half_edges[he_next].removed {
+                    continue;
+                }
+                let c_idx = self.half_edges[he_next].vertex;
+                if c_idx >= self.vertices.len() || self.vertices[c_idx].removed {
+                    continue;
+                }
+                let c = &self.vertices[c_idx].position;
+
+                // u = b - a, v = c - a
+                let ux = &b[0] - &a[0];
+                let uy = &b[1] - &a[1];
+                let uz = &b[2] - &a[2];
+                let vx = &c[0] - &a[0];
+                let vy = &c[1] - &a[1];
+                let vz = &c[2] - &a[2];
+
+                // u x v
+                let cx = &(&uy * &vz) - &(&uz * &vy);
+                let cy = &(&uz * &vx) - &(&ux * &vz);
+                let cz = &(&ux * &vy) - &(&uy * &vx);
+
+                n0 = &n0 + &cx;
+                n1 = &n1 + &cy;
+                n2 = &n2 + &cz;
+            }
+        }
+
+        if valence < 2 {
+            return false; // nothing to do or cannot form faces reliably
+        }
+
+        // Normalize Laplacian by valence: d /= valence
+        let inv_val = T::one() / T::from(valence as f64);
+        d0 = &d0 * &inv_val;
+        d1 = &d1 * &inv_val;
+        d2 = &d2 * &inv_val;
+
+        // Project d onto the tangent plane at a using accumulated normal n:
+        // d_tan = d - n * (dot(d, n) / dot(n, n))
+        let nn = &n0 * &n0 + &n1 * &n1 + &n2 * &n2;
+        let mut t0 = d0.clone();
+        let mut t1 = d1.clone();
+        let mut t2 = d2.clone();
+
+        if nn > T::zero() {
+            let dn = &d0 * &n0 + &d1 * &n1 + &d2 * &n2;
+            let k = dn / nn;
+            t0 = &t0 - &(&n0 * &k);
+            t1 = &t1 - &(&n1 * &k);
+            t2 = &t2 - &(&n2 * &k);
+        }
+
+        // Proposed new position a' = a + alpha * d_tan
+        let axp = &a[0] + &(&alpha * &t0);
+        let ayp = &a[1] + &(&alpha * &t1);
+        let azp = &a[2] + &(&alpha * &t2);
+
+        // Degeneracy (robust): reject if any incident triangle (a', b, c) is degenerate
+        // Use the same ring traversal to get (b, c) per face around v.
+        // Also optionally prevent flips: (n_old · n_new) <= 0 → reject.
+        let mut reject = false;
+
+        for &he in ring_hes.halfedges_ccw.iter() {
+            if he >= self.half_edges.len() || self.half_edges[he].removed {
+                continue;
+            }
+            // Only check real faces
+            let Some(_) = self.half_edges[he].face else { continue; };
+
+            let b_idx = self.half_edges[he].vertex;
+            let he_next = self.half_edges[he].next;
+            if he_next >= self.half_edges.len() || self.half_edges[he_next].removed {
+                continue;
+            }
+            let c_idx = self.half_edges[he_next].vertex;
+
+            if b_idx >= self.vertices.len() || c_idx >= self.vertices.len() {
+                continue;
+            }
+            let b = &self.vertices[b_idx].position;
+            let c = &self.vertices[c_idx].position;
+            let arr = [&axp, &ayp, &azp];
+
+            // Robust degenerate test using kernel
+            if kernel::triangle_is_degenerate::<T, N>(
+                // construct a temporary Point<T,N> from (axp, ayp, azp) in-place style
+                &Point::from_vals(from_fn(|i| arr[i].clone())),
+                b,
+                c,
+            ) {
+                reject = true;
+                break;
+            }
+
+            // n_old = (b - a) x (c - a), n_new = (b - a') x (c - a')
+            let bax = &b[0] - &a[0];
+            let bay = &b[1] - &a[1];
+            let baz = &b[2] - &a[2];
+            let cax = &c[0] - &a[0];
+            let cay = &c[1] - &a[1];
+            let caz = &c[2] - &a[2];
+            let nold_x = &(&bay * &caz) - &(&baz * &cay);
+            let nold_y = &(&baz * &cax) - &(&bax * &caz);
+            let nold_z = &(&bax * &cay) - &(&bay * &cax);
+
+            let bapx = &b[0] - &axp;
+            let bapy = &b[1] - &ayp;
+            let bapz = &b[2] - &azp;
+            let capx = &c[0] - &axp;
+            let capy = &c[1] - &ayp;
+            let capz = &c[2] - &azp;
+            let nnew_x = &(&bapy * &capz) - &(&bapz * &capy);
+            let nnew_y = &(&bapz * &capx) - &(&bapx * &capz);
+            let nnew_z = &(&bapx * &capy) - &(&bapy * &capx);
+
+            let dot_old_new = &nold_x * &nnew_x + &nold_y * &nnew_y + &nold_z * &nnew_z;
+            if dot_old_new <= T::zero() {
+                reject = true;
+                break;
+            }
+        }
+
+        if reject {
+            return false;
+        }
+
+        // Commit new position
+        let mut a_new = a;
+        a_new[0] = axp;
+        a_new[1] = ayp;
+        a_new[2] = azp;
+        self.vertices[v].position = a_new;
+
+        true
     }
 }
 
