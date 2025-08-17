@@ -25,7 +25,7 @@ use num_traits::ToPrimitive;
 use crate::{
     geometry::util::EPS,
     numeric::{cgar_rational::CgarRational, scalar::Scalar},
-    operations::Abs,
+    operations::{Abs, One},
 };
 
 use std::{
@@ -264,7 +264,7 @@ impl crate::operations::Zero for CgarF64 {
     }
 }
 
-impl crate::operations::One for CgarF64 {
+impl One for CgarF64 {
     fn one() -> Self {
         CgarF64(1.0)
     }

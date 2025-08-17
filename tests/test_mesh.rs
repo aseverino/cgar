@@ -32,6 +32,7 @@ use cgar::mesh::basic_types::Mesh;
 use cgar::mesh::core;
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::numeric::cgar_rational::CgarRational;
+use cgar::numeric::lazy_exact::LazyExact;
 use cgar::operations::Abs;
 
 #[test]
@@ -941,9 +942,9 @@ fn union_boolean() {
 fn difference_large_boolean() {
     unsafe { std::env::set_var("RUST_LIB_BACKTRACE", "1") };
     let sphere =
-        read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
+        read_obj::<LazyExact, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
     let mut other_sphere =
-        read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
+        read_obj::<LazyExact, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
 
     // translate the second sphere to create a difference
     let translation = Point3::from_vals([0.5, 0.5, 0.5]);

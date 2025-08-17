@@ -20,8 +20,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::hash::{Hash, Hasher};
+use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 use std::sync::Arc;
 
 use num_traits::ToPrimitive;
@@ -30,23 +32,124 @@ use rug::Rational;
 
 use crate::numeric::scalar::Scalar;
 use crate::numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational};
-use crate::operations::{Abs, Zero};
+use crate::operations::{Abs, One, Zero};
 
-/// A lazily-evaluated scalar expression:
-/// - Stores a cheap double-like approximation (CgarF64) eagerly
-/// - Computes exact (CgarRational) only on demand, memoized
-///
-/// Design goals:
-/// - Expression nodes are immutable and shared via Arc (DAG-friendly)
-/// - Approx is always available quickly
-/// - Exact is computed lazily and cached
 #[derive(Clone)]
 pub struct LazyExact(Arc<Node>);
+
+impl Scalar for LazyExact {
+    fn min(self, other: Self) -> Self {
+        if (&self - &other).sign() <= 0 {
+            self
+        } else {
+            other
+        }
+    }
+    fn max(self, other: Self) -> Self {
+        if (&self - &other).sign() >= 0 {
+            self
+        } else {
+            other
+        }
+    }
+
+    fn default() -> Self {
+        LazyExact::from_i32(0)
+    }
+
+    fn from_num_den(num: i32, den: i32) -> Self {
+        LazyExact::from_cgar_rational(CgarRational::from_num_den(num, den))
+    }
+
+    fn tolerance() -> Self {
+        LazyExact::from_i32(0)
+    }
+
+    fn tolerance_squared() -> Self {
+        let t = Self::tolerance();
+        t.clone() * t
+    }
+
+    fn point_merge_threshold() -> Self {
+        LazyExact::from_num_den(1, 1_000_000)
+    }
+
+    fn edge_degeneracy_threshold() -> Self {
+        LazyExact::from_num_den(1, 100_000)
+    }
+
+    fn area_degeneracy_threshold() -> Self {
+        LazyExact::from_num_den(1, 10_000_000)
+    }
+
+    fn query_tolerance() -> Self {
+        LazyExact::from_num_den(1, 100_000)
+    }
+
+    fn query_tolerance_squared() -> Self {
+        let t = Self::query_tolerance();
+        t.clone() * t
+    }
+
+    fn point_merge_threshold_squared() -> Self {
+        let t = Self::point_merge_threshold();
+        t.clone() * t
+    }
+
+    // approximate equality:
+    // - fast path: |approx(self - other)| <= query_tolerance
+    // - else: exact equality
+    fn approx_eq(&self, other: &Self) -> bool {
+        let diff_approx = (&self.approx().0 - other.approx().0).abs();
+        if diff_approx <= CgarF64::query_tolerance().0 {
+            return true;
+        }
+        // If approx says “close to zero”, sign() would already fallback to exact,
+        // but here we want a boolean “approximately equal”; exact== is a safe tie-breaker.
+        (self.clone() - other.clone()).exact().is_zero()
+    }
+}
+
+impl PartialEq for LazyExact {
+    fn eq(&self, other: &Self) -> bool {
+        self.exact() == other.exact()
+    }
+}
+impl Eq for LazyExact {}
+
+impl PartialOrd for LazyExact {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.exact().partial_cmp(&other.exact())
+    }
+}
+
+impl Hash for LazyExact {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Hash exact value so DAG shape doesn’t affect hashing.
+        self.exact().hash(state);
+    }
+}
+
+impl ToPrimitive for LazyExact {
+    fn to_i64(&self) -> Option<i64> {
+        self.exact().to_i64()
+    }
+    fn to_u64(&self) -> Option<u64> {
+        self.exact().to_u64()
+    }
+    fn to_f32(&self) -> Option<f32> {
+        self.exact().to_f32()
+    }
+    fn to_f64(&self) -> Option<f64> {
+        self.exact().to_f64()
+    }
+}
 
 struct Node {
     kind: Kind,
     approx: OnceCell<CgarF64>,
     exact: OnceCell<CgarRational>,
+    depth: u32,
 }
 
 #[derive(Clone)]
@@ -61,7 +164,69 @@ enum Kind {
 }
 
 impl LazyExact {
-    /* ========= Constructors ========= */
+    const MAX_DEPTH: u32 = 1024;
+
+    #[inline]
+    fn compute_depth(kind: &Kind) -> u32 {
+        use Kind::*;
+        match kind {
+            LeafApprox(_) | LeafExact(_) => 1,
+            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) => 1 + a.0.depth.max(b.0.depth),
+            Neg(x) => 1 + x.0.depth,
+        }
+    }
+
+    #[inline]
+    fn exact_ready(&self) -> Option<&CgarRational> {
+        self.0.exact.get()
+    }
+
+    #[inline]
+    fn fold_if_both_exact(kind: Kind) -> Option<LazyExact> {
+        use Kind::*;
+        match &kind {
+            Add(a, b) => {
+                if let (Some(la), Some(lb)) = (a.exact_ready(), b.exact_ready()) {
+                    let e = la + lb;
+                    let a_ = a.approx();
+                    let b_ = b.approx();
+                    let approx = a_ + b_;
+                    return Some(LazyExact::from_leafs(e, approx));
+                }
+            }
+            Sub(a, b) => {
+                if let (Some(la), Some(lb)) = (a.exact_ready(), b.exact_ready()) {
+                    let e = la - lb;
+                    let approx = a.approx() - b.approx();
+                    return Some(LazyExact::from_leafs(e, approx));
+                }
+            }
+            Mul(a, b) => {
+                if let (Some(la), Some(lb)) = (a.exact_ready(), b.exact_ready()) {
+                    let e = la * lb;
+                    let approx = a.approx() * b.approx();
+                    return Some(LazyExact::from_leafs(e, approx));
+                }
+            }
+            Div(a, b) => {
+                if let (Some(la), Some(lb)) = (a.exact_ready(), b.exact_ready()) {
+                    assert!(!lb.is_zero(), "LazyExact: division by zero");
+                    let e = la / lb;
+                    let approx = a.approx() / b.approx();
+                    return Some(LazyExact::from_leafs(e, approx));
+                }
+            }
+            Neg(x) => {
+                if let Some(le) = x.exact_ready() {
+                    let e = -le;
+                    let approx = -x.approx();
+                    return Some(LazyExact::from_leafs(e, approx));
+                }
+            }
+            _ => {}
+        }
+        None
+    }
 
     pub fn from_f64(v: f64) -> Self {
         Self::from_cgar_f64(CgarF64(v))
@@ -87,6 +252,7 @@ impl LazyExact {
                 cell
             },
             exact: OnceCell::new(),
+            depth: 1,
         }))
     }
 
@@ -110,10 +276,9 @@ impl LazyExact {
                 let _ = cell.set((*exact_arc).clone());
                 cell
             },
+            depth: 1,
         }))
     }
-
-    /* ========= Basic queries ========= */
 
     /// Cheap approximate value (always available, memoized).
     pub fn approx(&self) -> CgarF64 {
@@ -163,7 +328,7 @@ impl LazyExact {
         if a.abs() > tol {
             return if a.0 > 0.0 { 1 } else { -1 };
         }
-        // Straddles zero → evaluate exactly.
+        // Straddles zero -> evaluate exactly.
         let e = self.exact();
         if e.is_zero() {
             0
@@ -187,11 +352,104 @@ impl LazyExact {
         }
     }
 
-    /* ========= Internal helpers ========= */
+    #[inline]
+    fn is_exact_zero(&self) -> bool {
+        // cheap check first:
+        if let Some(e) = self.0.exact.get() {
+            return e.is_zero();
+        }
+        false
+    }
+    #[inline]
+    fn is_exact_one(&self) -> bool {
+        if let Some(e) = self.0.exact.get() {
+            return e == &CgarRational::from(1);
+        }
+        false
+    }
 
     #[inline]
-    fn new(kind: Kind) -> Self {
-        // Seed approx cheaply to maximize early pruning in predicates
+    fn simplify_identities(kind: Kind) -> Kind {
+        use Kind::*;
+        match &kind {
+            Add(a, b) => {
+                if a.is_exact_zero() {
+                    return b.clone().0.kind.clone();
+                }
+                if b.is_exact_zero() {
+                    return a.clone().0.kind.clone();
+                }
+            }
+            Sub(a, b) => {
+                if b.is_exact_zero() {
+                    return a.clone().0.kind.clone();
+                }
+            }
+            Mul(a, b) => {
+                if a.is_exact_zero() || b.is_exact_zero() {
+                    return Kind::LeafExact(Arc::new(CgarRational::from(0)));
+                }
+                if a.is_exact_one() {
+                    return b.clone().0.kind.clone();
+                }
+                if b.is_exact_one() {
+                    return a.clone().0.kind.clone();
+                }
+            }
+            Div(a, b) => {
+                if a.is_exact_zero() {
+                    return Kind::LeafExact(Arc::new(CgarRational::from(0)));
+                }
+                if b.is_exact_one() {
+                    return a.clone().0.kind.clone();
+                }
+            }
+            Neg(x) => {
+                if x.is_exact_zero() {
+                    return Kind::LeafExact(Arc::new(CgarRational::from(0)));
+                }
+            }
+            _ => {}
+        }
+        kind
+    }
+
+    #[inline]
+    fn new(mut kind: Kind) -> Self {
+        kind = LazyExact::simplify_identities(kind);
+
+        if let Some(folded) = LazyExact::fold_if_both_exact(kind.clone()) {
+            return folded;
+        }
+
+        let depth = LazyExact::compute_depth(&kind);
+        if depth > Self::MAX_DEPTH {
+            // force a leaf
+            let approx = match &kind {
+                Kind::LeafApprox(a) => a.clone(),
+                Kind::LeafExact(e) => CgarF64(e.to_f64().unwrap_or(0.0)),
+                Kind::Add(a, b) => a.approx() + b.approx(),
+                Kind::Sub(a, b) => a.approx() - b.approx(),
+                Kind::Mul(a, b) => a.approx() * b.approx(),
+                Kind::Div(a, b) => a.approx() / b.approx(),
+                Kind::Neg(x) => -x.approx(),
+            };
+            let exact = match &kind {
+                Kind::LeafApprox(a) => CgarRational::from(a.0),
+                Kind::LeafExact(e) => e.as_ref().clone(),
+                Kind::Add(a, b) => &a.exact() + &b.exact(),
+                Kind::Sub(a, b) => &a.exact() - &b.exact(),
+                Kind::Mul(a, b) => &a.exact() * &b.exact(),
+                Kind::Div(a, b) => {
+                    let d = b.exact();
+                    assert!(!d.is_zero());
+                    &a.exact() / &d
+                }
+                Kind::Neg(x) => -&x.exact(),
+            };
+            return LazyExact::from_leafs(exact, approx);
+        }
+
         let approx = match &kind {
             Kind::LeafApprox(a) => a.clone(),
             Kind::LeafExact(e) => CgarF64(e.to_f64().unwrap_or(0.0)),
@@ -201,19 +459,19 @@ impl LazyExact {
             Kind::Div(a, b) => a.approx() / b.approx(),
             Kind::Neg(x) => -x.approx(),
         };
+
         LazyExact(Arc::new(Node {
             kind,
             approx: {
-                let cell = OnceCell::new();
-                let _ = cell.set(approx);
-                cell
+                let c = OnceCell::new();
+                let _ = c.set(approx);
+                c
             },
             exact: OnceCell::new(),
+            depth,
         }))
     }
 }
-
-/* ========= Operator overloads (build expression DAGs) ========= */
 
 impl Add for LazyExact {
     type Output = LazyExact;
@@ -285,8 +543,6 @@ impl<'a> Neg for &'a LazyExact {
     }
 }
 
-/* ========= Conversions ========= */
-
 impl From<f64> for LazyExact {
     fn from(v: f64) -> Self {
         Self::from_f64(v)
@@ -312,8 +568,6 @@ impl From<CgarRational> for LazyExact {
         Self::from_cgar_rational(v)
     }
 }
-
-/* ========= Debug ========= */
 
 impl fmt::Debug for LazyExact {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -344,5 +598,70 @@ impl LazyExact {
     }
     pub fn has_exact(&self) -> bool {
         self.0.exact.get().is_some()
+    }
+}
+
+impl Zero for LazyExact {
+    fn zero() -> Self {
+        LazyExact::from_i32(0)
+    }
+
+    fn is_zero(&self) -> bool {
+        self.sign() == 0
+    }
+
+    fn is_positive(&self) -> bool {
+        self.sign() > 0
+    }
+
+    fn is_negative(&self) -> bool {
+        self.sign() < 0
+    }
+
+    fn is_positive_or_zero(&self) -> bool {
+        self.sign() >= 0
+    }
+
+    fn is_negative_or_zero(&self) -> bool {
+        self.sign() <= 0
+    }
+}
+
+impl One for LazyExact {
+    fn one() -> Self {
+        LazyExact::from_i32(1)
+    }
+}
+
+impl Abs for LazyExact {
+    fn abs(&self) -> Self {
+        if self.is_negative() {
+            -self.clone()
+        } else {
+            self.clone()
+        }
+    }
+}
+
+impl AddAssign<&LazyExact> for LazyExact {
+    fn add_assign(&mut self, rhs: &LazyExact) {
+        if let (Some(ae), Some(be)) = (self.0.exact.get(), rhs.0.exact.get()) {
+            let e = ae + be;
+            let approx = self.approx() + rhs.approx();
+            *self = LazyExact::from_leafs(e, approx);
+        } else {
+            *self = self.clone() + rhs.clone();
+        }
+    }
+}
+impl SubAssign<&LazyExact> for LazyExact {
+    fn sub_assign(&mut self, rhs: &LazyExact) {
+        if let (Some(ae), Some(be)) = (self.0.exact.get(), rhs.0.exact.get()) {
+            let e = ae - be;
+            let approx = self.approx() - rhs.approx();
+            *self = LazyExact::from_leafs(e, approx);
+        } else {
+            *self = self.clone() - rhs.clone();
+        }
     }
 }
