@@ -34,6 +34,14 @@ use std::{
 
 use std::fmt::Debug;
 
+pub trait FromRef<T> {
+    fn from_ref(value: &T) -> Self;
+}
+
+pub trait RefInto<T> {
+    fn ref_into(&self) -> T;
+}
+
 pub trait Scalar:
     Clone
     + Add<Output = Self>
@@ -59,6 +67,12 @@ pub trait Scalar:
     + From<CgarRational>
     + From<LazyExact>
     + Into<CgarF64>
+    + FromRef<CgarF64>
+    + FromRef<CgarRational>
+    + FromRef<LazyExact>
+    + RefInto<CgarF64>
+    + RefInto<CgarRational>
+    + RefInto<LazyExact>
 {
     fn min(self, other: Self) -> Self {
         if self < other { self } else { other }

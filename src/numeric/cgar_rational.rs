@@ -24,7 +24,11 @@ use num_traits::ToPrimitive;
 use rug::{Rational, ops::Pow};
 
 use crate::{
-    numeric::{cgar_f64::CgarF64, lazy_exact::LazyExact, scalar::Scalar},
+    numeric::{
+        cgar_f64::CgarF64,
+        lazy_exact::LazyExact,
+        scalar::{FromRef, RefInto, Scalar},
+    },
     operations::Abs,
 };
 
@@ -216,6 +220,42 @@ impl ToPrimitive for CgarRational {
     }
     fn to_f64(&self) -> Option<f64> {
         Some(self.0.to_f64())
+    }
+}
+
+impl FromRef<CgarF64> for CgarRational {
+    fn from_ref(value: &CgarF64) -> Self {
+        CgarRational(Rational::from_f64(value.0).expect("Invalid f64 value"))
+    }
+}
+
+impl FromRef<CgarRational> for CgarRational {
+    fn from_ref(value: &CgarRational) -> Self {
+        CgarRational(value.0.clone())
+    }
+}
+
+impl FromRef<LazyExact> for CgarRational {
+    fn from_ref(value: &LazyExact) -> Self {
+        value.exact()
+    }
+}
+
+impl RefInto<CgarF64> for CgarRational {
+    fn ref_into(&self) -> CgarF64 {
+        CgarF64(self.0.to_f64())
+    }
+}
+
+impl RefInto<CgarRational> for CgarRational {
+    fn ref_into(&self) -> CgarRational {
+        return self.clone();
+    }
+}
+
+impl RefInto<LazyExact> for CgarRational {
+    fn ref_into(&self) -> LazyExact {
+        LazyExact::from_cgar_rational(self.clone())
     }
 }
 

@@ -24,7 +24,11 @@ use num_traits::ToPrimitive;
 
 use crate::{
     geometry::util::EPS,
-    numeric::{cgar_rational::CgarRational, lazy_exact::LazyExact, scalar::Scalar},
+    numeric::{
+        cgar_rational::CgarRational,
+        lazy_exact::LazyExact,
+        scalar::{FromRef, RefInto, Scalar},
+    },
     operations::{Abs, One},
 };
 
@@ -214,6 +218,42 @@ impl ToPrimitive for CgarF64 {
     }
     fn to_f64(&self) -> Option<f64> {
         Some(self.0)
+    }
+}
+
+impl FromRef<CgarF64> for CgarF64 {
+    fn from_ref(value: &CgarF64) -> Self {
+        value.clone()
+    }
+}
+
+impl FromRef<CgarRational> for CgarF64 {
+    fn from_ref(value: &CgarRational) -> Self {
+        CgarF64(value.to_f64().unwrap_or(0.0))
+    }
+}
+
+impl FromRef<LazyExact> for CgarF64 {
+    fn from_ref(value: &LazyExact) -> Self {
+        value.approx()
+    }
+}
+
+impl RefInto<CgarF64> for CgarF64 {
+    fn ref_into(&self) -> CgarF64 {
+        self.clone()
+    }
+}
+
+impl RefInto<CgarRational> for CgarF64 {
+    fn ref_into(&self) -> CgarRational {
+        CgarRational::from(self.0)
+    }
+}
+
+impl RefInto<LazyExact> for CgarF64 {
+    fn ref_into(&self) -> LazyExact {
+        LazyExact::from_cgar_f64(self.clone())
     }
 }
 

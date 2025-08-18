@@ -48,6 +48,8 @@ pub trait PointOps<T: Scalar, const N: usize>: Sized {
     // fn distance_squared_to(&self, other: &Self) -> T;
     fn sub(&self, other: &Self) -> Self;
     fn as_vector(&self) -> Self::Vector;
+    fn as_vector_2(&self) -> Vector<T, 2>;
+    fn as_vector_3(&self) -> Vector<T, 3>;
     fn add_vector(&self, v: &Self::Vector) -> Self;
     fn vector_to(&self, other: &Self) -> Self::Vector;
     fn midpoint(&self, other: &Self) -> Self;
@@ -210,6 +212,14 @@ where
         Vector(Point::<T, 2>::from_vals([self[0].clone(), self[1].clone()]))
     }
 
+    fn as_vector_2(&self) -> Vector<T, 2> {
+        Vector(Point::<T, 2>::from_vals([self[0].clone(), self[1].clone()]))
+    }
+
+    fn as_vector_3(&self) -> Vector<T, 3> {
+        panic!("as_vector_3 is not implemented for 2D points");
+    }
+
     fn add_vector(&self, v: &Self::Vector) -> Self
     where
         T: Scalar,
@@ -272,6 +282,18 @@ where
             self[0].clone(),
             self[1].clone(),
             self[2].clone(),
+        ]))
+    }
+
+    fn as_vector_2(&self) -> Vector<T, 2> {
+        panic!("as_vector_2 is not implemented for 3D points");
+    }
+
+    fn as_vector_3(&self) -> Vector<T, 3> {
+        Vector(Point::<T, 3>::from_vals([
+            self[0].clone(),
+            self[1].clone(),
+            T::zero(),
         ]))
     }
 

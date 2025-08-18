@@ -30,7 +30,7 @@ use num_traits::ToPrimitive;
 use once_cell::sync::OnceCell;
 use rug::Rational;
 
-use crate::numeric::scalar::Scalar;
+use crate::numeric::scalar::{FromRef, RefInto, Scalar};
 use crate::numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational};
 use crate::operations::{Abs, One, Zero};
 
@@ -142,6 +142,52 @@ impl ToPrimitive for LazyExact {
     }
     fn to_f64(&self) -> Option<f64> {
         self.exact().to_f64()
+    }
+}
+
+impl FromRef<CgarF64> for LazyExact {
+    fn from_ref(value: &CgarF64) -> Self {
+        LazyExact(Arc::new(Node {
+            kind: Kind::LeafApprox(value.clone()),
+            approx: {
+                let cell = OnceCell::new();
+                let _ = cell.set(value.clone());
+                cell
+            },
+            exact: OnceCell::new(),
+            depth: 1,
+        }))
+    }
+}
+
+impl FromRef<CgarRational> for LazyExact {
+    fn from_ref(value: &CgarRational) -> Self {
+        let approx = CgarF64(value.to_f64().unwrap_or(0.0));
+        LazyExact::from_leafs(value.clone(), approx)
+    }
+}
+
+impl FromRef<LazyExact> for LazyExact {
+    fn from_ref(value: &LazyExact) -> Self {
+        value.clone()
+    }
+}
+
+impl RefInto<CgarF64> for LazyExact {
+    fn ref_into(&self) -> CgarF64 {
+        self.approx()
+    }
+}
+
+impl RefInto<CgarRational> for LazyExact {
+    fn ref_into(&self) -> CgarRational {
+        self.exact()
+    }
+}
+
+impl RefInto<LazyExact> for LazyExact {
+    fn ref_into(&self) -> LazyExact {
+        self.clone()
     }
 }
 
