@@ -59,12 +59,27 @@ impl_mesh! {
     }
 
     pub fn position_to_hash_key(&self, pos: &Point<T, N>) -> (i64, i64, i64) {
-        let grid_size = T::point_merge_threshold().to_f64().unwrap_or(1e-5);
-        (
-            (pos[0].to_f64().unwrap() / grid_size) as i64,
-            (pos[1].to_f64().unwrap() / grid_size) as i64,
-            (pos[2].to_f64().unwrap() / grid_size) as i64,
-        )
+        // Cell size tied to merge threshold keeps hashing consistent with equality.
+        let cell = T::point_merge_threshold().to_f64().unwrap_or(1e-5);
+        let inv = if cell.is_finite() && cell > 0.0 { 1.0 / cell } else { 1.0e5 };
+
+        #[inline(always)]
+        fn floor_i64(x: f64) -> i64 {
+            let xf = x.floor();
+            if xf >= i64::MAX as f64 { i64::MAX }
+            else if xf <= i64::MIN as f64 { i64::MIN }
+            else { xf as i64 }
+        }
+
+        // Support any N; unused axes map to 0.
+        let get = |i: usize| -> f64 {
+            if i < N { pos[i].to_f64().unwrap_or(0.0) } else { 0.0 }
+        };
+
+        let x = floor_i64(get(0) * inv);
+        let y = floor_i64(get(1) * inv);
+        let z = floor_i64(get(2) * inv);
+        (x, y, z)
     }
 
     pub fn build_boundary_map(
@@ -685,20 +700,42 @@ impl_mesh! {
         compute_triangle_aabb(p0, p1, p2)
     }
 
-    fn get_or_insert_vertex(&mut self, pos: &Point<T, N>) -> usize {
-        let key = self.position_to_hash_key(pos);
-        if let Some(bucket) = self.vertex_spatial_hash.get(&key) {
+    fn get_or_insert_vertex(&mut self, pos: &Point<T, N>) -> (usize, bool) {
+        // Center cell
+        let (kx, ky, kz) = self.position_to_hash_key(pos);
+
+        // 1) Check center cell first (fast path).
+        if let Some(bucket) = self.vertex_spatial_hash.get(&(kx, ky, kz)) {
             for &vi in bucket {
                 if kernel::are_equal(&self.vertices[vi].position, pos) {
-                    return vi; // reuse
+                    return (vi, true);
                 }
             }
         }
-        // insert new
+
+        // 2) Probe 26 neighboring cells to catch cross-cell near-equals.
+        // Offsets are small fixed triplets; iterate deterministically.
+        for dx in -1i64..=1 {
+            for dy in -1i64..=1 {
+                for dz in -1i64..=1 {
+                    if dx == 0 && dy == 0 && dz == 0 { continue; }
+                    let key = (kx + dx, ky + dy, kz + dz);
+        if let Some(bucket) = self.vertex_spatial_hash.get(&key) {
+            for &vi in bucket {
+                if kernel::are_equal(&self.vertices[vi].position, pos) {
+                                return (vi, true);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3) Insert new vertex into the center cell.
         let idx = self.vertices.len();
         self.vertices.push(Vertex::new(pos.clone()));
-        self.vertex_spatial_hash.entry(key).or_default().push(idx);
-        idx
+        self.vertex_spatial_hash.entry((kx, ky, kz)).or_default().push(idx);
+        (idx, false)
     }
 
     pub fn add_vertex(&mut self, position: Point<T, N>) -> usize {
