@@ -820,7 +820,15 @@ impl_mesh! {
         let b = self.half_edges[he_ab].vertex;
         let c = self.half_edges[he_bc].vertex;
 
-        let w = self.get_or_insert_vertex(pos);
+        let (w, reuse) = self.get_or_insert_vertex(pos);
+        if reuse {
+            println!("re-using");
+            return Ok(SplitResult {
+                kind: SplitResultKind::NoSplit,
+                vertex: w,
+                new_faces: [usize::MAX; 4]
+            });
+        }
 
         let original_face_1 = self.half_edges[he_ca].face.unwrap();
         let original_face_2 = self.half_edges[he_ac].face;
