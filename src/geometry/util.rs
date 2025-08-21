@@ -299,15 +299,16 @@ where
     let d21 = v2.dot(&v1);
 
     let denom = &d00 * &d11 - &d01 * &d01;
-    if denom.abs() < T::tolerance() {
-        return None; // Degenerate triangle
+    if denom.is_zero() {
+        return None; // degenerate triangle
     }
 
-    let v = (&d11 * &d20 - &d01 * &d21) / denom.clone();
-    let w = (&d00 * &d21 - &d01 * &d20) / denom;
-    let u = &T::one() - &(&v - &w);
+    let v = (&d11 * &d20 - &d01 * &d21) / denom.clone(); // coeff of B
+    let w = (&d00 * &d21 - &d01 * &d20) / denom; // coeff of C
+    let u = &(&T::one() - &v) - &w; // coeff of A
 
-    // println!("Barycentric coords: u={:?}, v={:?}, w={:?}", u, v, w);
+    // Optional exact sanity check:
+    debug_assert_eq!(&(&u + &v) + &w, T::one());
 
     Some((u, v, w))
 }
@@ -391,4 +392,22 @@ where
         return Vector::default();
     }
     d.scale(&(v.dot(&d) / dd))
+}
+
+#[inline]
+pub fn point_from_segment_and_u<T: Scalar, const N: usize>(
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    u: &T,
+) -> Point<T, N>
+where
+    Vector<T, N>: VectorOps<T, N>,
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    let ab = (b - a).as_vector();
+    a + &ab.scale(&u).0
 }

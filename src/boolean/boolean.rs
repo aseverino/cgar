@@ -28,6 +28,8 @@ use std::{
     time::Instant,
 };
 
+use smallvec::SmallVec;
+
 use crate::{
     geometry::{
         Aabb, AabbTree,
@@ -36,13 +38,14 @@ use crate::{
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
         tri_tri_intersect::{TriTriIntersectionResult, tri_tri_intersection},
+        util::point_from_segment_and_u,
         vector::{Vector, VectorOps},
     },
-    impl_mesh,
     io::obj::write_obj,
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
+        topology::{FindFaceResult, VertexRayResult},
     },
     numeric::{cgar_f64::CgarF64, scalar::Scalar},
 };
@@ -73,13 +76,13 @@ fn point_key<T: Scalar, const N: usize>(p: &Point<T, N>) -> ApproxPointKey {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct EndPointHandle {
     segment_idx: usize,
     endpoint_idx: usize, // 0 or 1
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SplitType {
     Edge,
     Face,
@@ -264,133 +267,99 @@ where
         splits: &mut Splits<T, N>,
         container: &mut Vec<IntersectionSegment<T, N>>,
         segment: &Segment<T, N>,
-        face: usize,
+        main_face: usize,
         coplanar: bool,
         skip_endpoint_b: bool,
-    ) where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        let mut endpoints_set = [false, false];
+    ) {
+        // Push container slot
         let idx = container.len();
         container.push(IntersectionSegment::new(
             IntersectionEndPoint::new_default(),
             IntersectionEndPoint::new_default(),
             &segment,
-            face,
+            main_face,
             [usize::MAX, usize::MAX],
             coplanar,
         ));
-        // let mut endpoints: [Option<IntersectionEndPoint<T, N>>; 2] = [None, None];
-        let face = mesh.find_valid_face(face, &segment.a);
 
-        let start_he = mesh.find_valid_half_edge(mesh.faces[face].half_edge, &segment.a);
-        let mut next_he = start_he;
-        loop {
-            for i in 0..2 {
-                if (i == 1 && skip_endpoint_b) || endpoints_set[i] {
-                    continue;
+        // Resolve one endpoint robustly:
+        #[inline(always)]
+        fn resolve_endpoint<T: Scalar, const N: usize>(
+            mesh: &Mesh<T, N>,
+            splits: &mut Splits<T, N>,
+            container: &mut Vec<IntersectionSegment<T, N>>,
+            seg_idx: usize,
+            face: usize,
+            endpoint: usize,
+            pos: &Point<T, N>,
+        ) -> usize
+        where
+            Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+            Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+            for<'a> &'a T: Sub<&'a T, Output = T>
+                + Mul<&'a T, Output = T>
+                + Add<&'a T, Output = T>
+                + Div<&'a T, Output = T>
+                + Neg<Output = T>,
+        {
+            // Rebase face to a valid descendant for this endpoint
+            match mesh.find_valid_face(face, pos) {
+                FindFaceResult::Inside { f, bary } => {
+                    container[seg_idx][endpoint].face_hint = Some(f);
+                    container[seg_idx][endpoint].barycentric_hint = Some(bary);
+                    let key_q = point_key(pos);
+                    let entry = splits
+                        .splits
+                        .entry(key_q)
+                        .or_insert_with(|| (pos.clone(), SplitType::Face, usize::MAX, Vec::new()));
+                    entry.2 = f;
+                    entry.3.push(EndPointHandle {
+                        segment_idx: seg_idx,
+                        endpoint_idx: endpoint,
+                    });
+                    return f;
                 }
-                if let Some(point_on_half_edge) = mesh.point_on_half_edge(next_he, &segment[i]) {
-                    let mut found_he = usize::MAX;
-                    let found_v_a = mesh.half_edges[next_he].vertex;
-                    let found_v_b = mesh.half_edges[mesh.half_edges[next_he].twin].vertex;
-                    let mut vertex_hint = usize::MAX;
+                FindFaceResult::OnEdge { f, he, u } => {
+                    // Proper edge point
+                    let v_b = &mesh.vertices[mesh.half_edges[he].vertex].position;
+                    let v_a =
+                        &mesh.vertices[mesh.half_edges[mesh.half_edges[he].twin].vertex].position;
+                    let snap = v_a + &(v_b - v_a).as_vector().scale(&u).0;
 
-                    if (&point_on_half_edge - &T::one()).is_zero() {
-                        vertex_hint = found_v_a;
-                    } else if point_on_half_edge.is_zero() {
-                        vertex_hint = found_v_b;
-                    } else {
-                        found_he = next_he;
-                    }
+                    container[seg_idx][endpoint].vertex_hint = Some([
+                        mesh.half_edges[he].vertex,
+                        mesh.half_edges[mesh.half_edges[he].twin].vertex,
+                    ]);
+                    container[seg_idx][endpoint].half_edge_hint = Some(he);
+                    container[seg_idx][endpoint].half_edge_u_hint = Some(u.clone());
 
-                    if found_he != usize::MAX {
-                        container[idx][i].vertex_hint = Some([found_v_a, found_v_b]);
-                        container[idx][i].half_edge_hint = Some(found_he);
-                        container[idx][i].half_edge_u_hint = Some(point_on_half_edge.clone());
-
-                        let v_b = &mesh.vertices[mesh.half_edges[found_he].vertex].position;
-                        let v_a = &mesh.vertices
-                            [mesh.half_edges[mesh.half_edges[found_he].twin].vertex]
-                            .position;
-                        let t = point_on_half_edge.clone();
-                        let new_point = v_a + &(v_b - v_a).as_vector().scale(&t).0;
-                        let key_q = point_key(&new_point);
-                        let entry = splits.splits.entry(key_q).or_insert_with(|| {
-                            (new_point.clone(), SplitType::Edge, usize::MAX, Vec::new())
-                        });
-                        entry.2 = found_he;
-                        entry.3.push(EndPointHandle {
-                            segment_idx: idx,
-                            endpoint_idx: i,
-                        });
-                    } else if vertex_hint != usize::MAX {
-                        container[idx][i].vertex_hint = Some([vertex_hint, usize::MAX]);
-                    } else {
-                        let barycentric_coords = mesh.barycentric_coords_on_face(face, &segment[i]);
-                        container[idx][i].face_hint = Some(face);
-                        container[idx][i].barycentric_hint = barycentric_coords.clone();
-                        let key_q = point_key(&segment[i]);
-                        let entry = splits.splits.entry(key_q).or_insert_with(|| {
-                            (segment[i].clone(), SplitType::Face, usize::MAX, Vec::new())
-                        });
-
-                        entry.2 = face;
-                        entry.3.push(EndPointHandle {
-                            segment_idx: idx,
-                            endpoint_idx: i,
-                        });
-                    }
-
-                    endpoints_set[i] = true;
-
-                    if i == 1 {
-                        // If we found the second endpoint, we can stop checking other half-edges
-                        break;
-                    }
+                    let key_q = point_key(&snap);
+                    let entry = splits
+                        .splits
+                        .entry(key_q)
+                        .or_insert_with(|| (snap.clone(), SplitType::Edge, usize::MAX, Vec::new()));
+                    entry.2 = he;
+                    entry.3.push(EndPointHandle {
+                        segment_idx: seg_idx,
+                        endpoint_idx: endpoint,
+                    });
+                    return f;
                 }
-            }
-
-            next_he = mesh.half_edges[next_he].next;
-            if next_he == start_he {
-                break;
+                FindFaceResult::OnVertex { f, v, .. } => {
+                    container[seg_idx][endpoint].vertex_hint = Some([v, usize::MAX]);
+                    return f;
+                }
             }
         }
 
-        for i in 0..2 {
-            if i == 1 && skip_endpoint_b || endpoints_set[i] {
-                continue;
-            }
+        // Resolve endpoints independently (B may lie on a neighbor face)
+        // let face_a = mesh.find_valid_face(face, &segment.a);
+        let _ok_a = resolve_endpoint(mesh, splits, container, idx, main_face, 0, &segment.a);
 
-            if let Some(bary) = mesh.barycentric_coords_on_face(face, &segment[i]) {
-                // Point is on the face, but not on any half-edge
-
-                container[idx][i].face_hint = Some(face);
-                container[idx][i].barycentric_hint = Some(bary.clone());
-                let key_q = point_key(&segment[i]);
-                let entry = splits.splits.entry(key_q).or_insert_with(|| {
-                    (segment[i].clone(), SplitType::Face, usize::MAX, Vec::new())
-                });
-
-                entry.2 = face;
-                entry.3.push(EndPointHandle {
-                    segment_idx: idx,
-                    endpoint_idx: i,
-                });
-
-                if i == 1 {
-                    // If we found the second endpoint, we can stop checking other half-edges
-                    break;
-                }
-            } else {
-                panic!("Point not on face!");
-            }
-        }
+        // if !skip_endpoint_b {
+        //     let face_b = mesh.find_valid_face(face, &segment.b);
+        let _ok_b = resolve_endpoint(mesh, splits, container, idx, main_face, 1, &segment.b);
+        // }
     }
 
     fn boolean_split(
@@ -401,7 +370,7 @@ where
     ) where
         T: Into<CgarF64>,
     {
-        for (key, endpoint_tup) in &splits.splits {
+        for (_key, endpoint_tup) in &splits.splits {
             if endpoint_tup.1 == SplitType::Edge {
                 let result = mesh
                     .split_edge(tree, endpoint_tup.2, &endpoint_tup.0)
@@ -460,6 +429,8 @@ where
 
         let mut splits_a = Splits::new();
         let mut splits_b = Splits::new();
+
+        let start = Instant::now();
 
         for fa in 0..a.faces.len() {
             let mut candidates = Vec::new();
@@ -551,6 +522,8 @@ where
                 }
             }
         }
+
+        println!("Intersections created in: {:.2?}", start.elapsed());
 
         // Remove duplicate segments from both lists.
         remove_duplicate_segments(&mut intersection_segments_a);
@@ -730,8 +703,6 @@ where
                 );
             }
         }
-
-        let _ = write_obj(&result, "/mnt/v/cgar_meshes/a.obj");
 
         // Handle B faces based on operation
         match op {
@@ -958,8 +929,8 @@ where
         mesh: &Mesh<T, N>,
         intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
         segment_idx: usize,
-        vertex_ab: &mut [usize; 2],
     ) -> bool {
+        let mut vertex_ab = [usize::MAX; 2];
         // We check if endpoints of the segment are already represented by vertices.
         for i in 0..2 {
             if intersection_segments[segment_idx][i].vertex_hint.is_some()
@@ -989,6 +960,24 @@ where
             }
         }
 
+        // if let Some(_he_hint_a) = intersection_segments[segment_idx][0].half_edge_hint {
+        //     let he_hint_vertices_a = intersection_segments[segment_idx][0].vertex_hint.unwrap();
+        //     if let Some(v_hint_b) = intersection_segments[segment_idx][1].vertex_hint {
+        //         if he_hint_vertices_a.contains(&v_hint_b[0]) {
+        //             intersection_segments[segment_idx].invalidated = true;
+        //             return true;
+        //         }
+        //     }
+        // } else if let Some(_he_hint_b) = intersection_segments[segment_idx][1].half_edge_hint {
+        //     let he_hint_vertices_b = intersection_segments[segment_idx][1].vertex_hint.unwrap();
+        //     if let Some(v_hint_a) = intersection_segments[segment_idx][0].vertex_hint {
+        //         if he_hint_vertices_b.contains(&v_hint_a[0]) {
+        //             intersection_segments[segment_idx].invalidated = true;
+        //             return true;
+        //         }
+        //     }
+        // }
+
         false
     }
 
@@ -1001,395 +990,115 @@ where
     ) {
         let mut vertex_ab = [usize::MAX, usize::MAX];
 
-        // We first check if a half_edge hint gives us an exact vertex.
-        if segment_idx > 0 {
-            // It may do now since topology is changing with every process.
-            for i in 0..2 {
-                if intersection_segments[segment_idx][i]
-                    .half_edge_hint
-                    .is_some()
-                {
-                    let mut vert_hint = usize::MAX;
-                    let he = self.find_valid_half_edge(
-                        intersection_segments[segment_idx][i]
-                            .half_edge_hint
-                            .unwrap(),
-                        &intersection_segments[segment_idx].segment[i],
-                    );
-                    let twin = self.find_valid_half_edge(
-                        self.half_edges[he].twin,
-                        &intersection_segments[segment_idx].segment[i],
-                    );
-
-                    let mut updated = false;
-                    if intersection_segments[segment_idx].segment[i]
-                        == self.vertices[self.half_edges[he].vertex].position
-                    {
-                        vert_hint = self.half_edges[he].vertex;
-                        updated = true;
-                    } else if intersection_segments[segment_idx].segment[i]
-                        == self.vertices[self.half_edges[twin].vertex].position
-                    {
-                        vert_hint = self.half_edges[twin].vertex;
-                        updated = true;
-                    }
-
-                    if updated {
-                        intersection_segments[segment_idx][i].half_edge_hint = None;
-                        if intersection_segments[segment_idx][i].vertex_hint.is_none() {
-                            intersection_segments[segment_idx][i].vertex_hint =
-                                Some([usize::MAX, usize::MAX]);
-                        }
-                        intersection_segments[segment_idx][i].vertex_hint =
-                            Some([vert_hint, usize::MAX]);
-                    }
-                }
-            }
-        }
-
-        if Self::check_for_process_segment_early_exit(
-            self,
-            intersection_segments,
-            segment_idx,
-            &mut vertex_ab,
-        ) {
+        if Self::check_for_process_segment_early_exit(self, intersection_segments, segment_idx) {
             return;
         }
-
-        let mut face_split = false;
 
         for i in 0..2 {
-            if intersection_segments[segment_idx][i].face_hint.is_some() {
-                if let Some(split_result) = self.split_face(
-                    aabb_tree,
-                    self.find_valid_face(
-                        intersection_segments[segment_idx][i].face_hint.unwrap(),
-                        &intersection_segments[segment_idx].segment[i],
-                    ),
-                    &intersection_segments[segment_idx].segment[i],
-                ) {
-                    // Let's update the segment's A endpoint.
-                    intersection_segments[segment_idx][i].barycentric_hint = None;
-                    intersection_segments[segment_idx][i].face_hint = None;
-                    intersection_segments[segment_idx][i].vertex_hint =
+            if intersection_segments[segment_idx][i]
+                .half_edge_hint
+                .is_some()
+                || intersection_segments[segment_idx][i].face_hint.is_some()
+            {
+                println!("{}, {:?}", i, intersection_segments[segment_idx]);
+                panic!("Shouldn't be using half_edge or face hints at this point.");
+            }
+        }
+
+        let starting_vertex = intersection_segments[segment_idx][0].vertex_hint.unwrap()[0];
+        let direction = intersection_segments[segment_idx].segment.direction();
+
+        let mut found = false;
+        for f in self.faces_around_vertex(starting_vertex) {
+            match self.cast_ray_from_vertex_in_triangle(f, starting_vertex, &direction) {
+                Some(VertexRayResult::EdgeIntersection {
+                    half_edge: he,
+                    distance: _t,
+                    edge_parameter: u,
+                }) => {
+                    found = true;
+                    let start = self.half_edges[self.half_edges[he].prev].vertex;
+                    let end = self.half_edges[he].vertex;
+                    let new_pos = point_from_segment_and_u(
+                        &self.vertices[start].position,
+                        &self.vertices[end].position,
+                        &u,
+                    );
+                    let split_result = self.split_edge(aabb_tree, he, &new_pos).unwrap();
+                    let new_point = &self.vertices[split_result.vertex].position;
+
+                    let new_segment =
+                        Segment::new(&new_point, &intersection_segments[segment_idx].segment[1]);
+
+                    Self::create_intersection_segment(
+                        self,
+                        edge_splits,
+                        intersection_segments,
+                        &new_segment,
+                        f,
+                        intersection_segments[segment_idx].coplanar,
+                        true,
+                    );
+
+                    let seg = intersection_segments[segment_idx].b.clone();
+                    let len = intersection_segments.len() - 1;
+                    let new_intersection = &mut intersection_segments[len];
+                    new_intersection.b = seg;
+
+                    intersection_segments[segment_idx].segment[1] = new_point.clone();
+                    intersection_segments[segment_idx].b.face_hint = None;
+                    intersection_segments[segment_idx].b.half_edge_hint = None;
+                    intersection_segments[segment_idx].b.half_edge_u_hint = None;
+                    intersection_segments[segment_idx].b.vertex_hint =
                         Some([split_result.vertex, usize::MAX]);
-                    face_split = true;
-                    vertex_ab[i] = split_result.vertex;
+
+                    intersection_segments[segment_idx].resulting_vertices_pair = [
+                        intersection_segments[segment_idx].a.vertex_hint.unwrap()[0],
+                        split_result.vertex,
+                    ];
+
+                    // new_intersection.resulting_vertices_pair = [
+                    //     split_result.vertex,
+                    //     intersection_segments[segment_idx].a.vertex_hint.unwrap()[0],
+                    // ];
                 }
+                Some(VertexRayResult::CollinearWithEdge(he)) => {
+                    println!("collinear with edge {:?}", he);
+                    found = true;
+                }
+                _ => {}
+            }
+
+            if found {
+                break;
             }
         }
 
-        if face_split
-            && Self::check_for_process_segment_early_exit(
-                self,
-                intersection_segments,
-                segment_idx,
-                &mut vertex_ab,
-            )
-        {
-            return;
-        }
+        if !found {
+            // for he in
+            println!("not found, {:?}", intersection_segments[segment_idx]);
 
-        fn get_face_from_vertex_and_direction<T: Scalar, const N: usize>(
-            mesh: &Mesh<T, N>,
-            vertex: usize,
-            direction: &Vector<T, N>,
-        ) -> usize
-        where
-            Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-            Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-            for<'a> &'a T: Sub<&'a T, Output = T>
-                + Mul<&'a T, Output = T>
-                + Add<&'a T, Output = T>
-                + Div<&'a T, Output = T>
-                + Neg<Output = T>,
-        {
-            for face in mesh.faces_around_vertex(vertex) {
-                let verts = mesh.face_vertices(face);
-                let mut it = verts.iter().copied().filter(|&i| i != vertex);
-
-                let v1 = it.next().unwrap();
-                let v2 = it.next().unwrap();
-
-                let e1_v1 = mesh.vertices[vertex].position.clone();
-                let e1_v2 = mesh.vertices[v1].position.clone();
-                let e2_v1 = mesh.vertices[vertex].position.clone();
-                let e2_v2 = mesh.vertices[v2].position.clone();
-
-                let e1 = (e1_v2 - e1_v1).as_vector();
-                let e2 = (e2_v2 - e2_v1).as_vector();
-
-                let c1 = e1.cross(&direction);
-                let c2 = direction.cross(&e2);
-                let total = e1.cross(&e2);
-
-                let is_between = if total.dot(&total) > T::zero() {
-                    c1.dot(&total) >= T::zero() && c2.dot(&total) >= T::zero()
-                } else {
-                    direction.dot(&e1) >= T::zero()
-                };
-
-                // Face normal alignment test
-                let normal = mesh.face_normal(face);
-                let n_dot_d = normal.dot(&direction);
-                let is_aligned = n_dot_d.is_zero();
-
-                if is_between && is_aligned {
-                    return face;
-                }
-            }
-
-            usize::MAX
-        }
-        fn get_face<T: Scalar, const N: usize>(
-            mesh: &Mesh<T, N>,
-            segment: &IntersectionSegment<T, N>,
-            endpoint: usize,
-        ) -> usize
-        where
-            Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-            Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-            for<'a> &'a T: Sub<&'a T, Output = T>
-                + Mul<&'a T, Output = T>
-                + Add<&'a T, Output = T>
-                + Div<&'a T, Output = T>
-                + Neg<Output = T>,
-        {
-            // This function is a placeholder for the logic that would determine the face
-            // based on the segment direction and the intersection point.
-            // It should return the face index where the segment intersects.
-            if let Some(half_edge) = segment[endpoint].half_edge_hint {
-                let half_edge = mesh.find_valid_half_edge(half_edge, &segment.segment[endpoint]);
-
-                mesh.half_edges[half_edge]
-                    .face
-                    .expect("Half-edge must have a face")
-            } else if let Some(vertices) = segment[endpoint].vertex_hint {
-                if vertices[0] != usize::MAX && vertices[1] == usize::MAX {
-                    let direction = {
-                        if endpoint == 0 {
-                            segment.segment.direction()
-                        } else {
-                            -segment.segment.direction()
-                        }
-                    };
-                    return get_face_from_vertex_and_direction(&mesh, vertices[0], &direction);
-                } else {
-                    panic!("Vertex hint must be set for the endpoint");
-                }
-            } else if let Some(face) = segment[endpoint].face_hint {
-                return mesh.find_valid_face(face, &segment.segment[endpoint]);
-            } else {
-                panic!("Neither half-edge hint nor vertex hint is set for the endpoint");
-            }
-        }
-
-        // Let's find out if both endpoints are on the same face or adjacent.
-        let face_a = get_face(self, &intersection_segments[segment_idx], 0);
-        let face_b = get_face(self, &intersection_segments[segment_idx], 1);
-
-        if self.faces[face_a].removed
-            || self.faces[face_b].removed
-            || face_a == usize::MAX
-            || face_b == usize::MAX
-        {
-            panic!("face removed");
-        }
-
-        if face_a != face_b {
-            // For the sake of consistency, we find the endpoint B by using the segment direction.
-            // We do that because we can't rely on endpoint B being on the same face as endpoint A.
-            let starting_point = &intersection_segments[segment_idx].segment.a;
-
-            // if let Some(half_edge_hint) = intersection_segments[segment_idx].a.half_edge_hint {
-            //     let starting_half_edge = self.find_valid_half_edge(
-            //         intersection_segments[segment_idx].a.half_edge_hint.unwrap(),
-            //         starting_point,
-            //     );
-            // }
-
-            let segment_direction = intersection_segments[segment_idx].segment.direction();
-            if let Some((he, t, _u)) = self.get_first_half_edge_intersection_on_face(
-                face_a,
-                &starting_point,
-                &segment_direction,
-            ) {
-                let v_a = &intersection_segments[segment_idx].segment[0];
-                let new_point = v_a + &(segment_direction).scale(&t).0;
-                // let new_point =
-                //     &intersection_segments[segment_idx].segment[0] + &segment_direction.scale(&t).0;
-
-                let new_segment =
-                    Segment::new(&new_point, &intersection_segments[segment_idx].segment[1]);
-
-                let updated_he = self.find_valid_half_edge(he, &new_point);
-                let updated_he_twin =
-                    self.find_valid_half_edge(self.half_edges[updated_he].twin, &new_point);
-
-                let updated_face = self.half_edges[updated_he_twin]
-                    .face
-                    .expect("Half-edge must have a face");
-
-                if let Some((_he_next, _t_next)) =
-                    self.point_is_on_some_half_edge(updated_face, &new_point)
-                {
-                    Self::create_intersection_segment(
-                        self,
-                        edge_splits,
-                        intersection_segments,
-                        &new_segment,
-                        updated_face,
-                        intersection_segments[segment_idx].coplanar,
-                        true,
-                    );
-
-                    let seg = intersection_segments[segment_idx].b.clone();
-                    let len = intersection_segments.len() - 1;
-                    let new_intersection = &mut intersection_segments[len];
-                    new_intersection.b = seg;
-                } else if let Some((he_next, _t_next, _u)) = self
-                    .get_first_half_edge_intersection_on_face(
-                        self.half_edges[updated_he_twin]
-                            .face
-                            .expect("Half-edge must have a face"),
-                        &new_point,
-                        &segment_direction,
-                    )
-                {
-                    Self::create_intersection_segment(
-                        self,
-                        edge_splits,
-                        intersection_segments,
-                        &new_segment,
-                        self.half_edges[he_next]
-                            .face
-                            .expect("Half-edge must have a face"),
-                        intersection_segments[segment_idx].coplanar,
-                        true,
-                    );
-
-                    let seg = intersection_segments[segment_idx].b.clone();
-                    let len = intersection_segments.len() - 1;
-                    let new_intersection = &mut intersection_segments[len];
-                    new_intersection.b = seg;
-                } else {
-                    panic!(
-                        "Failed to split segment at the intersection point: {:?}",
-                        new_point
-                    );
+            let mut test_faces = Mesh::new();
+            for f in self.faces_around_vertex(starting_vertex) {
+                let mut vs = SmallVec::<[usize; 3]>::new();
+                for v in self.face_vertices(f) {
+                    vs.push(test_faces.add_vertex(self.vertices[v].position.clone()));
                 }
 
-                intersection_segments[segment_idx].segment[1] = new_point;
-                intersection_segments[segment_idx].b.half_edge_hint = Some(updated_he);
-                intersection_segments[segment_idx].b.vertex_hint = Some([
-                    self.half_edges[updated_he].vertex,
-                    self.half_edges[updated_he_twin].vertex,
-                ]);
-
-                vertex_ab[1] = usize::MAX;
-            } else {
-                let mut intersection = Mesh::new();
-                intersection.add_vertex(intersection_segments[segment_idx].segment[0].clone());
-                intersection.add_vertex(intersection_segments[segment_idx].segment[1].clone());
-                let mut vertex = Mesh::new();
-                let mds = intersection_segments[segment_idx].a.vertex_hint.unwrap();
-                vertex.add_vertex(self.vertices[mds[0]].position.clone());
-
-                let face_a_vertices = self.face_vertices(face_a);
-                let mut triangle = Mesh::new();
-                for v in face_a_vertices {
-                    triangle.add_vertex(self.vertices[v].position.clone());
-                }
-                panic!(
-                    "Failed to find a valid half-edge intersection on face {} for point {:?}",
-                    face_a, starting_point
-                );
-            }
-        }
-
-        // Try again.
-        let face_b = get_face(self, &intersection_segments[segment_idx], 1);
-
-        if face_a == face_b {
-            // Process the segment endpoints normally.
-            for i in 0..2 {
-                if vertex_ab[i] == usize::MAX {
-                    if intersection_segments[segment_idx][i]
-                        .half_edge_hint
-                        .is_some()
-                    {
-                        let point = &intersection_segments[segment_idx].segment[i];
-                        let half_edge = self.find_valid_half_edge(
-                            intersection_segments[segment_idx][i]
-                                .half_edge_hint
-                                .unwrap(),
-                            point,
-                        );
-                        // let u = point_position_on_segment(source_p, target_p, point).expect("Failed to compute point position on segment");
-                        let split_result = self
-                            .split_edge(
-                                aabb_tree,
-                                half_edge,
-                                &intersection_segments[segment_idx].segment[i],
-                            )
-                            .expect("Failed to split edge for segment end");
-
-                        vertex_ab[i] = split_result.vertex;
-
-                        if intersection_segments[segment_idx].coplanar {
-                            if let Some(new_edges) = self.half_edge_split_map.get(&half_edge) {
-                                let new_edges_arr = [new_edges.0, new_edges.1];
-                                for i in 0..2 {
-                                    let mut other_vertex = usize::MAX;
-                                    if self.half_edges[new_edges_arr[i]].vertex
-                                        != split_result.vertex
-                                    {
-                                        other_vertex = self.half_edges[new_edges_arr[i]].vertex;
-                                    } else if self.half_edges
-                                        [self.half_edges[new_edges_arr[i]].twin]
-                                        .vertex
-                                        != split_result.vertex
-                                    {
-                                        other_vertex = self.half_edges
-                                            [self.half_edges[new_edges_arr[i]].twin]
-                                            .vertex;
-                                    }
-
-                                    let mut seg = IntersectionSegment::new(
-                                        IntersectionEndPoint::new_default(),
-                                        IntersectionEndPoint::new_default(),
-                                        &Segment::new(
-                                            &self.vertices[split_result.vertex].position,
-                                            &self.vertices[other_vertex].position,
-                                        ),
-                                        intersection_segments[segment_idx].initial_face_reference,
-                                        [split_result.vertex, other_vertex],
-                                        true,
-                                    );
-                                    seg.split = false;
-                                    intersection_segments.push(seg);
-                                }
-                            }
-                        }
-                    }
-                }
+                test_faces.add_triangle(vs[0], vs[1], vs[2]);
             }
 
-            if vertex_ab[0] == usize::MAX || vertex_ab[1] == usize::MAX {
-                // If we still don't have both vertices, we can't proceed.
-                intersection_segments[segment_idx].invalidated = true;
-                return;
-            }
+            let _ = write_obj(&test_faces, "/mnt/v/cgar_meshes/test_faces.obj");
 
-            let he_ab = self.vertices_connection(vertex_ab[0], vertex_ab[1]);
-            if he_ab != usize::MAX {
-                intersection_segments[segment_idx].resulting_vertices_pair =
-                    [vertex_ab[0], vertex_ab[1]];
-            } else {
-                panic!("Failed to connect segment endpoints");
-            }
-        } else {
-            panic!("Faces are not adjacent or equal, but they should be. This is a bug.");
+            let mut test_direction_1 = Mesh::new();
+            test_direction_1.add_vertex(intersection_segments[segment_idx].segment.a.clone());
+            let _ = write_obj(&test_direction_1, "/mnt/v/cgar_meshes/direction_1.obj");
+
+            let mut test_direction_2 = Mesh::new();
+            test_direction_2.add_vertex(intersection_segments[segment_idx].segment.b.clone());
+            let _ = write_obj(&test_direction_2, "/mnt/v/cgar_meshes/direction_2.obj");
+
+            panic!("Failed to split edge.");
         }
     }
 

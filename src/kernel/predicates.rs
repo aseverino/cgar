@@ -24,13 +24,15 @@ use crate::geometry::point::PointOps;
 use crate::geometry::segment::Segment;
 use crate::geometry::vector::VectorOps;
 use crate::geometry::{point::Point, vector::Vector};
-use crate::numeric::scalar::Scalar;
+use crate::numeric::cgar_f64::CgarF64;
+use crate::numeric::scalar::{RefInto, Scalar};
 use std::ops::{Add, Div, Mul, Sub};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TrianglePoint {
     Off,
-    On,
+    OnEdge,
+    OnVertex,
     In,
 }
 
@@ -169,7 +171,7 @@ where
     }
 }
 
-pub fn point_in_or_on_triangle<T: Scalar, const N: usize>(
+pub fn point_in_or_on_triangle_old<T: Scalar, const N: usize>(
     p: &Point<T, N>,
     a: &Point<T, N>,
     b: &Point<T, N>,
@@ -217,9 +219,143 @@ where
     }
 
     // On if any barycentric is within eps of the boundary
-    if u <= e || v <= e || w <= e {
-        return TrianglePoint::On;
+    // Check if on vertex (distance to vertex is zero)
+    if are_equal(p, a) || are_equal(p, b) || are_equal(p, c) {
+        return TrianglePoint::OnVertex;
+    }
+
+    // Check if on edge (one barycentric coordinate is zero)
+    if u.is_zero() || v.is_zero() || w.is_zero() {
+        return TrianglePoint::OnEdge;
     }
 
     TrianglePoint::In
+}
+
+#[inline(always)]
+pub fn point_in_or_on_triangle<T: Scalar + PartialOrd, const N: usize>(
+    p: &Point<T, N>,
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    c: &Point<T, N>,
+) -> TrianglePoint
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    #[inline(always)]
+    fn near_edge_approx<TS: Scalar>(e0: &TS, e1: &TS, e2: &TS) -> bool {
+        let eps = RefInto::<CgarF64>::ref_into(&TS::query_tolerance()).0;
+        let e0f = RefInto::<CgarF64>::ref_into(e0).0;
+        let e1f = RefInto::<CgarF64>::ref_into(e1).0;
+        let e2f = RefInto::<CgarF64>::ref_into(e2).0;
+        e0f.abs() <= eps || e1f.abs() <= eps || e2f.abs() <= eps
+    }
+
+    #[inline(always)]
+    fn classify_from_edges<TS: Scalar + PartialOrd>(e0: &TS, e1: &TS, e2: &TS) -> TrianglePoint {
+        let zero = TS::zero();
+
+        // exact zero flags
+        let z0 = e0.is_zero();
+        let z1 = e1.is_zero();
+        let z2 = e2.is_zero();
+        let zc = (z0 as u8) + (z1 as u8) + (z2 as u8);
+
+        // mixed signs => strictly outside
+        let has_neg = (!z0 && *e0 < zero) || (!z1 && *e1 < zero) || (!z2 && *e2 < zero);
+        let has_pos = (!z0 && *e0 > zero) || (!z1 && *e1 > zero) || (!z2 && *e2 > zero);
+        if has_neg && has_pos {
+            return TrianglePoint::Off;
+        }
+
+        // boundary cases
+        if zc >= 2 {
+            return TrianglePoint::OnVertex; // exactly at a vertex
+        }
+        if zc == 1 {
+            return TrianglePoint::OnEdge; // exactly on a unique edge
+        }
+
+        // inside (all nonzero and same sign)
+        TrianglePoint::In
+    }
+
+    if N == 2 {
+        // degenerate?
+        let abx = &b[0] - &a[0];
+        let aby = &b[1] - &a[1];
+        let acx = &c[0] - &a[0];
+        let acy = &c[1] - &a[1];
+        let area2 = &(&abx * &acy) - &(&aby * &acx);
+        if area2.is_zero() {
+            return TrianglePoint::Off;
+        }
+
+        // edge functions
+        let bcx = &c[0] - &b[0];
+        let bcy = &c[1] - &b[1];
+        let cax = &a[0] - &c[0];
+        let cay = &a[1] - &c[1];
+
+        let apx = &p[0] - &a[0];
+        let apy = &p[1] - &a[1];
+        let bpx = &p[0] - &b[0];
+        let bpy = &p[1] - &b[1];
+        let cpx = &p[0] - &c[0];
+        let cpy = &p[1] - &c[1];
+
+        let e0 = &(&abx * &apy) - &(&aby * &apx);
+        let e1 = &(&bcx * &bpy) - &(&bcy * &bpx);
+        let e2 = &(&cax * &cpy) - &(&cay * &cpx);
+
+        // near-edge fast path -> confirm exact boundary kind
+        if near_edge_approx::<T>(&e0, &e1, &e2) && (e0.is_zero() || e1.is_zero() || e2.is_zero()) {
+            // figure out vertex vs edge by zero-count
+            let zc = (e0.is_zero() as u8) + (e1.is_zero() as u8) + (e2.is_zero() as u8);
+            return if zc >= 2 {
+                TrianglePoint::OnVertex
+            } else {
+                TrianglePoint::OnEdge
+            };
+        }
+
+        return classify_from_edges(&e0, &e1, &e2);
+    } else if N == 3 {
+        // normal and degeneracy
+        let ab = (b - a).as_vector_3();
+        let ac = (c - a).as_vector_3();
+        let n = ab.cross(&ac);
+        if n[0].is_zero() && n[1].is_zero() && n[2].is_zero() {
+            return TrianglePoint::Off;
+        }
+
+        // edge functions projected on n
+        let ap = (p - a).as_vector_3();
+        let bp = (p - b).as_vector_3();
+        let cp = (p - c).as_vector_3();
+        let bc = (c - b).as_vector_3();
+        let ca = (a - c).as_vector_3();
+
+        let e0 = ab.cross(&ap).dot(&n);
+        let e1 = bc.cross(&bp).dot(&n);
+        let e2 = ca.cross(&cp).dot(&n);
+
+        if near_edge_approx::<T>(&e0, &e1, &e2) && (e0.is_zero() || e1.is_zero() || e2.is_zero()) {
+            let zc = (e0.is_zero() as u8) + (e1.is_zero() as u8) + (e2.is_zero() as u8);
+            return if zc >= 2 {
+                TrianglePoint::OnVertex
+            } else {
+                TrianglePoint::OnEdge
+            };
+        }
+
+        return classify_from_edges(&e0, &e1, &e2);
+    } else {
+        panic!("point_in_or_on_triangle only supports N = 2 or N = 3");
+    }
 }

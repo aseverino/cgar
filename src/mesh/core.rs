@@ -40,7 +40,7 @@ use crate::{
     impl_mesh, kernel,
     mesh::{
         basic_types::*, face::Face, half_edge::HalfEdge, intersection_segment::IntersectionSegment,
-        vertex::Vertex,
+        topology::FindFaceResult, vertex::Vertex,
     },
     numeric::{cgar_f64::CgarF64, scalar::Scalar},
 };
@@ -100,8 +100,8 @@ impl_mesh! {
                     seg.resulting_vertices_pair[1],
                 ))
                 .expect(&format!(
-                    "Edge map must contain the segment vertices pair. Segment {}",
-                    seg_idx
+                    "Edge map must contain the segment vertices pair. Segment {}\n{:?}",
+                    seg_idx, seg
                 ));
 
             let face0 = self.half_edges[*he]
@@ -720,9 +720,9 @@ impl_mesh! {
                 for dz in -1i64..=1 {
                     if dx == 0 && dy == 0 && dz == 0 { continue; }
                     let key = (kx + dx, ky + dy, kz + dz);
-        if let Some(bucket) = self.vertex_spatial_hash.get(&key) {
-            for &vi in bucket {
-                if kernel::are_equal(&self.vertices[vi].position, pos) {
+                    if let Some(bucket) = self.vertex_spatial_hash.get(&key) {
+                        for &vi in bucket {
+                            if kernel::are_equal(&self.vertices[vi].position, pos) {
                                 return (vi, true);
                             }
                         }
@@ -990,10 +990,6 @@ impl_mesh! {
 
         let d = self.half_edges[he_cd].vertex;
 
-        // Create new vertex at split position
-
-        // let mut new_face_results = Vec::new();
-
         // 1. Build the new faces (4 in total) and create their half-edges (no twins for now)
         let evs = [
             (w, b), // face wbc
@@ -1157,11 +1153,26 @@ impl_mesh! {
     pub fn split_face(
         &mut self,
         aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
-        face: usize,
+        mut face: usize,
         p: &Point<T, N>,
-    ) -> Option<SplitResult>
+    ) -> Result<SplitResult, &'static str>
     {
-        let face = self.find_valid_face(face, p);
+        match self.find_valid_face(face, p) {
+            FindFaceResult::OnEdge { he, .. } => {
+                return self.split_edge(aabb_tree, he, &p);
+            },
+            FindFaceResult::OnVertex { v, .. } => {
+                return Ok(SplitResult {
+                    kind: SplitResultKind::NoSplit,
+                    vertex: v,
+                    new_faces: [usize::MAX; 4],
+                });
+            },
+            FindFaceResult::Inside { f, .. } => {
+                face = f;
+            },
+        }
+
         if self.faces[face].removed {
             panic!("Cannot find or insert vertex on a removed face");
         }
@@ -1346,7 +1357,7 @@ impl_mesh! {
 
         aabb_tree.invalidate(&face);
 
-        Some(split_result)
+        Ok(split_result)
     }
 
     /// Tangential (Taubin/Desbrun style) smoothing.
