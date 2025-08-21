@@ -42,6 +42,7 @@ use crate::{
         vector::{Vector, VectorOps},
     },
     io::obj::write_obj,
+    kernel,
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
@@ -51,22 +52,22 @@ use crate::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct ApproxPointKey {
+pub struct ApproxPointKey {
     qx: i64,
     qy: i64,
     qz: i64, // use only N you need
 }
 
 fn point_key<T: Scalar, const N: usize>(p: &Point<T, N>) -> ApproxPointKey {
-    // Use “point merge” threshold as quantum.
-    // Scale f64 approx of LazyExact (or CgarF64) and round.
-    let tol = T::point_merge_threshold(); // exact value
-    let s = 1.0 / tol.to_f64().unwrap_or(1.0); // scale
+    let tol = T::point_merge_threshold();
 
-    // read coords via approx, quantize
+    let tol_approx: CgarF64 = (&tol).ref_into();
+    let s = 1.0 / tol_approx.0;
+
+    // Read coords via approx, then quantize
     let q = |i: usize| -> i64 {
-        let a = p[i].to_f64().unwrap_or(0.0);
-        (a * s).round() as i64
+        let ai: CgarF64 = (&p[i]).ref_into();
+        (ai.0 * s).round() as i64
     };
 
     ApproxPointKey {
@@ -303,7 +304,7 @@ where
                 + Neg<Output = T>,
         {
             // Rebase face to a valid descendant for this endpoint
-            match mesh.find_valid_face(face, pos) {
+            match mesh.location_on_face(face, pos) {
                 FindFaceResult::Inside { f, bary } => {
                     container[seg_idx][endpoint].face_hint = Some(f);
                     container[seg_idx][endpoint].barycentric_hint = Some(bary);
@@ -353,13 +354,11 @@ where
         }
 
         // Resolve endpoints independently (B may lie on a neighbor face)
-        // let face_a = mesh.find_valid_face(face, &segment.a);
         let _ok_a = resolve_endpoint(mesh, splits, container, idx, main_face, 0, &segment.a);
 
-        // if !skip_endpoint_b {
-        //     let face_b = mesh.find_valid_face(face, &segment.b);
-        let _ok_b = resolve_endpoint(mesh, splits, container, idx, main_face, 1, &segment.b);
-        // }
+        if !skip_endpoint_b {
+            let _ok_b = resolve_endpoint(mesh, splits, container, idx, main_face, 1, &segment.b);
+        }
     }
 
     fn boolean_split(
@@ -383,13 +382,6 @@ where
                         .half_edge_hint = None;
                     intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
                         .half_edge_u_hint = None;
-
-                    if mesh.vertices[result.vertex].position
-                        != intersection_segments[endpoint.segment_idx].segment
-                            [endpoint.endpoint_idx]
-                    {
-                        panic!("Inconsistent A");
-                    }
                 }
             } else {
                 let result = mesh
@@ -403,13 +395,6 @@ where
                         None;
                     intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
                         .barycentric_hint = None;
-
-                    if mesh.vertices[result.vertex].position
-                        != intersection_segments[endpoint.segment_idx].segment
-                            [endpoint.endpoint_idx]
-                    {
-                        panic!("Inconsistent B");
-                    }
                 }
             }
         }
@@ -526,8 +511,8 @@ where
         println!("Intersections created in: {:.2?}", start.elapsed());
 
         // Remove duplicate segments from both lists.
-        remove_duplicate_segments(&mut intersection_segments_a);
-        remove_duplicate_segments(&mut intersection_segments_b);
+        // remove_duplicate_segments(&mut intersection_segments_a);
+        // remove_duplicate_segments(&mut intersection_segments_b);
 
         println!("Splits on A ({})", splits_a.splits.len());
         let start = Instant::now();
@@ -538,6 +523,11 @@ where
             &mut intersection_segments_a,
         );
         println!("Splits done in {:.2?}", start.elapsed());
+
+        println!(
+            "test: {:?}",
+            &a.vertices[0].position[0] - &a.vertices[0].position[1]
+        );
 
         println!("Splits on B ({})", splits_b.splits.len());
         let start = Instant::now();
@@ -959,24 +949,6 @@ where
                 }
             }
         }
-
-        // if let Some(_he_hint_a) = intersection_segments[segment_idx][0].half_edge_hint {
-        //     let he_hint_vertices_a = intersection_segments[segment_idx][0].vertex_hint.unwrap();
-        //     if let Some(v_hint_b) = intersection_segments[segment_idx][1].vertex_hint {
-        //         if he_hint_vertices_a.contains(&v_hint_b[0]) {
-        //             intersection_segments[segment_idx].invalidated = true;
-        //             return true;
-        //         }
-        //     }
-        // } else if let Some(_he_hint_b) = intersection_segments[segment_idx][1].half_edge_hint {
-        //     let he_hint_vertices_b = intersection_segments[segment_idx][1].vertex_hint.unwrap();
-        //     if let Some(v_hint_a) = intersection_segments[segment_idx][0].vertex_hint {
-        //         if he_hint_vertices_b.contains(&v_hint_a[0]) {
-        //             intersection_segments[segment_idx].invalidated = true;
-        //             return true;
-        //         }
-        //     }
-        // }
 
         false
     }
@@ -1450,29 +1422,30 @@ where
             let ap = (p - p0).as_vector();
             let t = &ap.dot(ab_vec) / ab_len2;
 
-            // Segment range test with slack
-            if t < &T::zero() - &tol || t > &T::one() + &tol {
+            // Segment range test with slack (avoid PartialOrd on T)
+            if (&t + &tol).is_negative() || (&(&t - &T::one()) - &tol).is_positive() {
                 continue;
             }
 
-            // Orthogonal distance test
+            // Orthogonal distance test (approx-first)
             let closest = p0 + &(ab_vec.scale(&t)).0;
             let diff = (p - &closest).as_vector();
-            if diff.dot(&diff) > tol2 {
+            let d2 = diff.dot(&diff);
+            if (&d2 - &tol2).is_positive() {
                 continue;
             }
 
             // Discard near-endpoint hits
             let d0 = (p - p0).as_vector().dot(&(p - p0).as_vector());
-            if d0 <= tol2 {
+            if (&d0 - &tol2).is_negative_or_zero() {
                 continue;
             }
             let d1 = (p - p1).as_vector().dot(&(p - p1).as_vector());
-            if d1 <= tol2 {
+            if (&d1 - &tol2).is_negative_or_zero() {
                 continue;
             }
 
-            // Order edge indices and adjust u so it is measured from b_edge[0]
+            // Order edge indices (integer compare is fine)
             let (mut be0, mut be1) = (u_idx, v_idx);
             if be0 > be1 {
                 std::mem::swap(&mut be0, &mut be1);

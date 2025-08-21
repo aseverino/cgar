@@ -60,7 +60,8 @@ impl_mesh! {
 
     pub fn position_to_hash_key(&self, pos: &Point<T, N>) -> (i64, i64, i64) {
         // Cell size tied to merge threshold keeps hashing consistent with equality.
-        let cell = T::point_merge_threshold().to_f64().unwrap_or(1e-5);
+        let cell_approx: CgarF64 = T::point_merge_threshold().ref_into(); // cheap approx
+        let cell = cell_approx.0;
         let inv = if cell.is_finite() && cell > 0.0 { 1.0 / cell } else { 1.0e5 };
 
         #[inline(always)]
@@ -73,7 +74,12 @@ impl_mesh! {
 
         // Support any N; unused axes map to 0.
         let get = |i: usize| -> f64 {
-            if i < N { pos[i].to_f64().unwrap_or(0.0) } else { 0.0 }
+            if i < N {
+                let ai: CgarF64 = (&pos[i]).ref_into(); // cheap approx, no exact
+                ai.0
+            } else {
+                0.0
+            }
         };
 
         let x = floor_i64(get(0) * inv);
@@ -627,29 +633,23 @@ impl_mesh! {
             let mut max_coords = from_fn(|_| CgarF64::from(0));
 
             for i in 0..N {
-                // Direct comparison without intermediate storage
-                let coord0 = &p0[i];
-                let coord1 = &p1[i];
-                let coord2 = &p2[i];
+                // Use approximate comparisons via CgarF64 to avoid forcing exact on T.
+                let a0: CgarF64 = (&p0[i]).ref_into();
+                let a1: CgarF64 = (&p1[i]).ref_into();
+                let a2: CgarF64 = (&p2[i]).ref_into();
 
-                let min_val = if coord0 <= coord1 && coord0 <= coord2 {
-                    coord0
-                } else if coord1 <= coord2 {
-                    coord1
-                } else {
-                    coord2
-                };
+                // Min
+                let mut minv = &a0;
+                if a1.0 < minv.0 { minv = &a1; }
+                if a2.0 < minv.0 { minv = &a2; }
 
-                let max_val = if coord0 >= coord1 && coord0 >= coord2 {
-                    coord0
-                } else if coord1 >= coord2 {
-                    coord1
-                } else {
-                    coord2
-                };
+                // Max
+                let mut maxv = &a0;
+                if a1.0 > maxv.0 { maxv = &a1; }
+                if a2.0 > maxv.0 { maxv = &a2; }
 
-                min_coords[i] = min_val.clone().into();
-                max_coords[i] = max_val.clone().into();
+                min_coords[i] = minv.clone();
+                max_coords[i] = maxv.clone();
             }
 
             let aabb =
@@ -1592,37 +1592,39 @@ pub fn compute_triangle_aabb<T: Scalar, const N: usize>(
     p2: &Point<T, N>,
 ) -> Aabb<CgarF64, N, Point<CgarF64, N>>
 where
-    T: Into<CgarF64>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+    T: Scalar + crate::numeric::scalar::RefInto<CgarF64>,
 {
-    let mut min_coords = p0.coords().clone();
-    let mut max_coords = p0.coords().clone();
+    // Compute per-axis min/max using approximate values to avoid forcing exact on T.
+    let mut min_coords = std::array::from_fn(|_| CgarF64::from(0.0));
+    let mut max_coords = std::array::from_fn(|_| CgarF64::from(0.0));
 
-    // Compare with p1
     for i in 0..N {
-        if p1[i] < min_coords[i] {
-            min_coords[i] = p1[i].clone();
+        // Cheap approx conversions; do not realize exact
+        let a0: CgarF64 = crate::numeric::scalar::RefInto::ref_into(&p0[i]);
+        let a1: CgarF64 = crate::numeric::scalar::RefInto::ref_into(&p1[i]);
+        let a2: CgarF64 = crate::numeric::scalar::RefInto::ref_into(&p2[i]);
+
+        // Min
+        let mut minv = &a0;
+        if &a1.0 < &minv.0 {
+            minv = &a1;
         }
-        if p1[i] > max_coords[i] {
-            max_coords[i] = p1[i].clone();
+        if &a2.0 < &minv.0 {
+            minv = &a2;
         }
+
+        // Max
+        let mut maxv = minv; // start from current min to reduce comparisons
+        if &a1.0 > &maxv.0 {
+            maxv = &a1;
+        }
+        if &a2.0 > &maxv.0 {
+            maxv = &a2;
+        }
+
+        min_coords[i] = minv.clone();
+        max_coords[i] = maxv.clone();
     }
 
-    // Compare with p2
-    for i in 0..N {
-        if p2[i] < min_coords[i] {
-            min_coords[i] = p2[i].clone();
-        }
-        if p2[i] > max_coords[i] {
-            max_coords[i] = p2[i].clone();
-        }
-    }
-
-    Aabb::from_points(
-        &Point::from_vals(min_coords.into()),
-        &Point::from_vals(max_coords.into()),
-    )
+    Aabb::from_points(&Point::from_vals(min_coords), &Point::from_vals(max_coords))
 }

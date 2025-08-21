@@ -21,6 +21,7 @@
 // SOFTWARE.
 
 use std::{
+    cmp::Ordering,
     collections::HashSet,
     ops::{Add, Div, Mul, Sub},
     time::Instant,
@@ -107,10 +108,21 @@ where
             }
             let t0 = &(&diff[0] * &da[0] + &diff[1] * &da[1]) / &len2;
             let t1 = &(&(&b1[0] - &a0[0]) * &da[0] + &(&b1[1] - &a0[1]) * &da[1]) / &len2;
-            let (tmin, tmax) = if t0 < t1 { (t0, t1) } else { (t1, t0) };
-            let start = tmin.max(0.0.into());
-            let end = tmax.min(1.0.into());
-            if start <= end {
+            let swap = (&t0 - &t1).is_positive();
+            let (tmin, tmax) = if swap { (t1, t0) } else { (t0, t1) };
+            let zero = T::zero();
+            let one = T::one();
+            let start = if tmin.is_negative() {
+                zero.clone()
+            } else {
+                tmin.clone()
+            };
+            let end = if (&tmax - &one).is_positive() {
+                one.clone()
+            } else {
+                tmax.clone()
+            };
+            if (&end - &start).is_positive_or_zero() {
                 let p_start = Point::<T, 2>::from_vals([
                     &a0[0] + &(&da[0] * &start),
                     &a0[1] + &(&da[1] * &start),
@@ -129,10 +141,12 @@ where
     let s = &(&diff[0] * &db[1] - &diff[1] * &db[0]) / &denom;
     let u = &(&diff[0] * &da[1] - &diff[1] * &da[0]) / &denom;
 
-    if s >= (-EPS).into()
-        && s <= (1.0 + EPS).into()
-        && u >= (-EPS).into()
-        && u <= (1.0 + EPS).into()
+    let eps = T::tolerance();
+    let one = T::one();
+    if (&s + &eps).is_positive_or_zero()
+        && (&(&one + &eps) - &s).is_positive_or_zero()
+        && (&u + &eps).is_positive_or_zero()
+        && (&(&one + &eps) - &u).is_positive_or_zero()
     {
         let ix = &a0[0] + &(&s * &da[0]);
         let iy = &a0[1] + &(&s * &da[1]);
@@ -169,16 +183,16 @@ where
 
     let mut min = p0.clone();
     let mut max = p0;
-    if &p1 < &min {
+    if (&p1 - &min).is_negative() {
         min = p1.clone();
     }
-    if &p1 > &max {
+    if (&p1 - &max).is_positive() {
         max = p1.clone();
     }
-    if &p2 < &min {
+    if (&p2 - &min).is_negative() {
         min = p2.clone();
     }
-    if &p2 > &max {
+    if (&p2 - &max).is_positive() {
         max = p2.clone();
     }
     (min, max)
@@ -229,13 +243,19 @@ where
         }
     }
 
-    // 5) dedupe
-    let mut set = HashSet::new();
+    // 5) dedupe by geometric distance using point-merge threshold (approx-first)
+    let merge = T::point_merge_threshold();
+    let merge2 = &merge * &merge;
     let mut uniq: Vec<Point<T, N>> = Vec::new();
-    for p in pts {
-        if set.insert(p.clone()) {
-            uniq.push(p);
+    'dedupe_coplanar: for p3 in pts {
+        for q3 in &uniq {
+            let d = (&p3 - q3).as_vector();
+            let d2 = d.dot(&d);
+            if (&d2 - &merge2).is_negative_or_zero() {
+                continue 'dedupe_coplanar;
+            }
         }
+        uniq.push(p3);
     }
 
     match uniq.len() {
@@ -278,11 +298,21 @@ where
     // 1) sort indices by (x, then y)
     let mut idxs: Vec<usize> = (0..n).collect();
     idxs.sort_by(|&i, &j| {
-        let xi = &pts[i].coords[0];
-        let xj = &pts[j].coords[0];
-        xi.partial_cmp(xj)
-            .unwrap()
-            .then_with(|| (&pts[i].coords[1]).partial_cmp(&pts[j].coords[1]).unwrap())
+        let dx = &pts[i].coords[0] - &pts[j].coords[0];
+        if dx.is_negative() {
+            Ordering::Less
+        } else if dx.is_positive() {
+            Ordering::Greater
+        } else {
+            let dy = &pts[i].coords[1] - &pts[j].coords[1];
+            if dy.is_negative() {
+                Ordering::Less
+            } else if dy.is_positive() {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        }
     });
 
     // 2) build lower hull
@@ -301,7 +331,7 @@ where
                 let y2 = &pts[i].coords[1] - &pts_j.coords[1];
                 &x1 * &y2 - &y1 * &x2
             };
-            if cross <= T::zero() {
+            if cross.is_negative_or_zero() {
                 lower.pop();
             } else {
                 break;
@@ -325,7 +355,7 @@ where
                 let y2 = &pts[i].coords[1] - &pts_j.coords[1];
                 &x1 * &y2 - &y1 * &x2
             };
-            if cross <= T::zero() {
+            if cross.is_negative_or_zero() {
                 upper.pop();
             } else {
                 break;
@@ -431,13 +461,19 @@ where
         }
     }
 
-    // 5) Deduplicate exactly via HashSet
-    let mut set = HashSet::new();
-    let mut uniq = Vec::new();
-    for p in pts {
-        if set.insert(p.clone()) {
-            uniq.push(p);
+    // 5) Deduplicate by geometric distance using point-merge threshold
+    let merge = T::point_merge_threshold();
+    let merge2 = &merge * &merge;
+    let mut uniq: Vec<Point<T, N>> = Vec::new();
+    'dedupe_non_coplanar: for p3 in pts {
+        for q3 in &uniq {
+            let d = (&p3 - q3).as_vector();
+            let d2 = d.dot(&d);
+            if (&d2 - &merge2).is_negative_or_zero() {
+                continue 'dedupe_non_coplanar;
+            }
         }
+        uniq.push(p3);
     }
 
     // 6) Make sure both points are on T1
@@ -461,7 +497,7 @@ where
                 for j in (i + 1)..on_a.len() {
                     let diff = (&on_a[j] - &on_a[i]).as_vector();
                     let dist_sq = diff.dot(&diff);
-                    if dist_sq > max_dist_sq {
+                    if (&dist_sq - &max_dist_sq).is_positive() {
                         max_dist_sq = dist_sq;
                         best_pair = (i, j);
                     }
@@ -556,11 +592,14 @@ where
 }
 
 /// Given a normal, return the indices of the two axes to keep (largest dropped).
-fn coplanar_axes<T: Scalar, const N: usize>(n: &Vector<T, N>) -> (usize, usize, usize) {
+fn coplanar_axes<T: Scalar, const N: usize>(n: &Vector<T, N>) -> (usize, usize, usize)
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>,
+{
     let na = [n[0].abs(), n[1].abs(), n[2].abs()];
-    let (i0, i1, drop) = if na[0] > na[1] && na[0] > na[2] {
+    let (i0, i1, drop) = if (&na[0] - &na[1]).is_positive() && (&na[0] - &na[2]).is_positive() {
         (1, 2, 0)
-    } else if na[1] > na[2] {
+    } else if (&na[1] - &na[2]).is_positive() {
         (0, 2, 1)
     } else {
         (0, 1, 2)
@@ -671,16 +710,16 @@ where
             let t_hit = &(&T::zero() - &f0) / &denom; // t where it enters/leaves
             if f0_neg {
                 // entering
-                if t_hit > t0 {
+                if (&t_hit - &t0).is_positive() {
                     t0 = t_hit;
                 }
             } else {
                 // leaving
-                if t_hit < t1 {
+                if (&t_hit - &t1).is_negative() {
                     t1 = t_hit;
                 }
             }
-            if !(t0 < t1) && !(&t0 - &t1).is_negative() {
+            if (&t0 - &t1).is_positive_or_zero() {
                 return None;
             }
         }
@@ -689,7 +728,7 @@ where
     if t0.is_negative() && t1.is_negative() {
         return None;
     }
-    if t0.is_positive() && t0 >= t1 {
+    if t0.is_positive() && (&t0 - &t1).is_positive_or_zero() {
         return None;
     }
 

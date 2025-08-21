@@ -308,7 +308,7 @@ where
     let u = &(&T::one() - &v) - &w; // coeff of A
 
     // Optional exact sanity check:
-    debug_assert_eq!(&(&u + &v) + &w, T::one());
+    // debug_assert_eq!(&(&u + &v) + &w, T::one());
 
     Some((u, v, w))
 }

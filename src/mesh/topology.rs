@@ -42,7 +42,10 @@ use crate::{
     impl_mesh,
     kernel::{self, predicates::TrianglePoint},
     mesh::basic_types::{Mesh, PairRing, PointInMeshResult, RayCastResult, Triangle, VertexRing},
-    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    numeric::{
+        cgar_f64::CgarF64,
+        scalar::{RefInto, Scalar},
+    },
     operations::Zero,
 };
 
@@ -522,63 +525,86 @@ impl_mesh! {
     ) -> Option<RayCastResult>
     where
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        T: crate::numeric::scalar::RefInto<CgarF64>,
+        for<'a> &'a T: Add<&'a T, Output = T>
+            + Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Div<&'a T, Output = T>,
     {
+        use std::cmp::Ordering;
+
         let mut hits: Vec<T> = Vec::new();
         let mut touches_surface = false;
 
-        // Create ray AABB for tree query
+        // Create ray AABB for tree query using approximate conversion (no exact)
         let far_multiplier = T::from(1000.0);
-        let far_point = Point::<CgarF64, N>::from_vals(from_fn(|i|
-            (&p[i] + &(&dir[i] * &far_multiplier))).into()
-        );
-        let p_f = Point::<CgarF64, N>::from_vals(from_fn(|i| p[i].clone().into()));
+        let far_point = Point::<CgarF64, N>::from_vals(std::array::from_fn(|i| {
+            let tmp = &p[i] + &(&dir[i] * &far_multiplier);
+            tmp.into()
+        }));
+        let p_f = Point::<CgarF64, N>::from_vals(std::array::from_fn(|i| {
+            p[i].clone().into()
+        }));
         let ray_aabb = Aabb::<CgarF64, N, Point<CgarF64, N>>::from_points(&p_f, &far_point);
 
         // Query tree for faces that intersect ray
         let mut candidate_faces = Vec::new();
         tree.query(&ray_aabb, &mut candidate_faces);
 
-        // Test only candidate faces (not all faces!)
+        let tol = T::tolerance();
+
+        // Test only candidate faces
         for &fi in &candidate_faces {
             let vs_idxs = self.face_vertices(*fi);
-
-            // Use references to existing vertex positions
-            let vs = [ &self.vertices[vs_idxs[0]].position,
-            &self.vertices[vs_idxs[1]].position,
-            &self.vertices[vs_idxs[2]].position ];
+            let vs = [
+                &self.vertices[vs_idxs[0]].position,
+                &self.vertices[vs_idxs[1]].position,
+                &self.vertices[vs_idxs[2]].position,
+            ];
 
             if N == 3 {
-                if let Some(t) = ray_triangle_intersection(&p, &dir, from_fn(|i| vs[i])) {
-                    if t.abs() <= T::tolerance() {
+                if let Some(t) = ray_triangle_intersection(p, dir, std::array::from_fn(|i| vs[i])) {
+                    let at = t.abs();
+                    if (&at - &tol).is_negative_or_zero() {
                         touches_surface = true;
-                    } else if t > T::tolerance() {
+                    } else if (&t - &tol).is_positive() {
                         hits.push(t);
                     }
                 }
             }
-
         }
 
         if hits.is_empty() {
             return None;
         }
 
-        // Remove duplicates and count
-        hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // Sort using sign-based comparator to avoid PartialOrd exact
+        hits.sort_by(|a, b| {
+            let d = a - b;
+            if d.is_negative() {
+                Ordering::Less
+            } else if d.is_positive() {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        });
 
         if touches_surface {
             Some(RayCastResult::OnSurface)
-        } else if !hits.is_empty() {
-            // Deduplicate and count intersections (same logic as before)
-            hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let mut filtered_hits = 0;
-            let mut last_t = None;
+        } else {
+            // Deduplicate by tolerance using sign checks
+            let mut filtered_hits = 0usize;
+            let mut last_t: Option<T> = None;
 
-            for t in hits {
-                if last_t
-                    .as_ref()
-                    .map_or(true, |lt: &T| (&t - &lt).abs() > T::tolerance())
-                {
+            for t in hits.into_iter() {
+                if let Some(ref lt) = last_t {
+                    let diff = (&t - lt).abs();
+                    if (&diff - &tol).is_positive() {
+                        filtered_hits += 1;
+                        last_t = Some(t);
+                    }
+                } else {
                     filtered_hits += 1;
                     last_t = Some(t);
                 }
@@ -589,8 +615,6 @@ impl_mesh! {
             } else {
                 RayCastResult::Outside
             })
-        } else {
-            None
         }
     }
 
@@ -1172,6 +1196,69 @@ impl_mesh! {
         None
     }
 
+    #[inline]
+    pub fn face_edges(&self, f: usize) -> (usize, usize, usize) {
+        let e0 = self.faces[f].half_edge;
+        let e1 = self.half_edges[e0].next;
+        let e2 = self.half_edges[e1].next;
+        debug_assert_eq!(self.half_edges[e2].next, e0);
+        (e0, e1, e2) // e0: a->b, e1: b->c, e2: c->a
+    }
+
+    // Map bary zero to (edge, u) on face f:
+    // l2==0 => edge a-b -> e0, u=l1;  l0==0 => edge b-c -> e1, u=l2;  l1==0 => edge c-a -> e2, u=l0.
+    pub fn edge_and_u_from_bary_zero(&self, f: usize, l0: &T, l1: &T, l2: &T) -> Option<(usize, T)> {
+        let (e0,e1,e2) = self.face_edges(f);
+        if l2.is_zero() { return Some((e0, l1.clone())); }
+        if l0.is_zero() { return Some((e1, l2.clone())); }
+        if l1.is_zero() { return Some((e2, l0.clone())); }
+        None
+    }
+
+    // Two bary zeros => vertex id on face f.
+    pub fn vertex_from_bary_zero(&self, f: usize, l0: &T, l1: &T, l2: &T) -> Option<usize> {
+        let [a,b,c] = self.face_vertices(f);
+        if l1.is_zero() && l2.is_zero() { return Some(a); }
+        if l2.is_zero() && l0.is_zero() { return Some(b); }
+        if l0.is_zero() && l1.is_zero() { return Some(c); }
+        None
+    }
+
+    pub fn location_on_face(&self, f: usize, p: &Point<T, N>)  -> FindFaceResult<T> {
+        let zero = T::zero();
+        let one  = T::one();
+
+        let [i0, i1, i2] = self.face_vertices(f);
+        let (l0, l1, l2) = barycentric_coords(
+                p,
+                &self.vertices[i0].position,
+                &self.vertices[i1].position,
+                &self.vertices[i2].position,
+            ).unwrap();
+
+        // OnEdge (exactly one zero)
+        let zc = l0.is_zero() as u8 + l1.is_zero() as u8 + l2.is_zero() as u8;
+        if zc == 1 {
+            if let Some((he_guess, mut u_bary)) = self.edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
+                if u_bary.is_negative() { u_bary = zero.clone(); }
+                if (&u_bary - &one).is_positive() { u_bary = one.clone(); }
+                return FindFaceResult::OnEdge { f, he: he_guess, u: u_bary };
+            }
+        }
+
+        // OnVertex (exactly two zeros)
+        if zc >= 2 {
+            if let Some(v_id) = self.vertex_from_bary_zero(f, &l0, &l1, &l2) {
+                return FindFaceResult::OnVertex { f, v: v_id };
+            }
+            // Fallback if ambiguous: treat as inside
+            return FindFaceResult::Inside { f, bary: (l0, l1, l2) };
+        }
+
+        // Inside (no zeros, all non-negative)
+        return FindFaceResult::Inside { f, bary: (l0, l1, l2) };
+    }
+
     /// Returns (face_id, half_edge_id, vertex_id, u).
     /// Order of detection priority: OnEdge -> OnVertex -> Inside.
     /// - Inside:    (f, usize::MAX, usize::MAX, 0)
@@ -1192,24 +1279,6 @@ impl_mesh! {
 
         let zero = T::zero();
         let one  = T::one();
-
-        #[inline]
-        fn get_face_cycle<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> (usize, usize, usize) {
-            let e0 = mesh.faces[f].half_edge;
-            let e1 = mesh.half_edges[e0].next;
-            let e2 = mesh.half_edges[e1].next;
-            debug_assert_eq!(mesh.half_edges[e2].next, e0);
-            (e0, e1, e2) // e0: a->b, e1: b->c, e2: c->a
-        }
-
-        #[inline]
-        fn face_vertices<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> [usize; 3] {
-            let (e0, e1, _e2) = get_face_cycle(mesh, f);
-            let a = mesh.half_edges[mesh.half_edges[e0].prev].vertex; // origin(e0)
-            let b = mesh.half_edges[e0].vertex;                       // target(e0)
-            let c = mesh.half_edges[e1].vertex;                       // target(e1)
-            [a, b, c]
-        }
 
         #[inline]
         fn live_face_degenerate<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> bool
@@ -1249,7 +1318,7 @@ impl_mesh! {
 
         // Exact barycentrics (l0,l1,l2) with respect to face f, using current vertex positions
         let bary_live = |f: usize| -> (T, T, T) {
-            let [i0,i1,i2] = face_vertices(self, f);
+            let [i0,i1,i2] = self.face_vertices(f);
             barycentric_coords(
                 point,
                 &self.vertices[i0].position,
@@ -1258,51 +1327,9 @@ impl_mesh! {
             ).unwrap()
         };
 
-        // Map bary zero to (edge, u) on face f:
-        // l2==0 => edge a-b -> e0, u=l1;  l0==0 => edge b-c -> e1, u=l2;  l1==0 => edge c-a -> e2, u=l0.
-        let edge_and_u_from_bary_zero = |f: usize, l0: &T, l1: &T, l2: &T| -> Option<(usize, T)> {
-            let (e0,e1,e2) = get_face_cycle(self, f);
-            if l2.is_zero() { return Some((e0, l1.clone())); }
-            if l0.is_zero() { return Some((e1, l2.clone())); }
-            if l1.is_zero() { return Some((e2, l0.clone())); }
-            None
-        };
-
-        // Two bary zeros => vertex id on face f.
-        let vertex_from_bary_zero = |f: usize, l0: &T, l1: &T, l2: &T| -> Option<usize> {
-            let [a,b,c] = face_vertices(self, f);
-            if l1.is_zero() && l2.is_zero() { return Some(a); }
-            if l2.is_zero() && l0.is_zero() { return Some(b); }
-            if l0.is_zero() && l1.is_zero() { return Some(c); }
-            None
-        };
-
-        // Sanity/ownership gate: ensure returned half-edge really owns the point; flip to twin if needed.
-        let verify_he_and_fix_u = |f: usize, he: usize| -> Option<(usize, T)> {
-            let tail = self.half_edges[self.half_edges[he].twin].vertex;
-            let head = self.half_edges[he].vertex;
-            let a = &self.vertices[tail].position;
-            let b = &self.vertices[head].position;
-
-            if let Some(u_exact) = kernel::point_u_on_segment(a, b, point) {
-                return Some((he, u_exact));
-            }
-            // Try twin orientation
-            let he_tw = self.half_edges[he].twin;
-            let tail2 = self.half_edges[self.half_edges[he_tw].twin].vertex;
-            let head2 = self.half_edges[he_tw].vertex;
-            let a2 = &self.vertices[tail2].position;
-            let b2 = &self.vertices[head2].position;
-
-            if let Some(u_exact_tw) = kernel::point_u_on_segment(a2, b2, point) {
-                return Some((he_tw, u_exact_tw));
-            }
-            None
-        };
-
         // neighbors of a live face via twins (skip borders / removed faces)
         let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &HashSet<usize>| {
-            let (e0,e1,e2) = get_face_cycle(mesh, f);
+            let (e0,e1,e2) = self.face_edges(f);
             for e in [e0,e1,e2] {
                 let tw = mesh.half_edges[e].twin;
                 if let Some(fnbr) = mesh.half_edges[tw].face {
@@ -1327,7 +1354,7 @@ impl_mesh! {
             if !self.faces[f].removed {
                 // Barycentric-driven membership and priority: Edge -> Vertex -> Inside
                 let (l0, l1, l2) = bary_live(f);
-                let neg = |x: &T| -> bool { x < &zero };
+                let neg = |x: &T| -> bool { x.is_negative() };
 
                 if neg(&l0) || neg(&l1) || neg(&l2) {
                     // Off this face; explore neighbors
@@ -1335,33 +1362,7 @@ impl_mesh! {
                     continue;
                 }
 
-                // OnEdge (exactly one zero)
-                let zc = l0.is_zero() as u8 + l1.is_zero() as u8 + l2.is_zero() as u8;
-                if zc == 1 {
-                    if let Some((he_guess, _u_bary)) = edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
-                        if let Some((he_final, u_final)) = verify_he_and_fix_u(f, he_guess) {
-                            return FindFaceResult::OnEdge { f, he: he_final, u: u_final };
-                        }
-                    }
-                    // If verification failed, still treat as edge using bary u (clamped)
-                    if let Some((he_guess, mut u_bary)) = edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
-                        if u_bary < zero { u_bary = zero.clone(); }
-                        if u_bary > one  { u_bary = one.clone(); }
-                        return FindFaceResult::OnEdge { f, he: he_guess, u: u_bary };
-                    }
-                }
-
-                // OnVertex (exactly two zeros)
-                if zc >= 2 {
-                    if let Some(v_id) = vertex_from_bary_zero(f, &l0, &l1, &l2) {
-                        return FindFaceResult::OnVertex { f, v: v_id };
-                    }
-                    // Fallback if ambiguous: treat as inside
-                    return FindFaceResult::Inside { f, bary: (l0, l1, l2) };
-                }
-
-                // Inside (no zeros, all non-negative)
-                return FindFaceResult::Inside { f, bary: (l0, l1, l2) };
+                return self.location_on_face(f, point);
             }
 
             // Removed face: descend via recorded triangles (use current vertex positions for test)
@@ -1378,7 +1379,7 @@ impl_mesh! {
                         &self.vertices[i2].position,
                     ).unwrap();
 
-                    let neg = |x: &T| -> bool { x < &zero };
+                    let neg = |x: &T| -> bool { x.is_negative() };
                     if neg(&l0) || neg(&l1) || neg(&l2) {
                         continue; // Off
                     }
@@ -1411,25 +1412,20 @@ impl_mesh! {
             if live_face_degenerate(self, f) { continue; }
 
             let (l0,l1,l2) = bary_live(f);
-            let neg = |x: &T| -> bool { x < &zero };
+            let neg = |x: &T| -> bool { x.is_negative() };
             if neg(&l0) || neg(&l1) || neg(&l2) { continue; }
 
             let zc = l0.is_zero() as u8 + l1.is_zero() as u8 + l2.is_zero() as u8;
 
             if zc == 1 && best_edge.is_none() {
-                if let Some((he_guess, _u_bary)) = edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
-                    if let Some((he_final, u_final)) = verify_he_and_fix_u(f, he_guess) {
-                        best_edge = Some((f, he_final, u_final));
-                        break; // edge has highest priority
-                    } else if let Some((he_guess2, mut u_bary2)) = edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
-                        if u_bary2 < zero { u_bary2 = zero.clone(); }
-                        if u_bary2 > one  { u_bary2 = one.clone(); }
-                        best_edge = Some((f, he_guess2, u_bary2));
-                        break;
-                    }
+                if let Some((he_guess, mut u_bary2)) = self.edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
+                    if u_bary2.is_negative() { u_bary2 = zero.clone(); }
+                    if (&u_bary2 - &one).is_positive() { u_bary2 = one.clone(); }
+                    best_edge = Some((f, he_guess, u_bary2));
+                    break; // edge has highest priority
                 }
             } else if zc >= 2 && best_vertex.is_none() {
-                if let Some(v_id) = vertex_from_bary_zero(f, &l0, &l1, &l2) {
+                if let Some(v_id) = self.vertex_from_bary_zero(f, &l0, &l1, &l2) {
                     best_vertex = Some((f, v_id));
                 }
             } else if zc == 0 && best_inside.is_none() {
@@ -1442,6 +1438,425 @@ impl_mesh! {
         if let Some((f, bary))  = best_inside { return FindFaceResult::Inside { f, bary }; }
 
         panic!("find_valid_face: could not locate a face/edge/vertex for the point starting from {}", start_face);
+    }
+
+    /// Returns (face_id, half_edge_id, vertex_id, u).
+    /// - Inside:    (f, usize::MAX, usize::MAX, 0)
+    /// - OnEdge:    (f, he_of_f_edge, usize::MAX, u in [0,1] along that half-edge)
+    /// - OnVertex:  (f, usize::MAX, vertex_id, 0)
+    pub fn find_valid_face_working_but_weird(&self, start_face: usize, point: &Point<T, N>) -> (usize, usize, usize, T)
+    where
+        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
+        Vector<T, 3>: VectorOps<T, 3, Cross = Vector<T, 3>>,
+        for<'a> &'a T:
+            Sub<&'a T, Output = T> +
+            Mul<&'a T, Output = T> +
+            Add<&'a T, Output = T> +
+            Div<&'a T, Output = T>,
+    {
+        use std::collections::{HashSet, VecDeque};
+
+        let zero = T::zero();
+        let one  = T::one();
+
+        #[inline]
+        fn get_face_cycle<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> (usize, usize, usize) {
+            let e0 = mesh.faces[f].half_edge;
+            let e1 = mesh.half_edges[e0].next;
+            let e2 = mesh.half_edges[e1].next;
+            debug_assert_eq!(mesh.half_edges[e2].next, e0);
+            (e0, e1, e2) // e0: a->b, e1: b->c, e2: c->a
+        }
+
+        #[inline]
+        fn face_vertices<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> [usize; 3] {
+            let (e0, e1, _e2) = get_face_cycle(mesh, f);
+            let a = mesh.half_edges[mesh.half_edges[e0].prev].vertex; // origin(e0)
+            let b = mesh.half_edges[e0].vertex;                       // target(e0)
+            let c = mesh.half_edges[e1].vertex;                       // target(e1)
+            [a, b, c]
+        }
+
+        #[inline]
+        fn live_face_degenerate<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> bool
+        where
+            Point<TS, M>: PointOps<TS, M, Vector = Vector<TS, M>>,
+            Vector<TS, M>: VectorOps<TS, M>,
+            Vector<TS, 3>: VectorOps<TS, 3, Cross = Vector<TS, 3>>,
+            for<'a> &'a TS: Add<&'a TS, Output = TS> + Sub<&'a TS, Output = TS> + Mul<&'a TS, Output = TS>,
+        {
+            let [i0,i1,i2] = face_vertices(mesh, f);
+            let u = (&mesh.vertices[i1].position - &mesh.vertices[i0].position).as_vector_3();
+            let v = (&mesh.vertices[i2].position - &mesh.vertices[i0].position).as_vector_3();
+            let n = u.cross(&v);
+            let n2 = n.dot(&n);
+            n2.is_zero()
+        }
+
+        let classify_live = |f: usize| -> TrianglePoint {
+            let [i0,i1,i2] = face_vertices(self, f);
+            kernel::point_in_or_on_triangle(
+                point,
+                &self.vertices[i0].position,
+                &self.vertices[i1].position,
+                &self.vertices[i2].position,
+            )
+        };
+
+        // IMPORTANT: use exact barycentrics with LazyExact
+        let bary_live = |f: usize| -> (T, T, T) {
+            let [i0,i1,i2] = face_vertices(self, f);
+            barycentric_coords(
+                point,
+                &self.vertices[i0].position,
+                &self.vertices[i1].position,
+                &self.vertices[i2].position,
+            ).unwrap()
+        };
+
+        // Map bary zeros to (half-edge, u) on face f:
+        // l2==0 => edge a-b -> e0, u=l1;  l0==0 => edge b-c -> e1, u=l2;  l1==0 => edge c-a -> e2, u=l0.
+        let edge_and_u_from_bary_zero = |f: usize, l0: &T, l1: &T, l2: &T| -> Option<(usize, T)> {
+            let (e0,e1,e2) = get_face_cycle(self, f);
+            if l2.is_zero() { return Some((e0, l1.clone())); }
+            if l0.is_zero() { return Some((e1, l2.clone())); }
+            if l1.is_zero() { return Some((e2, l0.clone())); }
+            None
+        };
+
+        // Map bary zeros to vertex id on face f:
+        // (l1==0 && l2==0) -> vertex a; (l2==0 && l0==0) -> b; (l0==0 && l1==0) -> c.
+        let vertex_from_bary_zero = |f: usize, l0: &T, l1: &T, l2: &T| -> Option<usize> {
+            let [a,b,c] = face_vertices(self, f);
+            if l1.is_zero() && l2.is_zero() { return Some(a); }
+            if l2.is_zero() && l0.is_zero() { return Some(b); }
+            if l0.is_zero() && l1.is_zero() { return Some(c); }
+            None
+        };
+
+        // neighbors of a live face via twins (skip borders / removed faces)
+        let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &HashSet<usize>| {
+            let (e0,e1,e2) = get_face_cycle(mesh, f);
+            for e in [e0,e1,e2] {
+                let tw = mesh.half_edges[e].twin;
+                if let Some(fnbr) = mesh.half_edges[tw].face {
+                    if !mesh.faces[fnbr].removed && !seen.contains(&fnbr) {
+                        q.push_back(fnbr);
+                    }
+                }
+            }
+        };
+
+        // --- BFS over descendants + neighbors ---
+        let mut q: VecDeque<usize> = VecDeque::new();
+        let mut seen: HashSet<usize> = HashSet::new();
+        q.push_back(start_face);
+
+        let mut steps = 0usize;
+        while let Some(f) = q.pop_front() {
+            if !seen.insert(f) { continue; }
+            steps += 1;
+            debug_assert!(steps < 1_000_000, "find_valid_face: excessive traversal");
+
+            if !self.faces[f].removed {
+                if live_face_degenerate(self, f) {
+                    push_live_neighbors(self, f, &mut q, &seen);
+                    continue;
+                }
+
+                match classify_live(f) {
+                    TrianglePoint::In => {
+                        return (f, usize::MAX, usize::MAX, zero);
+                    }
+                    TrianglePoint::OnEdge => {
+                        let (l0,l1,l2) = bary_live(f);
+                        if let Some((he, mut u)) = edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
+                            if u < zero { u = zero.clone(); }
+                            if u > one  { u = one.clone(); }
+                            return (f, he, usize::MAX, u);
+                        }
+                        // If mapping failed (shouldn't in exact mode), treat as inside
+                        return (f, usize::MAX, usize::MAX, zero);
+                    }
+                    TrianglePoint::OnVertex => {
+                        let (l0,l1,l2) = bary_live(f);
+                        if let Some(v_id) = vertex_from_bary_zero(f, &l0, &l1, &l2) {
+                            return (f, usize::MAX, v_id, zero);
+                        }
+                        // Fallback: inside
+                        return (f, usize::MAX, usize::MAX, zero);
+                    }
+                    TrianglePoint::Off => {
+                        // Explore neighbors; the correct owner might be adjacent
+                        push_live_neighbors(self, f, &mut q, &seen);
+                        continue;
+                    }
+                }
+            }
+
+            // Removed face: descend via recorded triangles (use current vertex positions for test)
+            if let Some(mapping) = self.face_split_map.get(&f) {
+                let mut interior: Vec<usize> = Vec::new();
+                let mut boundary:  Vec<usize> = Vec::new();
+
+                for tri in &mapping.new_faces {
+                    let [i0,i1,i2] = tri.vertices;
+                    let cls = kernel::point_in_or_on_triangle(
+                        point,
+                        &self.vertices[i0].position,
+                        &self.vertices[i1].position,
+                        &self.vertices[i2].position,
+                    );
+                    match cls {
+                        TrianglePoint::In => interior.push(tri.face_idx),
+                        TrianglePoint::OnEdge | TrianglePoint::OnVertex => boundary.push(tri.face_idx),
+                        TrianglePoint::Off => {}
+                    }
+                }
+
+                for fc in interior { if !seen.contains(&fc) { q.push_front(fc); } }
+                for fc in boundary  { if !seen.contains(&fc) { q.push_back(fc); } }
+                for tri in &mapping.new_faces {
+                    let fc = tri.face_idx;
+                    if !seen.contains(&fc) { q.push_back(fc); }
+                }
+                continue;
+            }
+        }
+
+        // --- Global fallback: scan all live faces and pick best match ---
+        let mut best_inside: Option<usize> = None;
+        let mut best_edge:   Option<(usize, usize, T)> = None;
+        let mut best_vertex: Option<usize> = None;
+
+        for f in 0..self.faces.len() {
+            if self.faces[f].removed { continue; }
+            if live_face_degenerate(self, f) { continue; }
+
+            match classify_live(f) {
+                TrianglePoint::In => { best_inside = Some(f); break; }
+                TrianglePoint::OnEdge => {
+                    let (l0,l1,l2) = bary_live(f);
+                    if let Some((he, mut u)) = edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
+                        if u < zero { u = zero.clone(); }
+                        if u > one  { u = one.clone(); }
+                        if best_edge.is_none() { best_edge = Some((f, he, u)); }
+                    }
+                }
+                TrianglePoint::OnVertex => {
+                    if best_vertex.is_none() { best_vertex = Some(f); }
+                }
+                TrianglePoint::Off => {}
+            }
+        }
+
+        if let Some(f) = best_inside { return (f, usize::MAX, usize::MAX, zero); }
+        if let Some((f,he,u)) = best_edge { return (f, he, usize::MAX, u); }
+        if let Some(f) = best_vertex {
+            // Identify which vertex
+            let (l0,l1,l2) = bary_live(f);
+            if let Some(v_id) = vertex_from_bary_zero(f, &l0, &l1, &l2) {
+                return (f, usize::MAX, v_id, zero);
+            }
+            return (f, usize::MAX, usize::MAX, zero);
+        }
+
+        panic!("find_valid_face: could not locate a face/edge/vertex for the point starting from {}", start_face);
+    }
+
+    /// Returns (face_id, half_edge_id, u). For Inside/OnVertex: (f, usize::MAX, 0).
+    /// For OnEdge: (f, he_of_f_edge, u in [0,1] along that half-edge).
+    pub fn find_valid_face_almost_working(&self, start_face: usize, point: &Point<T, N>) -> (usize, usize, T)
+    {
+        use std::collections::{VecDeque, HashSet};
+
+        let zero = T::zero();
+        let one  = T::one();
+
+        #[inline]
+        fn get_face_cycle<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> (usize, usize, usize) {
+            let e0 = mesh.faces[f].half_edge;
+            let e1 = mesh.half_edges[e0].next;
+            let e2 = mesh.half_edges[e1].next;
+            debug_assert_eq!(mesh.half_edges[e2].next, e0);
+            (e0, e1, e2) // e0: a->b, e1: b->c, e2: c->a
+        }
+
+        #[inline]
+        fn face_vertices<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> [usize; 3] {
+            let (e0, e1, _e2) = get_face_cycle(mesh, f);
+            let a = mesh.half_edges[mesh.half_edges[e0].prev].vertex; // origin(e0)
+            let b = mesh.half_edges[e0].vertex;                       // target(e0)
+            let c = mesh.half_edges[e1].vertex;                       // target(e1)
+            [a, b, c]
+        }
+
+        #[inline]
+        fn live_face_degenerate<TS: Scalar, const M: usize>(mesh: &Mesh<TS, M>, f: usize) -> bool
+        where
+            Point<TS, M>: PointOps<TS, M, Vector = Vector<TS, M>>,
+            Vector<TS, M>: VectorOps<TS, M>,
+            Vector<TS, 3>: VectorOps<TS, 3, Cross = Vector<TS, 3>>,
+            for<'a> &'a TS:
+                Add<&'a TS, Output = TS> + Sub<&'a TS, Output = TS> + Mul<&'a TS, Output = TS>,
+        {
+            let [i0,i1,i2] = face_vertices(mesh, f);
+            let u = (&mesh.vertices[i1].position - &mesh.vertices[i0].position).as_vector_3();
+            let v = (&mesh.vertices[i2].position - &mesh.vertices[i0].position).as_vector_3();
+            let cross_product = u.cross(&v);
+            let n2 = cross_product.dot(&cross_product);
+            n2.is_zero()
+        }
+
+        let classify_live = |f: usize| -> TrianglePoint {
+            let [i0,i1,i2] = face_vertices(self, f);
+            kernel::point_in_or_on_triangle(
+                point,
+                &self.vertices[i0].position,
+                &self.vertices[i1].position,
+                &self.vertices[i2].position,
+            )
+        };
+
+        let bary_live = |f: usize| -> (T, T, T) {
+            // let [i0,i1,i2] = face_vertices(self, f);
+            self.barycentric_coords_on_face(
+                f,
+                point
+            ).unwrap()
+        };
+
+        // l2==0 => on edge a-b -> e0, u=l1; l0==0 => on edge b-c -> e1, u=l2; l1==0 => on edge c-a -> e2, u=l0.
+        let edge_and_u_from_bary_zero = |f: usize, l0: &T, l1: &T, l2: &T| -> Option<(usize, T)> {
+            let (e0,e1,e2) = get_face_cycle(self, f);
+            if l2.is_zero() { return Some((e0, l1.clone())); }
+            if l0.is_zero() { return Some((e1, l2.clone())); }
+            if l1.is_zero() { return Some((e2, l0.clone())); }
+            None
+        };
+
+        // neighbors of a live face via twins (skip borders / removed faces)
+        let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &HashSet<usize>| {
+            let (e0,e1,e2) = get_face_cycle(mesh, f);
+            for e in [e0,e1,e2] {
+                let tw = mesh.half_edges[e].twin;
+                if let Some(fnbr) = mesh.half_edges[tw].face {
+                    if !mesh.faces[fnbr].removed && !seen.contains(&fnbr) {
+                        q.push_back(fnbr);
+                    }
+                }
+            }
+        };
+
+        // --- BFS over descendants + neighbors ---
+        let mut q: VecDeque<usize> = VecDeque::new();
+        let mut seen: HashSet<usize> = HashSet::new();
+        q.push_back(start_face);
+
+        let mut steps = 0usize;
+        while let Some(f) = q.pop_front() {
+            if !seen.insert(f) { continue; }
+            steps += 1;
+            debug_assert!(steps < 1_000_000, "find_valid_face: excessive traversal");
+
+            if !self.faces[f].removed {
+                if live_face_degenerate(self, f) {
+                    // degenerate triangle — don't classify, just flow to neighbors
+                    push_live_neighbors(self, f, &mut q, &seen);
+                    continue;
+                }
+
+                match classify_live(f) {
+                    TrianglePoint::In | TrianglePoint::OnVertex => {
+                        return (f, usize::MAX, zero);
+                    }
+                    TrianglePoint::OnEdge => {
+                        let (l0,l1,l2) = bary_live(f);
+                        if let Some((he, mut u)) = edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
+                            if u < zero { u = zero.clone(); }
+                            if u > one  { u = one.clone(); }
+                            return (f, he, u);
+                        }
+                        // If edge mapping failed, treat as inside
+                        return (f, usize::MAX, zero);
+                    }
+                    TrianglePoint::Off => {
+                        // We’re in the wrong live face; explore all live neighbors.
+                        push_live_neighbors(self, f, &mut q, &seen);
+                        continue;
+                    }
+                }
+            }
+
+            // Removed face: expand to children at this split level
+            if let Some(mapping) = self.face_split_map.get(&f) {
+                // Classify against recorded triangles; enqueue interior first, then boundary;
+                // but also enqueue all children (as low-priority) so we won't dead-end on ties.
+                let mut interior: Vec<usize> = Vec::new();
+                let mut boundary:  Vec<usize> = Vec::new();
+
+                for tri in &mapping.new_faces {
+                    let [i0,i1,i2] = tri.vertices;
+                    let cls = kernel::point_in_or_on_triangle(
+                        point,
+                        &self.vertices[i0].position,
+                        &self.vertices[i1].position,
+                        &self.vertices[i2].position,
+                    );
+                    match cls {
+                        TrianglePoint::In => interior.push(tri.face_idx),
+                        TrianglePoint::OnEdge | TrianglePoint::OnVertex => boundary.push(tri.face_idx),
+                        TrianglePoint::Off => {}
+                    }
+                }
+
+                for fc in interior { if !seen.contains(&fc) { q.push_front(fc); } }
+                for fc in boundary  { if !seen.contains(&fc) { q.push_back(fc); } }
+                for tri in &mapping.new_faces {
+                    let fc = tri.face_idx;
+                    if !seen.contains(&fc) { q.push_back(fc); }
+                }
+                continue;
+            }
+
+            // Removed but no mapping — data hole: try neighbors of any surviving twins
+            // (best-effort salvage)
+            // If you want, you can also log this condition for debugging.
+        }
+
+        println!("find_valid_face: Global fallback");
+        // --- Global fallback: scan all live faces and pick the best match ---
+        let mut best_inside: Option<usize> = None;
+        let mut best_edge:   Option<(usize, usize, T)> = None;
+        let mut best_vertex: Option<usize> = None;
+
+        for f in 0..self.faces.len() {
+            if self.faces[f].removed { continue; }
+            if live_face_degenerate(self, f) { continue; }
+
+            match classify_live(f) {
+                TrianglePoint::In => { best_inside = Some(f); break; }
+                TrianglePoint::OnEdge => {
+                    let (l0,l1,l2) = bary_live(f);
+                    if let Some((he, mut u)) = edge_and_u_from_bary_zero(f, &l0, &l1, &l2) {
+                        if u < zero { u = zero.clone(); }
+                        if u > one  { u = one.clone(); }
+                        if best_edge.is_none() { best_edge = Some((f, he, u)); }
+                    }
+                }
+                TrianglePoint::OnVertex => {
+                    if best_vertex.is_none() { best_vertex = Some(f); }
+                }
+                TrianglePoint::Off => {}
+            }
+        }
+
+        if let Some(f) = best_inside { return (f, usize::MAX, zero); }
+        if let Some(res) = best_edge   { return res; }
+        if let Some(f) = best_vertex { return (f, usize::MAX, zero); }
+
+        panic!("find_valid_face: could not locate a face/edge for the point starting from {}", start_face);
     }
 
     pub fn find_valid_half_edge(&self, he_start: usize, point: &Point<T, N>) -> usize
@@ -1469,7 +1884,7 @@ impl_mesh! {
         }
 
         // Return (u_raw, d2). d2 uses clamped u, u_raw is unclamped.
-        // Works for exact types; treats zero-length edges specially.
+        // Uses sign-based predicates to avoid forcing exact on LazyExact.
         let proj_u_and_dist2 = |a: &Point<T, N>, p: &Point<T, N>, b: &Point<T, N>| -> (T, T) {
             let ab = (b - a).as_vector();
             let ap = (p - a).as_vector();
@@ -1479,22 +1894,30 @@ impl_mesh! {
                 return (zero.clone(), ap.norm2());
             }
             let u_raw = ap.dot(&ab) / denom;
-            let u_clamped = if u_raw < zero { zero.clone() } else if u_raw > one { one.clone() } else { u_raw.clone() };
+            // Clamp without PartialOrd
+            let u_clamped =
+                if u_raw.is_negative() { zero.clone() }
+                else if (&u_raw - &one).is_positive() { one.clone() }
+                else { u_raw.clone() };
             // closest point on segment = a + ab * u_clamped
             let closest = a + &ab.scale(&u_clamped).0;
             let d2 = (&(point - &closest).as_vector()).norm2();
             (u_raw, d2)
         };
 
-        // Exact containment on a directed half-edge (including endpoints)
+        // Exact containment on a directed half-edge (including endpoints).
+        // Bounds checks avoid PartialOrd to keep laziness.
         let contains_exact = |he: usize| -> Option<T> {
             let v0 = origin_of(self, he);
             let v1 = target_of(self, he);
             let a = &self.vertices[v0].position;
             let b = &self.vertices[v1].position;
             let (u_raw, d2) = proj_u_and_dist2(a, point, b);
-            if d2.is_zero() && u_raw >= zero && u_raw <= one {
-                Some(u_raw) // return the parameter if you want it; not used here
+            if d2.is_zero()
+                && !u_raw.is_negative()
+                && (&u_raw - &one).is_negative_or_zero()
+            {
+                Some(u_raw)
             } else {
                 None
             }
@@ -1527,7 +1950,12 @@ impl_mesh! {
                 let (_u_raw, d2) = proj_u_and_dist2(a, point, b);
                 match &mut best_live {
                     None => best_live = Some((he, d2)),
-                    Some((_bhe, bd2)) => if d2 < *bd2 { *bd2 = d2; * _bhe = he; }
+                    Some((_bhe, bd2)) => {
+                        if (&d2 - bd2).is_negative() {
+                            *_bhe = he;
+                            *bd2 = d2;
+                        }
+                    }
                 }
                 continue;
             }
@@ -1538,9 +1966,7 @@ impl_mesh! {
                 if c1 != usize::MAX { q.push_back(c1); }
                 continue;
             }
-
             // Removed but no mapping: nothing to enqueue; just continue.
-            // (We'll fall back to best_live at the end.)
         }
 
         // No exact-containing descendant found. Fall back to closest live descendant if we have one.
@@ -1548,18 +1974,17 @@ impl_mesh! {
             return he;
         }
 
-        // Last resort: try to locate via the face that contains the point and use that edge.
-        // This handles cases where he_start wasn't actually on the path to the containing edge.
+        // Last resort: locate via the face that contains the point and use that edge.
         if let Some(f_anchor) = self.half_edges[he_start].face.or(self.half_edges[self.half_edges[he_start].twin].face) {
             match self.find_valid_face(f_anchor, point) {
                 FindFaceResult::OnEdge { he, .. } => {
-                    return he; // point is on an edge of that face; use it
+                    return he;
                 },
                 FindFaceResult::OnVertex { f, .. } => {
                     return self.half_edges[self.faces[f].half_edge].twin;
                 },
                 FindFaceResult::Inside { f, .. } => {
-                    // Not on an edge—choose the boundary edge of that face that is closest.
+                    // Choose the boundary edge of that face that is closest.
                     let (e0, e1, e2) = {
                         let e0 = self.faces[f].half_edge;
                         let e1 = self.half_edges[e0].next;
@@ -1573,68 +1998,16 @@ impl_mesh! {
                         let a = &self.vertices[v0].position;
                         let b = &self.vertices[v1].position;
                         let (_u_raw, d2) = proj_u_and_dist2(a, point, b);
-                        if d2 < best.1 { best = (e, d2); }
+                        if (&d2 - &best.1).is_negative() {
+                            best = (e, d2);
+                        }
                     }
                     return best.0;
                 },
             }
         }
 
-        // If even that fails, return a clear error (data hole in the split map).
         panic!("find_valid_half_edge: Half-edge {} is removed and unmapped (no descendants, no anchor)", he_start);
-    }
-
-    pub fn find_valid_half_edge_2(&self, mut he_idx: usize, point_hint: &Point<T, N>) -> usize
-    where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        if !self.half_edges[he_idx].removed {
-            return he_idx;
-        }
-        loop {
-            // see if this half-edge was split
-            if let Some(&(child_a, child_b)) = self.half_edge_split_map.get(&he_idx) {
-                // println!(
-                //     "find_valid_half_edge: Half-edge {} was split into {} and {}",
-                //     he_idx, child_a, child_b
-                // );
-                // test child A
-                if child_a != usize::MAX {
-                    let target = &self.vertices[self.half_edges[child_a].vertex].position;
-                    let twin_he = self.find_valid_half_edge(self.half_edges[child_a].twin, target);
-                    let origin = &self.vertices[self.half_edges[twin_he].vertex].position;
-                    if kernel::point_u_on_segment(origin, point_hint, target).is_some() {
-                        // println!("A find_valid_half_edge: Found valid half-edge {}", child_a);
-                        he_idx = child_a;
-                        continue;
-                    }
-                }
-                // test child B
-                if child_b != usize::MAX {
-                    let target = &self.vertices[self.half_edges[child_b].vertex].position;
-                    let twin_he = self.find_valid_half_edge(self.half_edges[child_b].twin, target);
-                    let origin = &self.vertices[self.half_edges[twin_he].vertex].position;
-                    if kernel::point_u_on_segment(origin, point_hint, target).is_some() {
-                        // println!("B find_valid_half_edge: Found valid half-edge {}", child_b);
-                        he_idx = child_b;
-                        continue;
-                    }
-                }
-            }
-            // no split (or neither child matched), so this is our leaf
-            break;
-        }
-
-        if self.half_edges[he_idx].removed {
-            panic!("find_valid_half_edge: Half-edge is removed");
-        }
-
-        he_idx
     }
 
     pub fn barycentric_coords_on_face(
@@ -2296,12 +2669,14 @@ enum RayTriCore<T> {
 }
 
 /// Robust ray-triangle intersection using Möller-Trumbore algorithm
+// ...existing code...
 fn ray_triangle_intersection<T: Scalar, const N: usize>(
     ray_origin: &Point<T, N>,
     ray_dir: &Vector<T, N>,
     triangle: [&Point<T, N>; N],
 ) -> Option<T>
 where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
@@ -2311,6 +2686,9 @@ where
     if N != 3 {
         panic!("Currently, only 3 dimensions are supported.");
     }
+
+    let one = T::one();
+
     // Triangle vertices
     let v0 = triangle[0];
     let v1 = triangle[1];
@@ -2318,7 +2696,6 @@ where
 
     // Triangle edges
     let edge1 = Vector::<T, 3>::from_vals([&v1[0] - &v0[0], &v1[1] - &v0[1], &v1[2] - &v0[2]]);
-
     let edge2 = Vector::<T, 3>::from_vals([&v2[0] - &v0[0], &v2[1] - &v0[1], &v2[2] - &v0[2]]);
 
     // Cross product: ray_dir x edge2
@@ -2330,7 +2707,6 @@ where
 
     // Determinant
     let a = edge1.dot(&h);
-
     if a.abs().is_zero() {
         return None; // Ray is parallel to triangle
     }
@@ -2347,7 +2723,8 @@ where
     // Calculate u parameter
     let u = &f * &s.dot(&h);
 
-    if u < T::zero() || u > T::one() {
+    // Use sign-based checks to preserve laziness
+    if u.is_negative() || (&u - &one).is_positive() {
         return None; // Intersection outside triangle
     }
 
@@ -2358,17 +2735,15 @@ where
         &s[0] * &edge1[1] - &s[1] * &edge1[0],
     ]);
 
-    let ray_dir_3 =
-        Vector::<T, 3>::from_vals([ray_dir[0].clone(), ray_dir[1].clone(), ray_dir[2].clone()]);
-
     // Calculate v parameter
-    let v = &f * &ray_dir_3.dot(&q);
+    let v = &f * &ray_dir.0.as_vector_3().dot(&q);
 
-    if v < T::zero() || &u + &v > T::one() {
+    let sum_uv = &u + &v;
+    if v.is_negative() || (&sum_uv - &one).is_positive() {
         return None; // Intersection outside triangle
     }
 
-    // Calculate t parameter (distance along ray)
+    // Distance along ray
     let t = &f * &edge2.dot(&q);
     Some(t)
 }
