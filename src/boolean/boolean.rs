@@ -605,7 +605,7 @@ where
         for (_key, endpoint_tup) in &splits.splits {
             if endpoint_tup.1 == SplitType::Edge {
                 let result = mesh
-                    .split_edge(tree, endpoint_tup.2, &endpoint_tup.0)
+                    .split_edge(tree, endpoint_tup.2, &endpoint_tup.0, false)
                     .expect("Failed to split edge");
                 for endpoint in endpoint_tup.3.iter() {
                     intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
@@ -617,7 +617,7 @@ where
                 }
             } else {
                 let result = mesh
-                    .split_face(tree, endpoint_tup.2, &endpoint_tup.0)
+                    .split_face(tree, endpoint_tup.2, &endpoint_tup.0, false)
                     .expect("Failed to split face");
                 for endpoint in endpoint_tup.3.iter() {
                     intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
@@ -759,6 +759,9 @@ where
             &mut intersection_segments_b,
         );
         println!("Splits done in {:.2?}", start.elapsed());
+
+        tree_a = a.build_face_tree();
+        tree_b = b.build_face_tree();
 
         let mut intersection_by_edge_a = HashMap::new();
         let mut intersection_by_edge_b = HashMap::new();
@@ -1217,7 +1220,7 @@ where
                         &self.vertices[end].position,
                         &u,
                     );
-                    let split_result = self.split_edge(aabb_tree, he, &new_pos).unwrap();
+                    let split_result = self.split_edge(aabb_tree, he, &new_pos, false).unwrap();
                     let new_point = &self.vertices[split_result.vertex].position;
 
                     let new_segment =
@@ -1754,6 +1757,7 @@ fn process_t_junction<T: Scalar, const N: usize>(
             tree_x,
             *edge,
             &mesh_y.vertices[t_junction.a_vertex].position,
+            false,
         )
         .unwrap();
     segment.1.b = IntersectionEndPoint::new(

@@ -809,6 +809,7 @@ impl_mesh! {
         aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
         he: usize,
         pos: &Point<T, N>,
+        update_tree: bool,
     ) -> Result<SplitResult, &'static str>
     {
         let he_ca = self.find_valid_half_edge(he, pos);
@@ -961,13 +962,15 @@ impl_mesh! {
             self.half_edge_split_map.insert(he_ca, (he_cw, he_wa));
             self.half_edge_split_map.insert(he_ac, (bhe_aw, bhe_wc));
 
-            // AABB tree updates (invalidate old real face; null face not in tree originally)
-            aabb_tree.invalidate(&original_face_1);
-            // Insert the two new real faces
-            let f1_aabb = self.face_aabb(base_face_idx);
-            let f2_aabb = self.face_aabb(base_face_idx + 1);
-            aabb_tree.insert(f1_aabb, base_face_idx);
-            aabb_tree.insert(f2_aabb, base_face_idx + 1);
+            if update_tree {
+                // AABB tree updates (invalidate old real face; null face not in tree originally)
+                aabb_tree.invalidate(&original_face_1);
+                // Insert the two new real faces
+                let f1_aabb = self.face_aabb(base_face_idx);
+                let f2_aabb = self.face_aabb(base_face_idx + 1);
+                aabb_tree.insert(f1_aabb, base_face_idx);
+                aabb_tree.insert(f2_aabb, base_face_idx + 1);
+            }
 
             let split_result = SplitResult {
                 kind: SplitResultKind::SplitEdge,
@@ -1139,13 +1142,15 @@ impl_mesh! {
             ],
         };
 
-        for &new_face_idx in &split_result.new_faces {
-            let face_aabb = self.face_aabb(new_face_idx);
-            aabb_tree.insert(face_aabb, new_face_idx);
-        }
+        if update_tree {
+            for &new_face_idx in &split_result.new_faces {
+                let face_aabb = self.face_aabb(new_face_idx);
+                aabb_tree.insert(face_aabb, new_face_idx);
+            }
 
-        aabb_tree.invalidate(&original_face_1);
-        aabb_tree.invalidate(&original_face_2);
+            aabb_tree.invalidate(&original_face_1);
+            aabb_tree.invalidate(&original_face_2);
+        }
 
         Ok(split_result)
     }
@@ -1155,11 +1160,12 @@ impl_mesh! {
         aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
         mut face: usize,
         p: &Point<T, N>,
+        update_tree: bool,
     ) -> Result<SplitResult, &'static str>
     {
         match self.find_valid_face(face, p) {
             FindFaceResult::OnEdge { he, .. } => {
-                return self.split_edge(aabb_tree, he, &p);
+                return self.split_edge(aabb_tree, he, &p, update_tree);
             },
             FindFaceResult::OnVertex { v, .. } => {
                 return Ok(SplitResult {
@@ -1350,12 +1356,15 @@ impl_mesh! {
             new_faces: [subface_1_idx, subface_2_idx, subface_3_idx, usize::MAX],
         };
 
-        for i in 0..3 {
-            let face_aabb = self.face_aabb(split_result.new_faces[i]);
-            aabb_tree.insert(face_aabb, split_result.new_faces[i]);
+        if update_tree {
+            for i in 0..3 {
+                let face_aabb = self.face_aabb(split_result.new_faces[i]);
+                aabb_tree.insert(face_aabb, split_result.new_faces[i]);
+            }
+
+            aabb_tree.invalidate(&face);
         }
 
-        aabb_tree.invalidate(&face);
 
         Ok(split_result)
     }
