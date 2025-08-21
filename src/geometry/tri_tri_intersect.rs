@@ -27,6 +27,8 @@ use std::{
     time::Instant,
 };
 
+use smallvec::SmallVec;
+
 use crate::{
     geometry::{
         Point2,
@@ -386,13 +388,17 @@ where
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    // 1) Build plane of T2: n2·x + d2 = 0
+    // Plane of Q: n2·x + d2 = 0
     let v01 = (q[0] - q[2]).as_vector();
     let v02 = (q[1] - q[2]).as_vector();
     let n2 = v01.cross(&v02);
+    if n2.is_zero() {
+        // Degenerate Q
+        return TriTriIntersectionResult::None;
+    }
     let d2 = -n2.dot(&q[2].as_vector());
 
-    // signed distances of p-verts to T2's plane
+    // Signed distances of P to plane(Q)
     let d_p0 = &n2.dot(&p[0].as_vector()) + &d2;
     let d_p1 = &n2.dot(&p[1].as_vector()) + &d2;
     let d_p2 = &n2.dot(&p[2].as_vector()) + &d2;
@@ -400,6 +406,7 @@ where
     let zero_p = [d_p0.is_zero(), d_p1.is_zero(), d_p2.is_zero()];
     let zc_p = zero_p.iter().filter(|z| **z).count();
 
+    // Two vertices of P exactly on plane(Q) ⇒ coplanar segment (rare)
     if zc_p == 2 {
         let (i, j) = match zero_p {
             [true, true, false] => (0, 1),
@@ -412,27 +419,117 @@ where
         }
     }
 
-    // Fall back for strictly co-planar
+    // Strictly on one side of plane(Q) ⇒ no intersection
+    if (d_p0.is_positive() && d_p1.is_positive() && d_p2.is_positive())
+        || (d_p0.is_negative() && d_p1.is_negative() && d_p2.is_negative())
+    {
+        return TriTriIntersectionResult::None;
+    }
+
+    // Strictly coplanar case (rare)
     if d_p0.is_zero() && d_p1.is_zero() && d_p2.is_zero() {
         return coplanar_tri_tri_intersection(p, q, &n2);
     }
 
-    // 2) Now do the regular non-coplanar plane‐edge clipping:
-    let mut pts = Vec::new();
-    for (a, b) in [(&p[0], &p[1]), (&p[1], &p[2]), (&p[2], &p[0])] {
-        if let Some(ip) = intersect_edge_plane(&a, &b, &n2.0, &d2) {
-            if point_in_tri(&ip, &q[0], &q[1], &q[2]) {
-                pts.push(ip);
+    // Precompute 2D test for triangle Q (edge functions; no divisions)
+    let (qi0, qi1, qdrop) = coplanar_axes(&n2);
+    let q2d = [
+        project_to_2d(q[0], qi0, qi1),
+        project_to_2d(q[1], qi0, qi1),
+        project_to_2d(q[2], qi0, qi1),
+    ];
+    let area_q = {
+        let x0 = &q2d[1][0] - &q2d[0][0];
+        let y0 = &q2d[1][1] - &q2d[0][1];
+        let x1 = &q2d[2][0] - &q2d[0][0];
+        let y1 = &q2d[2][1] - &q2d[0][1];
+        &x0 * &y1 - &y0 * &x1
+    };
+    let q_ccw = area_q.is_positive();
+    let inside_q_2d = |r3: &Point<T, N>| {
+        let r = project_to_2d(r3, qi0, qi1);
+        let e0 = {
+            let ex = &q2d[1][0] - &q2d[0][0];
+            let ey = &q2d[1][1] - &q2d[0][1];
+            let rx = &r[0] - &q2d[0][0];
+            let ry = &r[1] - &q2d[0][1];
+            &ex * &ry - &ey * &rx
+        };
+        let e1 = {
+            let ex = &q2d[2][0] - &q2d[1][0];
+            let ey = &q2d[2][1] - &q2d[1][1];
+            let rx = &r[0] - &q2d[1][0];
+            let ry = &r[1] - &q2d[1][1];
+            &ex * &ry - &ey * &rx
+        };
+        let e2 = {
+            let ex = &q2d[0][0] - &q2d[2][0];
+            let ey = &q2d[0][1] - &q2d[2][1];
+            let rx = &r[0] - &q2d[2][0];
+            let ry = &r[1] - &q2d[2][1];
+            &ex * &ry - &ey * &rx
+        };
+        if q_ccw {
+            e0.is_positive_or_zero() && e1.is_positive_or_zero() && e2.is_positive_or_zero()
+        } else {
+            e0.is_negative_or_zero() && e1.is_negative_or_zero() && e2.is_negative_or_zero()
+        }
+    };
+
+    // On-the-fly dedupe
+    let merge = T::point_merge_threshold();
+    let merge2 = &merge * &merge;
+    let mut uniq = SmallVec::<[Point<T, N>; 8]>::new();
+    let mut push_uniq = |pt: Point<T, N>| {
+        for q3 in &uniq {
+            let d = (&pt - q3).as_vector();
+            if (&d.dot(&d) - &merge2).is_negative_or_zero() {
+                return 0;
+            }
+        }
+        uniq.push(pt);
+        return uniq.len();
+    };
+
+    // Intersections from P-edges against plane(Q) using precomputed distances
+    for (ia, ib, da, db) in [
+        (0usize, 1usize, &d_p0, &d_p1),
+        (1usize, 2usize, &d_p1, &d_p2),
+        (2usize, 0usize, &d_p2, &d_p0),
+    ] {
+        let prod = da * db;
+        if prod.is_negative_or_zero() && !(da.is_zero() && db.is_zero()) {
+            let denom = da - db; // da - db
+            if denom.is_zero() {
+                continue;
+            }
+            let t = da / &denom; // t = da / (da - db)
+            let dir = (p[ib] - p[ia]).as_vector();
+            let ip = p[ia].add_vector(&dir.scale(&t));
+            if inside_q_2d(&ip) && push_uniq(ip) == 2 {
+                // Fast path: both endpoints obtained from P edges; done.
+                return TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[1]));
             }
         }
     }
 
-    // 3) Build plane of T1:
+    // Plane of P: n1·x + d1 = 0
     let u01 = (p[0] - p[2]).as_vector();
     let u02 = (p[1] - p[2]).as_vector();
     let n1 = u01.cross(&u02);
+    if n1.is_zero() {
+        // Degenerate P
+        return if uniq.len() == 2 {
+            TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[1]))
+        } else if uniq.len() == 1 {
+            TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[0]))
+        } else {
+            TriTriIntersectionResult::None
+        };
+    }
     let d1 = -n1.dot(&p[2].as_vector());
 
+    // Signed distances of Q to plane(P)
     let d_q0 = &n1.dot(&q[0].as_vector()) + &d1;
     let d_q1 = &n1.dot(&q[1].as_vector()) + &d1;
     let d_q2 = &n1.dot(&q[2].as_vector()) + &d1;
@@ -452,61 +549,98 @@ where
         }
     }
 
-    // 4) Clip edges of T2 against T1’s plane:
-    for (a, b) in [(&q[0], &q[1]), (&q[1], &q[2]), (&q[2], &q[0])] {
-        if let Some(ip) = intersect_edge_plane(&a, &b, &n1.0, &d1) {
-            if point_in_tri(&ip, &p[0], &p[1], &p[2]) {
-                pts.push(ip);
+    if (d_q0.is_positive() && d_q1.is_positive() && d_q2.is_positive())
+        || (d_q0.is_negative() && d_q1.is_negative() && d_q2.is_negative())
+    {
+        // Nothing more to gather
+    } else {
+        // Precompute 2D test for triangle P
+        let (pi0, pi1, _pdrop) = coplanar_axes(&n1);
+        let p2d = [
+            project_to_2d(p[0], pi0, pi1),
+            project_to_2d(p[1], pi0, pi1),
+            project_to_2d(p[2], pi0, pi1),
+        ];
+        let area_p = {
+            let x0 = &p2d[1][0] - &p2d[0][0];
+            let y0 = &p2d[1][1] - &p2d[0][1];
+            let x1 = &p2d[2][0] - &p2d[0][0];
+            let y1 = &p2d[2][1] - &p2d[0][1];
+            &x0 * &y1 - &y0 * &x1
+        };
+        let p_ccw = area_p.is_positive();
+        let inside_p_2d = |r3: &Point<T, N>| {
+            let r = project_to_2d(r3, pi0, pi1);
+            let e0 = {
+                let ex = &p2d[1][0] - &p2d[0][0];
+                let ey = &p2d[1][1] - &p2d[0][1];
+                let rx = &r[0] - &p2d[0][0];
+                let ry = &r[1] - &p2d[0][1];
+                &ex * &ry - &ey * &rx
+            };
+            let e1 = {
+                let ex = &p2d[2][0] - &p2d[1][0];
+                let ey = &p2d[2][1] - &p2d[1][1];
+                let rx = &r[0] - &p2d[1][0];
+                let ry = &r[1] - &p2d[1][1];
+                &ex * &ry - &ey * &rx
+            };
+            let e2 = {
+                let ex = &p2d[0][0] - &p2d[2][0];
+                let ey = &p2d[0][1] - &p2d[2][1];
+                let rx = &r[0] - &p2d[2][0];
+                let ry = &r[1] - &p2d[2][1];
+                &ex * &ry - &ey * &rx
+            };
+            if p_ccw {
+                e0.is_positive_or_zero() && e1.is_positive_or_zero() && e2.is_positive_or_zero()
+            } else {
+                e0.is_negative_or_zero() && e1.is_negative_or_zero() && e2.is_negative_or_zero()
+            }
+        };
+
+        // Intersections from Q-edges against plane(P)
+        for (ia, ib, da, db) in [
+            (0usize, 1usize, &d_q0, &d_q1),
+            (1usize, 2usize, &d_q1, &d_q2),
+            (2usize, 0usize, &d_q2, &d_q0),
+        ] {
+            let prod = da * db;
+            if prod.is_negative_or_zero() && !(da.is_zero() && db.is_zero()) {
+                let denom = da - db;
+                if denom.is_zero() {
+                    continue;
+                }
+                let t = da / &denom;
+                let dir = (q[ib] - q[ia]).as_vector();
+                let iq = q[ia].add_vector(&dir.scale(&t));
+                if inside_p_2d(&iq) && push_uniq(iq) == 2 {
+                    return TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[1]));
+                }
             }
         }
     }
 
-    // 5) Deduplicate by geometric distance using point-merge threshold
-    let merge = T::point_merge_threshold();
-    let merge2 = &merge * &merge;
-    let mut uniq: Vec<Point<T, N>> = Vec::new();
-    'dedupe_non_coplanar: for p3 in pts {
-        for q3 in &uniq {
-            let d = (&p3 - q3).as_vector();
-            let d2 = d.dot(&d);
-            if (&d2 - &merge2).is_negative_or_zero() {
-                continue 'dedupe_non_coplanar;
-            }
-        }
-        uniq.push(p3);
-    }
-
-    // 6) Make sure both points are on T1
-    let on_a: Vec<_> = uniq
-        .iter()
-        //.filter(|this_p| point_in_tri(this_p, &p[0], &p[1], &p[2]))
-        .cloned()
-        .collect();
-
-    // 6) Return based on unique points count
-    match on_a.len() {
+    // Finalize
+    match uniq.len() {
         0 => TriTriIntersectionResult::None,
-        1 => TriTriIntersectionResult::Proper(Segment::new(&on_a[0], &on_a[0])),
-        2 => TriTriIntersectionResult::Proper(Segment::new(&on_a[0], &on_a[1])),
+        1 => TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[0])),
+        2 => TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[1])),
         _ => {
-            // More than 2 points - select the two most distant points
-            let mut max_dist_sq = T::zero();
-            let mut best_pair = (0, 1);
-
-            for i in 0..on_a.len() {
-                for j in (i + 1)..on_a.len() {
-                    let diff = (&on_a[j] - &on_a[i]).as_vector();
-                    let dist_sq = diff.dot(&diff);
-                    if (&dist_sq - &max_dist_sq).is_positive() {
-                        max_dist_sq = dist_sq;
-                        best_pair = (i, j);
+            // Pick farthest pair
+            let mut max_d2 = T::zero();
+            let mut best = (0usize, 1usize);
+            for i in 0..uniq.len() {
+                for j in (i + 1)..uniq.len() {
+                    let v = (&uniq[j] - &uniq[i]).as_vector();
+                    let d2 = v.dot(&v);
+                    if (&d2 - &max_d2).is_positive() {
+                        max_d2 = d2;
+                        best = (i, j);
                     }
                 }
             }
-
-            let (i, j) = best_pair;
-            TriTriIntersectionResult::Proper(Segment::new(&on_a[i], &on_a[j]))
-            // TriTriIntersectionResult::Proper(Segment::new(&uniq[best_pair.0], &uniq[best_pair.1]))
+            TriTriIntersectionResult::Proper(Segment::new(&uniq[best.0], &uniq[best.1]))
         }
     }
 }
@@ -749,4 +883,297 @@ where
     } else {
         None
     }
+}
+
+/// Reusable precomputation for a triangle:
+/// - plane: n·x + d = 0
+/// - coplanar projection axes (i0,i1,drop)
+/// - projected 2D triangle and orientation for edge-function inside tests
+#[derive(Clone)]
+pub struct TriPrecomp<T: Scalar, const N: usize> {
+    pub n: Vector<T, N>,
+    pub d: T,
+    pub axes: (usize, usize, usize),
+    pub tri2d: [Point2<T>; 3],
+    pub ccw: bool,
+    pub degenerate: bool,
+}
+
+impl<T: Scalar, const N: usize> TriPrecomp<T, N>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    #[inline(always)]
+    pub fn new(p: &[&Point<T, N>; 3]) -> Self {
+        // Plane
+        let e01 = (p[0] - p[2]).as_vector();
+        let e02 = (p[1] - p[2]).as_vector();
+        let n = e01.cross(&e02);
+        if n.is_zero() {
+            return Self {
+                n,
+                d: T::zero(),
+                axes: (0, 1, 2),
+                tri2d: [
+                    Point2::<T>::from_vals([T::zero(), T::zero()]),
+                    Point2::<T>::from_vals([T::zero(), T::zero()]),
+                    Point2::<T>::from_vals([T::zero(), T::zero()]),
+                ],
+                ccw: false,
+                degenerate: true,
+            };
+        }
+        let d = -n.dot(&p[2].as_vector());
+
+        // Axes and 2D triangle
+        let (i0, i1, drop) = coplanar_axes(&n);
+        let tri2d = [
+            project_to_2d(p[0], i0, i1),
+            project_to_2d(p[1], i0, i1),
+            project_to_2d(p[2], i0, i1),
+        ];
+
+        // Orientation
+        let area = {
+            let x0 = &tri2d[1][0] - &tri2d[0][0];
+            let y0 = &tri2d[1][1] - &tri2d[0][1];
+            let x1 = &tri2d[2][0] - &tri2d[0][0];
+            let y1 = &tri2d[2][1] - &tri2d[0][1];
+            &x0 * &y1 - &y0 * &x1
+        };
+        let ccw = area.is_positive();
+
+        Self {
+            n,
+            d,
+            axes: (i0, i1, drop),
+            tri2d,
+            ccw,
+            degenerate: false,
+        }
+    }
+
+    /// 2D edge-function point-in-triangle test using precomputed 2D triangle and orientation.
+    #[inline(always)]
+    pub fn inside_2d(&self, r3: &Point<T, N>) -> bool {
+        let (i0, i1, _) = self.axes;
+        let r = project_to_2d(r3, i0, i1);
+
+        let e0 = {
+            let ex = &self.tri2d[1][0] - &self.tri2d[0][0];
+            let ey = &self.tri2d[1][1] - &self.tri2d[0][1];
+            let rx = &r[0] - &self.tri2d[0][0];
+            let ry = &r[1] - &self.tri2d[0][1];
+            &ex * &ry - &ey * &rx
+        };
+        let e1 = {
+            let ex = &self.tri2d[2][0] - &self.tri2d[1][0];
+            let ey = &self.tri2d[2][1] - &self.tri2d[1][1];
+            let rx = &r[0] - &self.tri2d[1][0];
+            let ry = &r[1] - &self.tri2d[1][1];
+            &ex * &ry - &ey * &rx
+        };
+        let e2 = {
+            let ex = &self.tri2d[0][0] - &self.tri2d[2][0];
+            let ey = &self.tri2d[0][1] - &self.tri2d[2][1];
+            let rx = &r[0] - &self.tri2d[2][0];
+            let ry = &r[1] - &self.tri2d[2][1];
+            &ex * &ry - &ey * &rx
+        };
+
+        if self.ccw {
+            e0.is_positive_or_zero() && e1.is_positive_or_zero() && e2.is_positive_or_zero()
+        } else {
+            e0.is_negative_or_zero() && e1.is_negative_or_zero() && e2.is_negative_or_zero()
+        }
+    }
+}
+
+/// Optimized intersection using precomputed data for both triangles.
+/// This avoids recomputing planes, axes, and projected triangles per pair.
+pub fn tri_tri_intersection_with_precomp<T: Scalar, const N: usize>(
+    p: &[&Point<T, N>; 3],
+    q: &[&Point<T, N>; 3],
+    pre_p: &TriPrecomp<T, N>,
+    pre_q: &TriPrecomp<T, N>,
+) -> TriTriIntersectionResult<T, N>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    if pre_p.degenerate || pre_q.degenerate {
+        return TriTriIntersectionResult::None;
+    }
+
+    // Signed distances of P to plane(Q): n2·pi + d2
+    let d_p0 = &pre_q.n.dot(&p[0].as_vector()) + &pre_q.d;
+    let d_p1 = &pre_q.n.dot(&p[1].as_vector()) + &pre_q.d;
+    let d_p2 = &pre_q.n.dot(&p[2].as_vector()) + &pre_q.d;
+
+    let zero_p = [d_p0.is_zero(), d_p1.is_zero(), d_p2.is_zero()];
+    let zc_p = zero_p.iter().filter(|z| **z).count();
+
+    if zc_p == 2 {
+        // Coplanar segment of P against triangle Q
+        let (i, j) = match zero_p {
+            [true, true, false] => (0, 1),
+            [true, false, true] => (0, 2),
+            [false, true, true] => (1, 2),
+            _ => unreachable!(),
+        };
+        if let Some((a3, b3)) = clip_segment_to_triangle_in_plane(p[i], p[j], q, &pre_q.n) {
+            return TriTriIntersectionResult::Coplanar(Segment::new(&a3, &b3));
+        }
+    }
+
+    // Strict separation by plane(Q)
+    if (d_p0.is_positive() && d_p1.is_positive() && d_p2.is_positive())
+        || (d_p0.is_negative() && d_p1.is_negative() && d_p2.is_negative())
+    {
+        return TriTriIntersectionResult::None;
+    }
+
+    // All three distances zero ⇒ coplanar
+    if d_p0.is_zero() && d_p1.is_zero() && d_p2.is_zero() {
+        return coplanar_tri_tri_intersection(p, q, &pre_q.n);
+    }
+
+    // Dedupe buffer for intersection points
+    let merge = T::point_merge_threshold();
+    let merge2 = &merge * &merge;
+    let mut uniq = SmallVec::<[Point<T, N>; 4]>::new();
+    let mut push_uniq = |pt: Point<T, N>| {
+        for q3 in &uniq {
+            let d = (&pt - q3).as_vector();
+            if (&d.dot(&d) - &merge2).is_negative_or_zero() {
+                return 0;
+            }
+        }
+        uniq.push(pt);
+        uniq.len()
+    };
+
+    // Collect intersections from P-edges against plane(Q): use cached distances
+    for (ia, ib, da, db) in [
+        (0usize, 1usize, &d_p0, &d_p1),
+        (1usize, 2usize, &d_p1, &d_p2),
+        (2usize, 0usize, &d_p2, &d_p0),
+    ] {
+        let prod = da * db;
+        if prod.is_negative_or_zero() && !(da.is_zero() && db.is_zero()) {
+            let denom = da - db;
+            if denom.is_zero() {
+                continue;
+            }
+            // t = da / (da - db)
+            let t = da / &denom;
+            let dir = (p[ib] - p[ia]).as_vector();
+            let ip = p[ia].add_vector(&dir.scale(&t));
+            if pre_q.inside_2d(&ip) && push_uniq(ip) == 2 {
+                return TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[1]));
+            }
+        }
+    }
+
+    // Signed distances of Q to plane(P)
+    let d_q0 = &pre_p.n.dot(&q[0].as_vector()) + &pre_p.d;
+    let d_q1 = &pre_p.n.dot(&q[1].as_vector()) + &pre_p.d;
+    let d_q2 = &pre_p.n.dot(&q[2].as_vector()) + &pre_p.d;
+
+    let zero_q = [d_q0.is_zero(), d_q1.is_zero(), d_q2.is_zero()];
+    let zc_q = zero_q.iter().filter(|z| **z).count();
+
+    if zc_q == 2 {
+        let (i, j) = match zero_q {
+            [true, true, false] => (0, 1),
+            [true, false, true] => (0, 2),
+            [false, true, true] => (1, 2),
+            _ => unreachable!(),
+        };
+        if let Some((a3, b3)) = clip_segment_to_triangle_in_plane(q[i], q[j], p, &pre_p.n) {
+            return TriTriIntersectionResult::Coplanar(Segment::new(&a3, &b3));
+        }
+    }
+
+    if (d_q0.is_positive() && d_q1.is_positive() && d_q2.is_positive())
+        || (d_q0.is_negative() && d_q1.is_negative() && d_q2.is_negative())
+    {
+        // nothing more
+    } else {
+        // Q-edges against plane(P)
+        for (ia, ib, da, db) in [
+            (0usize, 1usize, &d_q0, &d_q1),
+            (1usize, 2usize, &d_q1, &d_q2),
+            (2usize, 0usize, &d_q2, &d_q0),
+        ] {
+            let prod = da * db;
+            if prod.is_negative_or_zero() && !(da.is_zero() && db.is_zero()) {
+                let denom = da - db;
+                if denom.is_zero() {
+                    continue;
+                }
+                let t = da / &denom;
+                let dir = (q[ib] - q[ia]).as_vector();
+                let iq = q[ia].add_vector(&dir.scale(&t));
+                if pre_p.inside_2d(&iq) && push_uniq(iq) == 2 {
+                    return TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[1]));
+                }
+            }
+        }
+    }
+
+    // Finalize
+    match uniq.len() {
+        0 => TriTriIntersectionResult::None,
+        1 => TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[0])),
+        2 => TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[1])),
+        _ => {
+            // farthest pair
+            let mut max_d2 = T::zero();
+            let mut best = (0usize, 1usize);
+            for i in 0..uniq.len() {
+                for j in (i + 1)..uniq.len() {
+                    let v = (&uniq[j] - &uniq[i]).as_vector();
+                    let d2 = v.dot(&v);
+                    if (&d2 - &max_d2).is_positive() {
+                        max_d2 = d2;
+                        best = (i, j);
+                    }
+                }
+            }
+            TriTriIntersectionResult::Proper(Segment::new(&uniq[best.0], &uniq[best.1]))
+        }
+    }
+}
+
+/// Convenience overload: reuse precomputed data for `p`, compute once for `q`.
+#[inline(always)]
+pub fn tri_tri_intersection_with_precomp_p<T: Scalar, const N: usize>(
+    p: &[&Point<T, N>; 3],
+    q: &[&Point<T, N>; 3],
+    pre_p: &TriPrecomp<T, N>,
+) -> TriTriIntersectionResult<T, N>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    let pre_q = TriPrecomp::new(q);
+    if pre_q.degenerate {
+        return TriTriIntersectionResult::None;
+    }
+    tri_tri_intersection_with_precomp(p, q, pre_p, &pre_q)
 }

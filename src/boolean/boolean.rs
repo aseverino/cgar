@@ -37,7 +37,10 @@ use crate::{
         point::{Point, PointOps},
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
-        tri_tri_intersect::{TriTriIntersectionResult, tri_tri_intersection},
+        tri_tri_intersect::{
+            TriPrecomp, TriTriIntersectionResult, tri_tri_intersection,
+            tri_tri_intersection_with_precomp, tri_tri_intersection_with_precomp_p,
+        },
         util::point_from_segment_and_u,
         vector::{Vector, VectorOps},
     },
@@ -90,7 +93,8 @@ pub enum SplitType {
 }
 
 pub struct Splits<T: Scalar, const N: usize> {
-    pub splits: HashMap<ApproxPointKey, (Point<T, N>, SplitType, usize, Vec<EndPointHandle>)>,
+    pub splits:
+        HashMap<ApproxPointKey, (Point<T, N>, SplitType, usize, SmallVec<[EndPointHandle; 2]>)>,
 }
 
 impl<T: Scalar, const N: usize> Splits<T, N> {
@@ -272,8 +276,10 @@ where
         coplanar: bool,
         skip_endpoint_b: bool,
     ) {
-        // Push container slot
-        let idx = container.len();
+        use std::collections::hash_map::Entry;
+
+        // Reserve slot
+        let seg_idx = container.len();
         container.push(IntersectionSegment::new(
             IntersectionEndPoint::new_default(),
             IntersectionEndPoint::new_default(),
@@ -283,81 +289,308 @@ where
             coplanar,
         ));
 
-        // Resolve one endpoint robustly:
         #[inline(always)]
-        fn resolve_endpoint<T: Scalar, const N: usize>(
+        fn he_for_face_edge<T: Scalar, const N: usize>(
+            mesh: &Mesh<T, N>,
+            face: usize,
+            u: usize,
+            v: usize,
+        ) -> usize {
+            if let Some(&he) = mesh.edge_map.get(&(u, v)) {
+                if mesh.half_edges[he].face == Some(face) {
+                    return he;
+                }
+                let twin = mesh.half_edges[he].twin;
+                if mesh.half_edges[twin].face == Some(face) {
+                    return twin;
+                }
+            }
+            if let Some(&he) = mesh.edge_map.get(&(v, u)) {
+                if mesh.half_edges[he].face == Some(face) {
+                    return he;
+                }
+                let twin = mesh.half_edges[he].twin;
+                if mesh.half_edges[twin].face == Some(face) {
+                    return twin;
+                }
+            }
+            panic!("Face edge half-edge not found for ({u},{v}) on face {face}");
+        }
+
+        // Precompute per-call constants/refs once
+        let tol = T::point_merge_threshold();
+        let tol2 = &tol * &tol;
+        let [ia, ib, ic] = mesh.face_vertices(main_face);
+        let pa = &mesh.vertices[ia].position;
+        let pb = &mesh.vertices[ib].position;
+        let pc = &mesh.vertices[ic].position;
+        let he_ab = he_for_face_edge(mesh, main_face, ia, ib);
+        let he_bc = he_for_face_edge(mesh, main_face, ib, ic);
+        let he_ca = he_for_face_edge(mesh, main_face, ic, ia);
+
+        // Precompute quantizer scale once
+        let scale: CgarF64 = (&tol).ref_into();
+        let q_scale = 1.0 / scale.0;
+
+        #[inline(always)]
+        fn attach_handle_or_classify<T: Scalar, const N: usize>(
             mesh: &Mesh<T, N>,
             splits: &mut Splits<T, N>,
             container: &mut Vec<IntersectionSegment<T, N>>,
             seg_idx: usize,
+            endpoint_idx: usize,
             face: usize,
-            endpoint: usize,
+            pa: &Point<T, N>,
+            pb: &Point<T, N>,
+            pc: &Point<T, N>,
+            ia: usize,
+            ib: usize,
+            ic: usize,
+            he_ab: usize,
+            he_bc: usize,
+            he_ca: usize,
+            tol: &T,
+            tol2: &T,
+            q_scale: f64,
             pos: &Point<T, N>,
-        ) -> usize
-        where
+        ) where
             Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-            Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+            Vector<T, N>: VectorOps<T, N>,
             for<'a> &'a T: Sub<&'a T, Output = T>
                 + Mul<&'a T, Output = T>
                 + Add<&'a T, Output = T>
                 + Div<&'a T, Output = T>
                 + Neg<Output = T>,
         {
-            // Rebase face to a valid descendant for this endpoint
-            match mesh.location_on_face(face, pos) {
-                FindFaceResult::Inside { f, bary } => {
-                    container[seg_idx][endpoint].face_hint = Some(f);
-                    container[seg_idx][endpoint].barycentric_hint = Some(bary);
-                    let key_q = point_key(pos);
-                    let entry = splits
-                        .splits
-                        .entry(key_q)
-                        .or_insert_with(|| (pos.clone(), SplitType::Face, usize::MAX, Vec::new()));
-                    entry.2 = f;
-                    entry.3.push(EndPointHandle {
+            // Cache probe
+            let key_q = point_key(pos);
+            match splits.splits.entry(key_q) {
+                Entry::Occupied(mut occ) => {
+                    occ.get_mut().3.push(EndPointHandle {
                         segment_idx: seg_idx,
-                        endpoint_idx: endpoint,
+                        endpoint_idx,
                     });
-                    return f;
+                    return;
                 }
-                FindFaceResult::OnEdge { f, he, u } => {
-                    // Proper edge point
-                    let v_b = &mesh.vertices[mesh.half_edges[he].vertex].position;
-                    let v_a =
-                        &mesh.vertices[mesh.half_edges[mesh.half_edges[he].twin].vertex].position;
-                    let snap = v_a + &(v_b - v_a).as_vector().scale(&u).0;
-
-                    container[seg_idx][endpoint].vertex_hint = Some([
-                        mesh.half_edges[he].vertex,
-                        mesh.half_edges[mesh.half_edges[he].twin].vertex,
-                    ]);
-                    container[seg_idx][endpoint].half_edge_hint = Some(he);
-                    container[seg_idx][endpoint].half_edge_u_hint = Some(u.clone());
-
-                    let key_q = point_key(&snap);
-                    let entry = splits
-                        .splits
-                        .entry(key_q)
-                        .or_insert_with(|| (snap.clone(), SplitType::Edge, usize::MAX, Vec::new()));
-                    entry.2 = he;
-                    entry.3.push(EndPointHandle {
-                        segment_idx: seg_idx,
-                        endpoint_idx: endpoint,
-                    });
-                    return f;
-                }
-                FindFaceResult::OnVertex { f, v, .. } => {
-                    container[seg_idx][endpoint].vertex_hint = Some([v, usize::MAX]);
-                    return f;
-                }
+                Entry::Vacant(_) => {}
             }
+
+            // Vertex snaps (exact zero preferred to avoid LazyExact eval)
+            let da = (pos - pa).as_vector().dot(&(pos - pa).as_vector());
+            if da.is_zero() {
+                container[seg_idx][endpoint_idx].vertex_hint = Some([ia, usize::MAX]);
+                return;
+            }
+            let db = (pos - pb).as_vector().dot(&(pos - pb).as_vector());
+            if db.is_zero() {
+                container[seg_idx][endpoint_idx].vertex_hint = Some([ib, usize::MAX]);
+                return;
+            }
+            let dc = (pos - pc).as_vector().dot(&(pos - pc).as_vector());
+            if dc.is_zero() {
+                container[seg_idx][endpoint_idx].vertex_hint = Some([ic, usize::MAX]);
+                return;
+            }
+
+            #[inline(always)]
+            fn try_edge<T: Scalar, const N: usize>(
+                mesh: &Mesh<T, N>,
+                splits: &mut Splits<T, N>,
+                container: &mut Vec<IntersectionSegment<T, N>>,
+                seg_idx: usize,
+                endpoint_idx: usize,
+                face: usize,
+                pu_idx: usize,
+                pv_idx: usize,
+                he: usize,
+                p: &Point<T, N>,
+                tol: &T,
+                tol2: &T,
+                q_scale: f64,
+            ) -> bool
+            where
+                Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+                Vector<T, N>: VectorOps<T, N>,
+                for<'a> &'a T: Sub<&'a T, Output = T>
+                    + Mul<&'a T, Output = T>
+                    + Add<&'a T, Output = T>
+                    + Div<&'a T, Output = T>
+                    + Neg<Output = T>,
+            {
+                let pu = &mesh.vertices[pu_idx].position;
+                let pv = &mesh.vertices[pv_idx].position;
+                let uv = (pv - pu).as_vector();
+                let uv2 = uv.dot(&uv);
+                if uv2.is_zero() {
+                    return false;
+                }
+
+                let up = (p - pu).as_vector();
+                let t = &up.dot(&uv) / &uv2;
+
+                // Range check with tol slack
+                if (&t + tol).is_negative() || (&(&t - &T::one()) - tol).is_positive() {
+                    return false;
+                }
+
+                // Distance check
+                let closest = pu + &(uv.scale(&t)).0;
+                let diff = (p - &closest).as_vector();
+                let d2 = diff.dot(&diff);
+                if (&d2 - tol2).is_positive() {
+                    return false;
+                }
+
+                // Snap to endpoints if within tol
+                if (&t).is_zero() {
+                    container[seg_idx][endpoint_idx].vertex_hint = Some([pu_idx, usize::MAX]);
+                    return true;
+                }
+                if (&(&t - &T::one())).is_zero() {
+                    container[seg_idx][endpoint_idx].vertex_hint = Some([pv_idx, usize::MAX]);
+                    return true;
+                }
+
+                // Record edge split hints
+                container[seg_idx][endpoint_idx].vertex_hint = Some([
+                    mesh.half_edges[he].vertex,
+                    mesh.half_edges[mesh.half_edges[he].twin].vertex,
+                ]);
+                container[seg_idx][endpoint_idx].half_edge_hint = Some(he);
+                container[seg_idx][endpoint_idx].half_edge_u_hint = Some(t.clone());
+
+                // Quantize pu + uv*t without allocating a Point unless we insert
+                let to_i64 = |val: &T| -> i64 {
+                    let cf: CgarF64 = val.ref_into();
+                    (cf.0 * q_scale).round() as i64
+                };
+
+                let mut qx = 0i64;
+                let mut qy = 0i64;
+                let mut qz = 0i64;
+                for i in 0..N.min(3) {
+                    let a = &pu[i];
+                    let b = &pv[i];
+                    let comp = a + &((&(b - a)) * &t);
+                    let qi = to_i64(&comp);
+                    if i == 0 {
+                        qx = qi
+                    } else if i == 1 {
+                        qy = qi
+                    } else {
+                        qz = qi
+                    }
+                }
+
+                let key_snap = ApproxPointKey {
+                    qx,
+                    qy: if N > 1 { qy } else { 0 },
+                    qz: if N > 2 { qz } else { 0 },
+                };
+
+                match splits.splits.entry(key_snap) {
+                    Entry::Occupied(mut occ) => {
+                        occ.get_mut().3.push(EndPointHandle {
+                            segment_idx: seg_idx,
+                            endpoint_idx,
+                        });
+                    }
+                    Entry::Vacant(vac) => {
+                        // Allocate snap Point only on insert
+                        let snap = pu + &(uv.scale(&t)).0;
+                        vac.insert((snap, SplitType::Edge, he, {
+                            let mut v: SmallVec<[EndPointHandle; 2]> = SmallVec::new();
+                            v.push(EndPointHandle {
+                                segment_idx: seg_idx,
+                                endpoint_idx,
+                            });
+                            v
+                        }));
+                    }
+                }
+                true
+            }
+
+            // Try each edge once (precomputed half-edges)
+            if try_edge(
+                mesh,
+                splits,
+                container,
+                seg_idx,
+                endpoint_idx,
+                face,
+                ia,
+                ib,
+                he_ab,
+                pos,
+                tol,
+                tol2,
+                q_scale,
+            ) {
+                return;
+            }
+            if try_edge(
+                mesh,
+                splits,
+                container,
+                seg_idx,
+                endpoint_idx,
+                face,
+                ib,
+                ic,
+                he_bc,
+                pos,
+                tol,
+                tol2,
+                q_scale,
+            ) {
+                return;
+            }
+            if try_edge(
+                mesh,
+                splits,
+                container,
+                seg_idx,
+                endpoint_idx,
+                face,
+                ic,
+                ia,
+                he_ca,
+                pos,
+                tol,
+                tol2,
+                q_scale,
+            ) {
+                return;
+            }
+
+            // Interior face split
+            container[seg_idx][endpoint_idx].face_hint = Some(face);
+            splits.splits.insert(
+                key_q,
+                (pos.clone(), SplitType::Face, face, {
+                    let mut v: SmallVec<[EndPointHandle; 2]> = SmallVec::new();
+                    v.push(EndPointHandle {
+                        segment_idx: seg_idx,
+                        endpoint_idx,
+                    });
+                    v
+                }),
+            );
         }
 
-        // Resolve endpoints independently (B may lie on a neighbor face)
-        let _ok_a = resolve_endpoint(mesh, splits, container, idx, main_face, 0, &segment.a);
+        // Endpoint A
+        attach_handle_or_classify(
+            mesh, splits, container, seg_idx, 0, main_face, pa, pb, pc, ia, ib, ic, he_ab, he_bc,
+            he_ca, &tol, &tol2, q_scale, &segment.a,
+        );
 
+        // Endpoint B
         if !skip_endpoint_b {
-            let _ok_b = resolve_endpoint(mesh, splits, container, idx, main_face, 1, &segment.b);
+            attach_handle_or_classify(
+                mesh, splits, container, seg_idx, 1, main_face, pa, pb, pc, ia, ib, ic, he_ab,
+                he_bc, he_ca, &tol, &tol2, q_scale, &segment.b,
+            );
         }
     }
 
@@ -374,8 +607,7 @@ where
                 let result = mesh
                     .split_edge(tree, endpoint_tup.2, &endpoint_tup.0)
                     .expect("Failed to split edge");
-
-                for endpoint in &endpoint_tup.3 {
+                for endpoint in endpoint_tup.3.iter() {
                     intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
                         .vertex_hint = Some([result.vertex, usize::MAX]);
                     intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
@@ -387,8 +619,7 @@ where
                 let result = mesh
                     .split_face(tree, endpoint_tup.2, &endpoint_tup.0)
                     .expect("Failed to split face");
-
-                for endpoint in &endpoint_tup.3 {
+                for endpoint in endpoint_tup.3.iter() {
                     intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
                         .vertex_hint = Some([result.vertex, usize::MAX]);
                     intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx].face_hint =
@@ -422,21 +653,16 @@ where
             tree_b.query(&a.face_aabb(fa), &mut candidates);
 
             let pa_idx = a.face_vertices(fa);
-            let pa_vec: Vec<&Point<T, N>> = pa_idx
-                .into_iter()
-                .map(|vi| &a.vertices[vi].position)
-                .collect();
-            let pa: [&Point<T, N>; 3] = pa_vec.try_into().expect("Expected 3 vertices");
+            let pa: [&Point<T, N>; 3] = from_fn(|i| &a.vertices[pa_idx[i]].position);
+            let pre_a = TriPrecomp::new(&pa);
 
             for &fb in &candidates {
                 let pb_idx = b.face_vertices(*fb);
-                let pb_vec: Vec<&Point<T, N>> = pb_idx
-                    .into_iter()
-                    .map(|vi| &b.vertices[vi].position)
-                    .collect();
-                let pb: [&Point<T, N>; 3] = pb_vec.try_into().expect("Expected 3 vertices");
+                let pb: [&Point<T, N>; 3] = from_fn(|i| &b.vertices[pb_idx[i]].position);
 
-                match tri_tri_intersection(&pa, &pb) {
+                let pre_b = TriPrecomp::new(&pb);
+                match tri_tri_intersection_with_precomp(&pa, &pb, &pre_a, &pre_b) {
+                    // match tri_tri_intersection_with_precomp_p(&pa, &pb, &pre_a) {
                     TriTriIntersectionResult::Proper(segment) => {
                         if segment.length2().is_positive() {
                             Self::create_intersection_segment(
@@ -523,11 +749,6 @@ where
             &mut intersection_segments_a,
         );
         println!("Splits done in {:.2?}", start.elapsed());
-
-        println!(
-            "test: {:?}",
-            &a.vertices[0].position[0] - &a.vertices[0].position[1]
-        );
 
         println!("Splits on B ({})", splits_b.splits.len());
         let start = Instant::now();
