@@ -52,7 +52,10 @@ use crate::{
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
         topology::{FindFaceResult, VertexRayResult},
     },
-    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    numeric::{
+        cgar_f64::CgarF64,
+        scalar::{RefInto, Scalar},
+    },
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -129,24 +132,27 @@ where
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
         coplanar_triangles: &Vec<CoplanarTriangle>,
         include_on_surface: bool,
-    ) -> Vec<bool> {
+    ) -> Vec<bool>
+    where
+        T: RefInto<T>,
+    {
         // build adjacency & boundary‐map
         let adj = self.build_face_adjacency_graph();
 
-        let tree_b = AabbTree::<CgarF64, N, _, _>::build(
+        let tree_b = AabbTree::<T, N, _, _>::build(
             (0..other.faces.len())
                 .map(|i| {
                     let aabb_n = other.face_aabb(i);
                     let min = aabb_n.min();
                     let max = aabb_n.max();
                     // Convert Aabb<T, N, Point<T, N>> to Aabb<T, 3, Point<T, 3>>
-                    let aabb3 = Aabb::<CgarF64, N, Point<CgarF64, N>>::from_points(
-                        &Point::<CgarF64, N>::from_vals(from_fn(|i| min[i].clone())),
-                        &Point::<CgarF64, N>::from_vals(from_fn(|i| max[i].clone())),
+                    let aabb3 = Aabb::<T, N, Point<T, N>>::from_points(
+                        &Point::<T, N>::from_vals(from_fn(|i| min[i].clone())),
+                        &Point::<T, N>::from_vals(from_fn(|i| max[i].clone())),
                     );
                     (aabb3, i)
                 })
-                .collect::<Vec<(Aabb<CgarF64, N, Point<CgarF64, N>>, usize)>>(),
+                .collect::<Vec<(Aabb<T, N, Point<T, N>>, usize)>>(),
         );
 
         let mut visited = vec![false; self.faces.len()];
@@ -597,12 +603,10 @@ where
 
     fn boolean_split(
         mesh: &mut Mesh<T, N>,
-        tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
+        tree: &mut AabbTree<T, N, Point<T, N>, usize>,
         splits: &mut Splits<T, N>,
         intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-    ) where
-        T: Into<CgarF64>,
-    {
+    ) {
         for (_key, endpoint_tup) in &splits.splits {
             if endpoint_tup.1 == SplitType::Edge {
                 let result = mesh
@@ -632,7 +636,10 @@ where
         }
     }
 
-    pub fn boolean(&self, other: &Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
+    pub fn boolean(&self, other: &Mesh<T, N>, op: BooleanOp) -> Mesh<T, N>
+    where
+        T: RefInto<T>,
+    {
         let mut a = self.clone();
         let mut b = other.clone();
 
@@ -1181,7 +1188,7 @@ where
     fn process_segment(
         &mut self,
         edge_splits: &mut Splits<T, N>,
-        aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
+        aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
         intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
         segment_idx: usize,
     ) {
@@ -1302,11 +1309,14 @@ where
     fn get_seed_face(
         a: &Mesh<T, N>,
         b: &Mesh<T, N>,
-        tree_b: &AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
+        tree_b: &AabbTree<T, N, Point<T, N>, usize>,
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
         boundary_faces: &AHashSet<usize>,
         include_on_surface: bool,
-    ) -> (usize, usize) {
+    ) -> (usize, usize)
+    where
+        T: RefInto<T>,
+    {
         let mut selected_face = usize::MAX;
         let seed_idx = (0..intersection_segments.len())
             .filter(|&seg_idx| {
@@ -1576,8 +1586,7 @@ where
 
     // Precompute per Y-edge data + build 3D AABB tree (the engine already uses 3D trees).
     // Each edge AABB is expanded by tol to ensure we don't miss near-segment hits.
-    let mut edge_boxes: Vec<(Aabb<CgarF64, 3, Point<CgarF64, 3>>, usize)> =
-        Vec::with_capacity(y_edges.len());
+    let mut edge_boxes: Vec<(Aabb<T, 3, Point<T, 3>>, usize)> = Vec::with_capacity(y_edges.len());
     let mut ab_vecs: Vec<Vector<T, N>> = Vec::with_capacity(y_edges.len());
     let mut ab_len2s: Vec<T> = Vec::with_capacity(y_edges.len());
 
@@ -1600,9 +1609,9 @@ where
         maxy = &maxy + &tol;
         maxz = &maxz + &tol;
 
-        let bb = Aabb::<CgarF64, 3, Point<CgarF64, 3>>::from_points(
-            &Point::<CgarF64, 3>::from_vals([minx, miny, minz]),
-            &Point::<CgarF64, 3>::from_vals([maxx, maxy, maxz]),
+        let bb = Aabb::<T, 3, Point<T, 3>>::from_points(
+            &Point::<T, 3>::from_vals([minx, miny, minz]),
+            &Point::<T, 3>::from_vals([maxx, maxy, maxz]),
         );
         edge_boxes.push((bb, ei));
 
@@ -1611,7 +1620,7 @@ where
         ab_len2s.push(ab.dot(&ab));
     }
 
-    let tree_y = AabbTree::<CgarF64, 3, Point<CgarF64, 3>, usize>::build(edge_boxes);
+    let tree_y = AabbTree::<T, 3, Point<T, 3>, usize>::build(edge_boxes);
 
     let mut out = Vec::new();
     let mut candidates = Vec::new();
@@ -1620,9 +1629,9 @@ where
         let p = &mesh_x.vertices[xv].position;
 
         // Query box around p with tol in 3D
-        let minq = Point::<CgarF64, 3>::from_vals([&p[0] - &tol, &p[1] - &tol, &p[2] - &tol]);
-        let maxq = Point::<CgarF64, 3>::from_vals([&p[0] + &tol, &p[1] + &tol, &p[2] + &tol]);
-        let query = Aabb::<CgarF64, 3, Point<CgarF64, 3>>::from_points(&minq, &maxq);
+        let minq = Point::<T, 3>::from_vals([&p[0] - &tol, &p[1] - &tol, &p[2] - &tol]);
+        let maxq = Point::<T, 3>::from_vals([&p[0] + &tol, &p[1] + &tol, &p[2] + &tol]);
+        let query = Aabb::<T, 3, Point<T, 3>>::from_points(&minq, &maxq);
 
         candidates.clear();
         tree_y.query(&query, &mut candidates);
@@ -1688,7 +1697,7 @@ fn process_segment_and_edge_map<T: Scalar, const N: usize>(
     intersections_edge_map: &mut AHashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
     i: usize,
     splits: &mut Splits<T, N>,
-    tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
+    tree: &mut AabbTree<T, N, Point<T, N>, usize>,
 ) where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
@@ -1723,7 +1732,7 @@ fn process_segment_and_edge_map<T: Scalar, const N: usize>(
 fn process_t_junction<T: Scalar, const N: usize>(
     mesh_x: &mut Mesh<T, N>,
     mesh_y: &mut Mesh<T, N>,
-    tree_x: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
+    tree_x: &mut AabbTree<T, N, Point<T, N>, usize>,
     t_junction: &TJunction,
     intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
     intersections_edge_map: &mut AHashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,

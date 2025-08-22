@@ -42,7 +42,10 @@ use crate::{
         basic_types::*, face::Face, half_edge::HalfEdge, intersection_segment::IntersectionSegment,
         topology::FindFaceResult, vertex::Vertex,
     },
-    numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    numeric::{
+        cgar_f64::CgarF64,
+        scalar::{RefInto, Scalar},
+    },
 };
 
 impl_mesh! {
@@ -595,16 +598,16 @@ impl_mesh! {
         *self = new_mesh;
     }
 
-    pub fn build_face_tree(&self) -> AabbTree<CgarF64, N, Point<CgarF64, N>, usize> {
+    pub fn build_face_tree(&self) -> AabbTree<T, N, Point<T, N>, usize>
+    where
+        for<'a> &'a T: Sub<&'a T, Output = T>,
+    {
         let mut face_aabbs = Vec::with_capacity(self.faces.len());
 
         for (face_idx, face) in self.faces.iter().enumerate() {
-            if face.removed {
-                continue;
-            }
+            if face.removed { continue; }
 
             let hes = self.face_half_edges(face_idx);
-
             if hes[1] >= self.half_edges.len()
                 || hes[2] >= self.half_edges.len()
                 || self.half_edges[hes[2]].next != hes[0]
@@ -615,7 +618,6 @@ impl_mesh! {
             let v0_idx = self.half_edges[hes[0]].vertex;
             let v1_idx = self.half_edges[hes[1]].vertex;
             let v2_idx = self.half_edges[hes[2]].vertex;
-
             if v0_idx >= self.vertices.len()
                 || v1_idx >= self.vertices.len()
                 || v2_idx >= self.vertices.len()
@@ -623,51 +625,27 @@ impl_mesh! {
                 continue;
             }
 
-            // **GENERIC N-DIMENSIONAL COORDINATE PROCESSING**
             let p0 = &self.vertices[v0_idx].position;
             let p1 = &self.vertices[v1_idx].position;
             let p2 = &self.vertices[v2_idx].position;
 
-            // Find min/max for each coordinate dimension
-            let mut min_coords = from_fn(|_| CgarF64::from(0));
-            let mut max_coords = from_fn(|_| CgarF64::from(0));
+            // Per-axis min/max via sign-of-difference (LazyExact-friendly)
+            let mins = std::array::from_fn(|i| min3_ref(&p0[i], &p1[i], &p2[i]).clone());
+            let maxs = std::array::from_fn(|i| max3_ref(&p0[i], &p1[i], &p2[i]).clone());
 
-            for i in 0..N {
-                // Use approximate comparisons via CgarF64 to avoid forcing exact on T.
-                let a0: CgarF64 = (&p0[i]).ref_into();
-                let a1: CgarF64 = (&p1[i]).ref_into();
-                let a2: CgarF64 = (&p2[i]).ref_into();
-
-                // Min
-                let mut minv = &a0;
-                if a1.0 < minv.0 { minv = &a1; }
-                if a2.0 < minv.0 { minv = &a2; }
-
-                // Max
-                let mut maxv = &a0;
-                if a1.0 > maxv.0 { maxv = &a1; }
-                if a2.0 > maxv.0 { maxv = &a2; }
-
-                min_coords[i] = minv.clone();
-                max_coords[i] = maxv.clone();
-            }
-
-            let aabb =
-                Aabb::from_points(&Point::from_vals(min_coords), &Point::from_vals(max_coords));
-
+            let aabb = Aabb::<T, N, Point<T, N>>::from_points(&Point::<T, N>::from_vals(mins), &Point::<T, N>::from_vals(maxs));
             face_aabbs.push((aabb, face_idx));
         }
 
-        let tree = AabbTree::<CgarF64, N, Point<CgarF64, N>, usize>::build(face_aabbs);
-        tree
+        AabbTree::<T, N, Point<T, N>, usize>::build(face_aabbs)
     }
 
     /// Compute the AABB of face `f`.
-    pub fn face_aabb(&self, f: usize) -> Aabb<CgarF64, N, Point<CgarF64, N>> {
+    pub fn face_aabb(&self, f: usize) -> Aabb<T, N, Point<T, N>> {
         let face = &self.faces[f];
         if face.removed || face.half_edge == usize::MAX || self.half_edges[face.half_edge].removed {
             // Return degenerate AABB for invalid faces
-            let origin = Point::<CgarF64, N>::from_vals(from_fn(|_| CgarF64::from(0)));
+            let origin = Point::<T, N>::from_vals(from_fn(|_| T::zero()));
             return Aabb::from_points(&origin, &origin);
         }
 
@@ -675,7 +653,7 @@ impl_mesh! {
 
         // Safety checks
         if hes[1] >= self.half_edges.len() || hes[2] >= self.half_edges.len() {
-            let origin = Point::<CgarF64, N>::from_vals(from_fn(|_| CgarF64::from(0)));
+            let origin = Point::<T, N>::from_vals(from_fn(|_| T::zero()));
             return Aabb::from_points(&origin, &origin);
         }
 
@@ -688,7 +666,7 @@ impl_mesh! {
             || v1_idx >= self.vertices.len()
             || v2_idx >= self.vertices.len()
         {
-            let origin = Point::<CgarF64, N>::from_vals(from_fn(|_| CgarF64::from(0)));
+            let origin = Point::<T, N>::from_vals(from_fn(|_| T::zero()));
             return Aabb::from_points(&origin, &origin);
         }
 
@@ -806,7 +784,7 @@ impl_mesh! {
 
     pub fn split_edge(
         &mut self,
-        aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
+        aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
         he: usize,
         pos: &Point<T, N>,
         update_tree: bool,
@@ -1157,7 +1135,7 @@ impl_mesh! {
 
     pub fn split_face(
         &mut self,
-        aabb_tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
+        aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
         mut face: usize,
         p: &Point<T, N>,
         update_tree: bool,
@@ -1595,45 +1573,44 @@ impl_mesh! {
     }
 }
 
+#[inline(always)]
+fn min3_ref<'a, T: Scalar>(a: &'a T, b: &'a T, c: &'a T) -> &'a T
+where
+    for<'x> &'x T: Sub<&'x T, Output = T>,
+{
+    // pick min by sign of differences (LazyExact uses Ball fast-path here)
+    let ab = if (a - b).is_negative() { a } else { b };
+    if (c - ab).is_negative() { c } else { ab }
+}
+
+#[inline(always)]
+fn max3_ref<'a, T: Scalar>(a: &'a T, b: &'a T, c: &'a T) -> &'a T
+where
+    for<'x> &'x T: Sub<&'x T, Output = T>,
+{
+    let ab = if (a - b).is_positive() { a } else { b };
+    if (c - ab).is_positive() { c } else { ab }
+}
+
 pub fn compute_triangle_aabb<T: Scalar, const N: usize>(
     p0: &Point<T, N>,
     p1: &Point<T, N>,
     p2: &Point<T, N>,
-) -> Aabb<CgarF64, N, Point<CgarF64, N>>
+) -> Aabb<T, N, Point<T, N>>
 where
-    T: Scalar + crate::numeric::scalar::RefInto<CgarF64>,
+    for<'a> &'a T: Sub<&'a T, Output = T>,
 {
-    // Compute per-axis min/max using approximate values to avoid forcing exact on T.
-    let mut min_coords = std::array::from_fn(|_| CgarF64::from(0.0));
-    let mut max_coords = std::array::from_fn(|_| CgarF64::from(0.0));
+    let mins = std::array::from_fn(|i| {
+        let m = min3_ref(&p0[i], &p1[i], &p2[i]);
+        m.clone()
+    });
+    let maxs = std::array::from_fn(|i| {
+        let m = max3_ref(&p0[i], &p1[i], &p2[i]);
+        m.clone()
+    });
 
-    for i in 0..N {
-        // Cheap approx conversions; do not realize exact
-        let a0: CgarF64 = crate::numeric::scalar::RefInto::ref_into(&p0[i]);
-        let a1: CgarF64 = crate::numeric::scalar::RefInto::ref_into(&p1[i]);
-        let a2: CgarF64 = crate::numeric::scalar::RefInto::ref_into(&p2[i]);
-
-        // Min
-        let mut minv = &a0;
-        if &a1.0 < &minv.0 {
-            minv = &a1;
-        }
-        if &a2.0 < &minv.0 {
-            minv = &a2;
-        }
-
-        // Max
-        let mut maxv = minv; // start from current min to reduce comparisons
-        if &a1.0 > &maxv.0 {
-            maxv = &a1;
-        }
-        if &a2.0 > &maxv.0 {
-            maxv = &a2;
-        }
-
-        min_coords[i] = minv.clone();
-        max_coords[i] = maxv.clone();
-    }
-
-    Aabb::from_points(&Point::from_vals(min_coords), &Point::from_vals(max_coords))
+    Aabb::from_points(
+        &Point::<T, N>::from_vals(mins),
+        &Point::<T, N>::from_vals(maxs),
+    )
 }

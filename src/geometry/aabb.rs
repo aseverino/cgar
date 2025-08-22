@@ -57,45 +57,34 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
     }
 
     /// Build the smallest AABB containing two points.
-    pub fn from_points(a: &P, b: &P) -> Self {
-        let mins = std::array::from_fn(|i| {
-            let ai = a[i].clone();
-            let bi = b[i].clone();
-            if ai < bi { ai } else { bi }
-        });
-        let maxs = std::array::from_fn(|i| {
-            let ai = a[i].clone();
-            let bi = b[i].clone();
-            if ai > bi { ai } else { bi }
-        });
+    pub fn from_points(a: &P, b: &P) -> Self
+    where
+        for<'a> &'a T: Sub<&'a T, Output = T>,
+    {
+        let mins = std::array::from_fn(|i| min_by_sign(&a[i], &b[i]));
+        let maxs = std::array::from_fn(|i| max_by_sign(&a[i], &b[i]));
         Aabb::new(P::from_vals(mins), P::from_vals(maxs))
-        // reconstruct P from coord slices
-        //Aabb::new(mins, maxs.clone())
     }
 
-    /// Expand this box to also contain `other`.
-    pub fn union(&self, other: &Aabb<T, N, P>) -> Aabb<T, N, P> {
-        let mins = std::array::from_fn(|i| {
-            let a = self.min[i].clone();
-            let b = other.min[i].clone();
-            if a < b { a } else { b }
-        });
-        let maxs = std::array::from_fn(|i| {
-            let a = self.max[i].clone();
-            let b = other.max[i].clone();
-            if a > b { a } else { b }
-        });
+    pub fn union(&self, other: &Aabb<T, N, P>) -> Aabb<T, N, P>
+    where
+        for<'a> &'a T: Sub<&'a T, Output = T>,
+    {
+        let mins = std::array::from_fn(|i| min_by_sign(&self.min[i], &other.min[i]));
+        let maxs = std::array::from_fn(|i| max_by_sign(&self.max[i], &other.max[i]));
         Aabb::new(P::from_vals(mins), P::from_vals(maxs))
     }
 
     /// Does this AABB intersect `other`?
-    pub fn intersects(&self, other: &Aabb<T, N, P>) -> bool {
+    pub fn intersects(&self, other: &Aabb<T, N, P>) -> bool
+    where
+        for<'a> &'a T: Sub<&'a T, Output = T>,
+    {
         for i in 0..N {
-            let a_min = &self.min[i];
-            let a_max = &self.max[i];
-            let b_min = &other.min[i];
-            let b_max = &other.max[i];
-            if a_max < b_min || b_max < a_min {
+            if (&self.max[i] - &other.min[i]).is_negative() {
+                return false;
+            }
+            if (&other.max[i] - &self.min[i]).is_negative() {
                 return false;
             }
         }
@@ -105,12 +94,10 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
     /// Center coordinate along axis `i`.
     pub fn center(&self, i: usize) -> T
     where
-        T: From<f64> + From<CgarRational>,
         for<'a> &'a T: Add<&'a T, Output = T> + Mul<&'a T, Output = T>,
     {
-        let a = self.min[i].clone();
-        let b = self.max[i].clone();
-        &(&a + &b) * &T::from(0.5)
+        let half = T::from_num_den(1, 2);
+        &(&self.min[i] + &self.max[i]) * &half
     }
 
     /// Length along axis `i`.
@@ -128,14 +115,40 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
     pub fn longest_axis(&self) -> usize
     where
         T: Abs,
-        for<'a> &'a T: Add<&'a T, Output = T> + Sub<&'a T, Output = T> + Mul<&'a T, Output = T>,
+        for<'a> &'a T: Sub<&'a T, Output = T> + Add<&'a T, Output = T> + Mul<&'a T, Output = T>,
     {
-        (0..N)
-            .max_by(|&i, &j| {
-                self.extent(i)
-                    .partial_cmp(&self.extent(j))
-                    .unwrap_or(Ordering::Equal)
-            })
-            .unwrap()
+        let mut best_i = 0usize;
+        let mut best = self.extent(0);
+        for i in 1..N {
+            let e = self.extent(i);
+            if (&e - &best).is_positive() {
+                best_i = i;
+                best = e;
+            }
+        }
+        best_i
+    }
+}
+
+#[inline(always)]
+fn min_by_sign<T: Scalar>(a: &T, b: &T) -> T
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>,
+{
+    if (a - b).is_negative() {
+        a.clone()
+    } else {
+        b.clone()
+    }
+}
+#[inline(always)]
+fn max_by_sign<T: Scalar>(a: &T, b: &T) -> T
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>,
+{
+    if (a - b).is_positive() {
+        a.clone()
+    } else {
+        b.clone()
     }
 }

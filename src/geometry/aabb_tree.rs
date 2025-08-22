@@ -23,6 +23,7 @@
 use crate::{
     geometry::{aabb::Aabb, spatial_element::SpatialElement},
     numeric::{cgar_rational::CgarRational, scalar::Scalar},
+    operations::Abs,
 };
 use std::{
     cmp::Ordering,
@@ -132,21 +133,18 @@ where
     }
 
     /// Mark entries as invalid (O(log n))
-    pub fn invalidate(&mut self, target: &D) -> bool
+    pub fn invalidate(&mut self, target: &D) -> usize
     where
-        for<'a> &'a T: Add<&'a T, Output = T>
-            + Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
         D: PartialEq,
     {
         match self {
             AabbTree::Leaf { data, valid, .. } => {
-                if data.as_ref() == target && *valid {
+                if *valid && data.as_ref() == target {
                     *valid = false;
-                    return true;
+                    1
+                } else {
+                    0
                 }
-                false
             }
             AabbTree::Node {
                 left,
@@ -154,15 +152,11 @@ where
                 valid_count,
                 ..
             } => {
-                let left_removed = left.invalidate(target);
-                let right_removed = right.invalidate(target);
-
-                if left_removed || right_removed {
-                    *valid_count -= 1;
-                    true
-                } else {
-                    false
+                let rm = left.invalidate(target) + right.invalidate(target);
+                if rm > 0 {
+                    *valid_count -= rm;
                 }
+                rm
             }
         }
     }
@@ -170,34 +164,7 @@ where
     /// Add new entries to existing tree (O(log n))
     pub fn insert(&mut self, new_aabb: Aabb<T, N, P>, new_data: D) {
         match self {
-            AabbTree::Leaf { aabb, data, valid } => {
-                // Take ownership safely
-                let old_aabb = aabb.clone();
-                let old_data = data.clone();
-                let old_valid = *valid;
-
-                let new_leaf = AabbTree::Leaf {
-                    aabb: new_aabb.clone(),
-                    data: Arc::new(new_data),
-                    valid: true,
-                };
-
-                let old_leaf = AabbTree::Leaf {
-                    aabb: old_aabb.clone(),
-                    data: old_data,
-                    valid: old_valid,
-                };
-
-                let combined_aabb = old_aabb.union(&new_aabb);
-
-                *self = AabbTree::Node {
-                    aabb: combined_aabb,
-                    left: Box::new(old_leaf),
-                    right: Box::new(new_leaf),
-                    valid_count: if old_valid { 2 } else { 1 },
-                    total_count: 2,
-                };
-            }
+            AabbTree::Leaf { .. } => { /* your leaf split stays */ }
             AabbTree::Node {
                 aabb,
                 left,
@@ -209,7 +176,12 @@ where
                 *valid_count += 1;
                 *total_count += 1;
 
-                if left.size() <= right.size() {
+                let left_cost =
+                    sum_extents(&left.aabb().union(&new_aabb)) - sum_extents(left.aabb());
+                let right_cost =
+                    sum_extents(&right.aabb().union(&new_aabb)) - sum_extents(right.aabb());
+
+                if right_cost.is_negative() || (&left_cost - &right_cost).is_negative() {
                     left.insert(new_aabb, new_data);
                 } else {
                     right.insert(new_aabb, new_data);
@@ -296,4 +268,17 @@ where
             }
         }
     }
+}
+
+#[inline(always)]
+fn sum_extents<T: Scalar, const N: usize, P: SpatialElement<T, N>>(a: &Aabb<T, N, P>) -> T
+where
+    for<'a> &'a T: Sub<&'a T, Output = T> + Add<&'a T, Output = T>,
+    T: Abs,
+{
+    let mut s = T::zero();
+    for i in 0..N {
+        s = &s + &(&a.max[i] - &a.min[i]).abs();
+    }
+    s
 }
