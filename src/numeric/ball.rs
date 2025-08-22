@@ -55,11 +55,18 @@ impl Ball {
     }
 
     #[inline]
+    fn widen_ulp(x: f64) -> f64 {
+        // nextafter toward +∞ minus x, as a non-negative ulp size
+        let up = f64::from_bits(x.to_bits() + 1);
+        (up - x).abs()
+    }
+
+    #[inline]
     pub fn add(self, o: Self) -> Self {
         let (s, e) = two_sum(self.m, o.m);
         Ball {
             m: s,
-            r: self.r + o.r + e.abs(),
+            r: self.r + o.r + e.abs() + Self::widen_ulp(s),
         }
     }
     #[inline]
@@ -79,22 +86,28 @@ impl Ball {
         let (p, e) = two_prod(self.m, o.m);
         Ball {
             m: p,
-            r: self.m.abs() * o.r + o.m.abs() * self.r + e.abs(),
+            r: self.m.abs() * o.r
+                + o.m.abs() * self.r
+                + self.r * o.r
+                + e.abs()
+                + Self::widen_ulp(p),
         }
     }
-    // Safe but conservative division; if denom straddles zero, return “unknown”
+
+    #[inline]
+    fn recip(self) -> Self {
+        if self.m.abs() <= self.r {
+            return Ball::unknown();
+        }
+        let denom = self.m.abs() * (self.m.abs() - self.r);
+        let m = 1.0 / self.m;
+        let r = self.r / denom; // outward-bound
+        Ball { m, r }
+    }
+
     #[inline]
     pub fn div(self, o: Self) -> Self {
-        if o.m.abs() <= o.r {
-            return Ball::unknown();
-        }
-        let denom = o.m.abs() * (o.m.abs() - o.r);
-        if denom <= 0.0 {
-            return Ball::unknown();
-        }
-        let m = self.m / o.m;
-        let r = (self.m.abs() * o.r + o.m.abs() * self.r) / denom;
-        Ball { m, r }
+        self.mul(o.recip())
     }
 
     #[inline]

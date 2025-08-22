@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ahash = "0.8.12"
 num-traits = "0.2.19"
 once_cell = "1.21.3"
 rand = "0.9.1"

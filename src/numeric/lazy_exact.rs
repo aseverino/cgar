@@ -101,8 +101,8 @@ impl Scalar for LazyExact {
     // - fast path: |approx(self - other)| <= query_tolerance
     // - else: exact equality
     fn approx_eq(&self, other: &Self) -> bool {
-        let diff = self.clone() - other.clone();
-        let b = diff.ball();
+        let diff = self - other;
+        let b = diff.ball_ref();
         // User “query tolerance” becomes a *margin* on top of proven radius
         let tol = CgarF64::query_tolerance().0;
         if b.m.abs() <= b.r + tol {
@@ -121,14 +121,31 @@ impl Eq for LazyExact {}
 
 impl PartialOrd for LazyExact {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        // try interval fast path
+        let diff = self - other;
+        if let Some(s) = diff.ball_ref().sign_if_certain() {
+            return Some(match s {
+                -1 => Ordering::Less,
+                0 => Ordering::Equal,
+                _ => Ordering::Greater,
+            });
+        }
+        // fallback exact
         self.exact().partial_cmp(&other.exact())
     }
 }
 
 impl Hash for LazyExact {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash exact value so DAG shape doesn’t affect hashing.
-        self.exact().hash(state);
+        if let Some(h) = self.0.hashed_exact.get() {
+            state.write_u64(*h);
+            return;
+        }
+        let mut hasher = ahash::AHasher::default();
+        self.exact().hash(&mut hasher);
+        let h = hasher.finish();
+        let _ = self.0.hashed_exact.set(h);
+        state.write_u64(h);
     }
 }
 
@@ -158,6 +175,7 @@ impl FromRef<CgarF64> for LazyExact {
             },
             exact: OnceCell::new(),
             ball: OnceCell::new(),
+            hashed_exact: OnceCell::new(),
             depth: 1,
         }))
     }
@@ -199,6 +217,7 @@ struct Node {
     approx: OnceCell<CgarF64>,
     exact: OnceCell<CgarRational>,
     ball: OnceCell<Ball>,
+    hashed_exact: OnceCell<u64>,
     depth: u32,
 }
 
@@ -303,6 +322,7 @@ impl LazyExact {
             },
             exact: OnceCell::new(),
             ball: OnceCell::new(),
+            hashed_exact: OnceCell::new(),
             depth: 1,
         }))
     }
@@ -328,6 +348,7 @@ impl LazyExact {
                 cell
             },
             ball: OnceCell::new(),
+            hashed_exact: OnceCell::new(),
             depth: 1,
         }))
     }
@@ -375,7 +396,7 @@ impl LazyExact {
     /// - else compute exact and use sign(exact)
     /// Returns -1, 0, or +1.
     pub fn sign(&self) -> i8 {
-        let b = self.ball();
+        let b = self.ball_ref();
         if let Some(s) = b.sign_if_certain() {
             return s; // decided in double with a sound, expression-specific bound
         }
@@ -520,6 +541,7 @@ impl LazyExact {
             },
             exact: OnceCell::new(),
             ball: OnceCell::new(),
+            hashed_exact: OnceCell::new(),
             depth,
         }))
     }
@@ -661,15 +683,22 @@ impl LazyExact {
     }
 
     #[inline]
+    fn ball_ref(&self) -> &Ball {
+        self.0
+            .ball
+            .get_or_init(|| Self::eval_ball_kind(&self.0.kind))
+    }
+
+    #[inline]
     fn eval_ball_kind(kind: &Kind) -> Ball {
         use Kind::*;
         match kind {
             LeafApprox(a) => Ball::from_f64(a.0),
             LeafExact(e) => Ball::from_f64(e.to_f64().unwrap_or(0.0)),
-            Add(a, b) => a.ball().add(b.ball()),
-            Sub(a, b) => a.ball().sub(b.ball()),
-            Mul(a, b) => a.ball().mul(b.ball()),
-            Div(a, b) => a.ball().div(b.ball()),
+            Add(a, b) => a.ball_ref().add(b.ball()),
+            Sub(a, b) => a.ball_ref().sub(b.ball()),
+            Mul(a, b) => a.ball_ref().mul(b.ball()),
+            Div(a, b) => a.ball_ref().div(b.ball()),
             Neg(x) => a_neg(x),
         }
     }
@@ -724,7 +753,7 @@ impl AddAssign<&LazyExact> for LazyExact {
             let approx = self.approx() + rhs.approx();
             *self = LazyExact::from_leafs(e, approx);
         } else {
-            *self = self.clone() + rhs.clone();
+            *self = &*self + rhs;
         }
     }
 }
@@ -735,12 +764,12 @@ impl SubAssign<&LazyExact> for LazyExact {
             let approx = self.approx() - rhs.approx();
             *self = LazyExact::from_leafs(e, approx);
         } else {
-            *self = self.clone() - rhs.clone();
+            *self = &*self - &rhs;
         }
     }
 }
 
 #[inline]
 fn a_neg(x: &LazyExact) -> Ball {
-    x.ball().neg()
+    x.ball_ref().neg()
 }
