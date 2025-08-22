@@ -30,6 +30,7 @@ use num_traits::ToPrimitive;
 use once_cell::sync::OnceCell;
 use rug::Rational;
 
+use crate::geometry::util::{f64_next_down, f64_next_up};
 use crate::numeric::ball::Ball;
 use crate::numeric::scalar::{FromRef, RefInto, Scalar};
 use crate::numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational};
@@ -109,6 +110,41 @@ impl Scalar for LazyExact {
             return true;
         }
         diff.exact().is_zero()
+    }
+
+    #[inline(always)]
+    fn cmp_ref(a: &Self, b: &Self) -> Ordering {
+        use core::cmp::Ordering::*;
+
+        // 0) Cheap pointer equality
+        if std::sync::Arc::ptr_eq(&a.0, &b.0) {
+            return Equal;
+        }
+
+        // 1) Fast interval filter (if you have it)
+        if let (Some((alo, ahi)), Some((blo, bhi))) = (a.double_interval(), b.double_interval()) {
+            if ahi < blo {
+                return Less;
+            }
+            if bhi < alo {
+                return Greater;
+            }
+        }
+
+        // 2) If both are exact doubles (or both reduced to machine floats)
+        if let (Some(da), Some(db)) = (a.as_f64_if_exact(), b.as_f64_if_exact()) {
+            return da.total_cmp(&db);
+        }
+
+        // 3) Exact comparator WITHOUT building (a-b) node.
+        // Implement this inside LazyExact to walk/evaluate just enough to
+        // decide sign(a - b) and return {-1,0,1}.
+        match LazyExact::cmp_exact(a, b) {
+            -1 => Less,
+            0 => Equal,
+            1 => Greater,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -234,6 +270,52 @@ enum Kind {
 
 impl LazyExact {
     const MAX_DEPTH: u32 = 1024;
+
+    #[inline(always)]
+    pub fn double_interval(&self) -> Option<(f64, f64)> {
+        let b = self.ball_ref();
+        // Ball is already outward-safe; just return center ± radius.
+        // If you want 1-ULP padding, you can wrap with next_down/next_up here.
+        Some((f64_next_down(b.m - b.r), f64_next_up(b.m + b.r)))
+    }
+
+    /// Return the f64 exactly represented by this node (only for true f64 leaves).
+    #[inline(always)]
+    pub fn as_f64_if_exact(&self) -> Option<f64> {
+        match &self.0.kind {
+            // A true f64 leaf
+            Kind::LeafApprox(a) => {
+                let v = a.0;
+                if v.is_finite() { Some(v) } else { None }
+            }
+            // An exact rational leaf that happens to fit exactly in f64
+            Kind::LeafExact(e) => {
+                if let Some(v) = e.to_f64() {
+                    // accept only if round-trip is exact (dyadic)
+                    if CgarRational::from(v) == **e {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
+    pub fn cmp_exact(a: &Self, b: &Self) -> i8 {
+        use core::cmp::Ordering::*;
+        let ae = a.exact();
+        let be = b.exact();
+        match ae.partial_cmp(&be).unwrap() {
+            Less => -1,
+            Equal => 0,
+            Greater => 1,
+        }
+    }
 
     #[inline]
     fn compute_depth(kind: &Kind) -> u32 {
@@ -371,6 +453,7 @@ impl LazyExact {
 
     /// Exact value; computed lazily and cached.
     pub fn exact(&self) -> CgarRational {
+        // panic!("test");
         if let Some(v) = self.0.exact.get() {
             return v.clone();
         }
@@ -400,7 +483,7 @@ impl LazyExact {
         if let Some(s) = b.sign_if_certain() {
             return s; // decided in double with a sound, expression-specific bound
         }
-        // Uncertain ⇒ exact
+        // Uncertain -> exact
         let e = self.exact();
         if e.is_zero() {
             0

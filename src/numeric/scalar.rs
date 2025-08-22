@@ -86,6 +86,8 @@ pub trait Scalar:
     }
     fn from_num_den(num: i32, den: i32) -> Self;
 
+    fn cmp_ref(a: &Self, b: &Self) -> core::cmp::Ordering;
+
     fn tolerance() -> Self;
 
     fn tolerance_squared() -> Self;

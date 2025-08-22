@@ -33,6 +33,40 @@ use crate::{
 
 pub const EPS: f64 = 1e-10;
 
+#[inline(always)]
+pub fn f64_next_up(x: f64) -> f64 {
+    if x.is_nan() || x == f64::INFINITY {
+        return x;
+    }
+    if x == -0.0 {
+        return f64::MIN_POSITIVE;
+    } // smallest positive
+    let mut bits = x.to_bits();
+    if x >= 0.0 {
+        bits += 1;
+    } else {
+        bits -= 1;
+    }
+    f64::from_bits(bits)
+}
+
+#[inline(always)]
+pub fn f64_next_down(x: f64) -> f64 {
+    if x.is_nan() || x == f64::NEG_INFINITY {
+        return x;
+    }
+    if x == 0.0 {
+        return -f64::MIN_POSITIVE;
+    } // smallest negative
+    let mut bits = x.to_bits();
+    if x > 0.0 {
+        bits -= 1;
+    } else {
+        bits += 1;
+    }
+    f64::from_bits(bits)
+}
+
 pub fn triangle_area_2d<T: Scalar>(p0: &Point<T, 2>, p1: &Point<T, 2>, p2: &Point<T, 2>) -> T
 where
     for<'a> &'a T: Sub<&'a T, Output = T> + Mul<&'a T, Output = T>,

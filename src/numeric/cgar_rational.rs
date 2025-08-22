@@ -33,6 +33,7 @@ use crate::{
 };
 
 use std::{
+    cmp::Ordering,
     fmt,
     hash::{Hash, Hasher},
     ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign},
@@ -85,6 +86,13 @@ impl Scalar for CgarRational {
     fn approx_eq(&self, other: &Self) -> bool {
         // For rational numbers, we can use exact equality
         self.0 == other.0
+    }
+
+    #[inline(always)]
+    fn cmp_ref(a: &Self, b: &Self) -> Ordering {
+        // (a.num/a.den) ? (b.num/b.den)  =>  a.num*b.den ? b.num*a.den
+        (a.0.numer().clone() * b.0.denom().clone())
+            .cmp(&(b.0.numer().clone() * a.0.denom().clone()))
     }
 }
 

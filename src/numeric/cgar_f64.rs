@@ -33,6 +33,7 @@ use crate::{
 };
 
 use std::{
+    cmp::Ordering,
     hash::Hash,
     ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign},
 };
@@ -83,6 +84,12 @@ impl Scalar for CgarF64 {
 
     fn approx_eq(&self, other: &Self) -> bool {
         return (self.0 - other.0).abs() < EPS;
+    }
+
+    #[inline(always)]
+    fn cmp_ref(a: &Self, b: &Self) -> Ordering {
+        // total_cmp handles -0.0 and NaN deterministically
+        a.0.total_cmp(&b.0)
     }
 }
 

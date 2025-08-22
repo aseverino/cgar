@@ -52,10 +52,7 @@ use crate::{
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
         topology::{FindFaceResult, VertexRayResult},
     },
-    numeric::{
-        cgar_f64::CgarF64,
-        scalar::{RefInto, Scalar},
-    },
+    numeric::{cgar_f64::CgarF64, scalar::Scalar},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -132,10 +129,7 @@ where
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
         coplanar_triangles: &Vec<CoplanarTriangle>,
         include_on_surface: bool,
-    ) -> Vec<bool>
-    where
-        T: RefInto<T>,
-    {
+    ) -> Vec<bool> {
         // build adjacency & boundary‐map
         let adj = self.build_face_adjacency_graph();
 
@@ -636,10 +630,7 @@ where
         }
     }
 
-    pub fn boolean(&self, other: &Mesh<T, N>, op: BooleanOp) -> Mesh<T, N>
-    where
-        T: RefInto<T>,
-    {
+    pub fn boolean(&self, other: &Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
         let mut a = self.clone();
         let mut b = other.clone();
 
@@ -1313,10 +1304,7 @@ where
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
         boundary_faces: &AHashSet<usize>,
         include_on_surface: bool,
-    ) -> (usize, usize)
-    where
-        T: RefInto<T>,
-    {
+    ) -> (usize, usize) {
         let mut selected_face = usize::MAX;
         let seed_idx = (0..intersection_segments.len())
             .filter(|&seg_idx| {

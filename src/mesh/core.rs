@@ -633,7 +633,10 @@ impl_mesh! {
             let mins = std::array::from_fn(|i| min3_ref(&p0[i], &p1[i], &p2[i]).clone());
             let maxs = std::array::from_fn(|i| max3_ref(&p0[i], &p1[i], &p2[i]).clone());
 
-            let aabb = Aabb::<T, N, Point<T, N>>::from_points(&Point::<T, N>::from_vals(mins), &Point::<T, N>::from_vals(maxs));
+            let aabb = Aabb::<T, N, Point<T, N>>::new(
+                Point::<T, N>::from_vals(mins),
+                Point::<T, N>::from_vals(maxs),
+            );
             face_aabbs.push((aabb, face_idx));
         }
 

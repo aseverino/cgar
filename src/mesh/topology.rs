@@ -164,108 +164,114 @@ impl_mesh! {
     ) -> Vec<usize>
     where
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        for<'a> &'a T: Add<&'a T, Output = T>
+            + Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>,
     {
-        let tolerance = T::query_tolerance();
+        // 1) tight query box around p (avoid `.into()`; it’s a no-op but may hide clones)
+        let tol  = T::query_tolerance();
+        let qmin = Point::<T, N>::from_vals(std::array::from_fn(|i| &p[i] - &tol));
+        let qmax = Point::<T, N>::from_vals(std::array::from_fn(|i| &p[i] + &tol));
+        let query_aabb = Aabb::new(qmin, qmax);
 
-        // **OPTIMIZED: Tighter query AABB**
-        let query_aabb = Aabb::from_points(
-            &Point::<T, N>::from_vals(from_fn(|i| (&p[i] - &tolerance).into())),
-            &Point::<T, N>::from_vals(from_fn(|i| (&p[i] + &tolerance).into())),
-        );
-
+        // 2) gather candidates
         let mut candidates = Vec::new();
-        aabb_tree.query(&query_aabb, &mut candidates);
+        aabb_tree.query_valid(&query_aabb, &mut candidates);
 
-        // **OPTIMIZED: Early exit with tree rebuild**
+        // Optional very-wide retry BEFORE rebuilding (keep constants exact)
         if candidates.is_empty() {
-            // Try with much larger search radius before rebuilding
-            let large_tolerance = T::tolerance() * T::from(100.0);
-            let large_query_aabb = Aabb::from_points(
-                &Point::<T, N>::from_vals(from_fn(|i| (&p[i] - &large_tolerance).into())),
-                &Point::<T, N>::from_vals(from_fn(|i| (&p[i] + &large_tolerance).into())),
-            );
-
-            aabb_tree.query(&large_query_aabb, &mut candidates);
-
-            // Only rebuild if absolutely no faces found in large area
-            if candidates.is_empty() {
-                drop(candidates);
-                *aabb_tree = self.build_face_tree();
-                candidates = Vec::new();
-                aabb_tree.query(&query_aabb, &mut candidates);
-
-                if candidates.is_empty() {
-                    return Vec::new();
-                }
-            }
+            let big = &T::tolerance() * &T::from(100); // exact 100
+            let qmin2 = Point::<T, N>::from_vals(std::array::from_fn(|i| &p[i] - &big));
+            let qmax2 = Point::<T, N>::from_vals(std::array::from_fn(|i| &p[i] + &big));
+            let large = Aabb::from_points(&qmin2, &qmax2);
+            aabb_tree.query_valid(&large, &mut candidates);
+            // Avoid rebuilding here unless you really must. Rebuilding with LazyExact is expensive.
+            // Prefer a periodic/explicit rebuild based on needs_rebuild().
         }
 
-        let mut result = Vec::with_capacity(candidates.len().min(8)); // Pre-allocate reasonable size
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        let mut result = Vec::with_capacity(candidates.len().min(8));
+
+        // helpers only used when N==3; bail early otherwise
+        if N != 3 {
+            // fallback: keep your old kernel path if you support 2D as well
+            for &face_idx in &candidates {
+                let he0 = self.faces[*face_idx].half_edge;
+                if he0 >= self.half_edges.len() { continue; }
+                let he1 = self.half_edges[he0].next;
+                let he2 = self.half_edges[he1].next;
+                if he2 >= self.half_edges.len() || self.half_edges[he2].next != he0 { continue; }
+
+                let a = &self.vertices[self.half_edges[he0].vertex].position;
+                let b = &self.vertices[self.half_edges[he1].vertex].position;
+                let c = &self.vertices[self.half_edges[he2].vertex].position;
+
+                if kernel::point_in_or_on_triangle(p, a, b, c) == TrianglePoint::In {
+                    result.push(*face_idx);
+                }
+            }
+            return result;
+        }
+
+        // 3D fast path with zero duplicated math, squared plane test, sign-only decisions
+        let tol2 = &tol * &tol;
 
         for &face_idx in &candidates {
+            // (A) lightweight topology checks — ideally validate once at build!
             let he0 = self.faces[*face_idx].half_edge;
-
-            if he0 >= self.half_edges.len() {
-                continue;
-            }
-
+            if he0 >= self.half_edges.len() { continue; }
             let he1 = self.half_edges[he0].next;
             let he2 = self.half_edges[he1].next;
+            if he1 >= self.half_edges.len() || he2 >= self.half_edges.len() || self.half_edges[he2].next != he0 { continue; }
 
-            if he1 >= self.half_edges.len()
-                || he2 >= self.half_edges.len()
-                || self.half_edges[he2].next != he0
-            {
-                continue;
-            }
+            let v0 = self.half_edges[he0].vertex;
+            let v1 = self.half_edges[he1].vertex;
+            let v2 = self.half_edges[he2].vertex;
+            if v0 >= self.vertices.len() || v1 >= self.vertices.len() || v2 >= self.vertices.len() { continue; }
 
-            let v0_idx = self.half_edges[he0].vertex;
-            let v1_idx = self.half_edges[he1].vertex;
-            let v2_idx = self.half_edges[he2].vertex;
+            let a = &self.vertices[v0].position;
+            let b = &self.vertices[v1].position;
+            let c = &self.vertices[v2].position;
 
-            if self.edge_map.get(&(v0_idx, v1_idx)).is_none()
-                || self.edge_map.get(&(v1_idx, v2_idx)).is_none()
-                || self.edge_map.get(&(v2_idx, v0_idx)).is_none()
-            {
-                panic!(
-                    "Invalid face edges in mesh: {}, {}, {}",
-                    v0_idx, v1_idx, v2_idx
-                );
-            }
-
-            if v0_idx >= self.vertices.len()
-                || v1_idx >= self.vertices.len()
-                || v2_idx >= self.vertices.len()
-            {
-                continue;
-            }
-
-            let a = &self.vertices[v0_idx].position;
-            let b = &self.vertices[v1_idx].position;
-            let c = &self.vertices[v2_idx].position;
-
+            // (B) geometry (single pass)
             let ab = (b - a).as_vector();
             let ac = (c - a).as_vector();
             let ap = (p - a).as_vector();
 
-            let n = ab.cross(&ac);
-            let dist = n.dot(&ap).abs();
+            let n   = ab.cross(&ac);
+            let n2  = n.dot(&n);
+            if n2.is_zero() { continue; } // degenerate face
 
-            // **FIXED: Use consistent tolerance**
-            if dist > tolerance {
-                continue;
-            }
+            // plane distance squared: (n·ap)^2  ?  (tol^2) * (n·n)
+            let d_plane = n.dot(&ap);
+            let d2      = &d_plane * &d_plane;
+            let rhs     = &tol2 * &n2;
+            if (&d2 - &rhs).is_positive() { continue; }
 
-            if kernel::point_in_or_on_triangle(p, a, b, c) == TrianglePoint::In {
+            // edge functions on projected point: compute two, derive the third
+            let bp = (p - b).as_vector();
+            // let cp = (p - c).as_vector();
+            let bc = (c - b).as_vector();
+            // let ca = (a - c).as_vector();
+
+            let e0 = ab.cross(&ap).dot(&n);
+            let e1 = bc.cross(&bp).dot(&n);
+            let e2 = &(&n2 - &e0) - &e1; // identity: e0 + e1 + e2 = n·n
+
+            // inside iff all same sign or zero; treat boundary as "not strictly inside"
+            // (If you want to count boundary as inside, change the checks to >= 0.)
+            let z0 = e0.is_zero(); let z1 = e1.is_zero(); let z2 = e2.is_zero();
+            let neg = (!z0 && e0.is_negative()) || (!z1 && e1.is_negative()) || (!z2 && e2.is_negative());
+            let pos = (!z0 && e0.is_positive()) || (!z1 && e1.is_positive()) || (!z2 && e2.is_positive());
+
+            if !(neg && pos) && !(z0 || z1 || z2) {
+                // all nonzero and same sign -> strictly inside
                 result.push(*face_idx);
             }
-        }
-
-        // **OPTIMIZED: Tree rebuild detection**
-        if result.is_empty() && !candidates.is_empty() {
-            // Candidates existed but none contained point - possible stale tree
-            *aabb_tree = self.build_face_tree();
-            return self.faces_containing_point_aabb(aabb_tree, p);
+            // else: discard or record separately if you want “on edge/vertex”
         }
 
         result
@@ -465,7 +471,7 @@ impl_mesh! {
         &self,
         tree: &AabbTree<T, N, Point<T, N>, usize>,
         p: &Point<T, N>,
-    ) -> PointInMeshResult where T: Into<T> + RefInto<T>, Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    ) -> PointInMeshResult where T: Into<T>, Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
     {
         let mut inside_count = 0;
         let mut total_rays = 0;
@@ -523,7 +529,6 @@ impl_mesh! {
     ) -> Option<RayCastResult>
     where
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-        T: RefInto<T>,
         for<'a> &'a T: Add<&'a T, Output = T>
             + Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
@@ -547,7 +552,7 @@ impl_mesh! {
 
         // Query tree for faces that intersect ray
         let mut candidate_faces = Vec::new();
-        tree.query(&ray_aabb, &mut candidate_faces);
+        tree.query_valid(&ray_aabb, &mut candidate_faces);
 
         let tol = T::tolerance();
 
@@ -2407,7 +2412,7 @@ impl_mesh! {
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
+        + Div<&'a T, Output = T>
     {
         if N != 3 {
             // Only 3D triangle meshes are supported
@@ -2483,7 +2488,7 @@ impl_mesh! {
             );
 
             candidates.clear();
-            tree.query(&query, &mut candidates);
+            tree.query_valid(&query, &mut candidates);
 
             if candidates.is_empty() {
                 continue;

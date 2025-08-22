@@ -20,12 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{
-    geometry::spatial_element::SpatialElement,
-    numeric::{cgar_rational::CgarRational, scalar::Scalar},
-    operations::Abs,
-};
+use crate::{geometry::spatial_element::SpatialElement, numeric::scalar::Scalar, operations::Abs};
 use std::{
+    array::from_fn,
     cmp::Ordering,
     ops::{Add, Mul, Sub},
 };
@@ -61,8 +58,8 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
     where
         for<'a> &'a T: Sub<&'a T, Output = T>,
     {
-        let mins = std::array::from_fn(|i| min_by_sign(&a[i], &b[i]));
-        let maxs = std::array::from_fn(|i| max_by_sign(&a[i], &b[i]));
+        let mins = std::array::from_fn(|i| min_by_cmp(&a[i], &b[i]));
+        let maxs = std::array::from_fn(|i| max_by_cmp(&a[i], &b[i]));
         Aabb::new(P::from_vals(mins), P::from_vals(maxs))
     }
 
@@ -70,8 +67,8 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
     where
         for<'a> &'a T: Sub<&'a T, Output = T>,
     {
-        let mins = std::array::from_fn(|i| min_by_sign(&self.min[i], &other.min[i]));
-        let maxs = std::array::from_fn(|i| max_by_sign(&self.max[i], &other.max[i]));
+        let mins = std::array::from_fn(|i| min_by_cmp(&self.min[i], &other.min[i]));
+        let maxs = std::array::from_fn(|i| max_by_cmp(&self.max[i], &other.max[i]));
         Aabb::new(P::from_vals(mins), P::from_vals(maxs))
     }
 
@@ -128,27 +125,43 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
         }
         best_i
     }
+
+    /// Return a new AABB inflated by `delta` on all axes.
+    /// Uses only +/- and clones; safe for LazyExact.
+    pub fn inflated(&self, delta: &T) -> Self
+    where
+        for<'a> &'a T: Add<&'a T, Output = T> + Sub<&'a T, Output = T>,
+    {
+        let mins = from_fn(|i| &self.min[i] - delta);
+        let maxs = from_fn(|i| &self.max[i] + delta);
+        Aabb::new(P::from_vals(mins), P::from_vals(maxs))
+    }
+
+    /// Return a new AABB inflated by the global query tolerance (when nonzero).
+    pub fn inflated_query_tol(&self) -> Self
+    where
+        for<'a> &'a T: Add<&'a T, Output = T> + Sub<&'a T, Output = T>,
+    {
+        let tol = T::query_tolerance();
+        if tol.is_zero() {
+            return self.clone();
+        }
+        self.inflated(&tol)
+    }
 }
 
 #[inline(always)]
-fn min_by_sign<T: Scalar>(a: &T, b: &T) -> T
-where
-    for<'a> &'a T: Sub<&'a T, Output = T>,
-{
-    if (a - b).is_negative() {
-        a.clone()
-    } else {
-        b.clone()
+fn min_by_cmp<T: Scalar>(a: &T, b: &T) -> T {
+    match T::cmp_ref(a, b) {
+        Ordering::Greater => b.clone(),
+        _ => a.clone(), // Less or Equal -> a
     }
 }
+
 #[inline(always)]
-fn max_by_sign<T: Scalar>(a: &T, b: &T) -> T
-where
-    for<'a> &'a T: Sub<&'a T, Output = T>,
-{
-    if (a - b).is_positive() {
-        a.clone()
-    } else {
-        b.clone()
+fn max_by_cmp<T: Scalar>(a: &T, b: &T) -> T {
+    match T::cmp_ref(a, b) {
+        Ordering::Less => b.clone(),
+        _ => a.clone(), // Greater or Equal -> a
     }
 }
