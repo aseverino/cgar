@@ -22,7 +22,6 @@
 
 use std::{
     cmp::Ordering,
-    collections::HashSet,
     ops::{Add, Div, Mul, Sub},
     time::Instant,
 };

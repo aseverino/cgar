@@ -20,9 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::collections::HashSet;
 use std::time::Instant;
 
+use ahash::AHashSet;
 use cgar::boolean::boolean::BooleanOp;
 use cgar::geometry::spatial_element::SpatialElement;
 use cgar::geometry::{Aabb, Point2, Point3, Vector3};
@@ -566,12 +566,12 @@ fn test_edge_flip() {
     // Now the shared diagonal should be v0–v3
     // face f0 (was v0,v1,v2) becomes (v0,v2,v3)
     let f0_vs = mesh.face_vertices(0);
-    let set0: std::collections::HashSet<_> = f0_vs.into_iter().collect();
+    let set0: AHashSet<_> = f0_vs.into_iter().collect();
     assert_eq!(set0, [v0, v2, v3].into_iter().collect());
 
     // face f1 (was v1,v3,v2) becomes (v0,v3,v1)
     let f1_vs = mesh.face_vertices(1);
-    let set1: std::collections::HashSet<_> = f1_vs.into_iter().collect();
+    let set1: AHashSet<_> = f1_vs.into_iter().collect();
     assert_eq!(set1, [v0, v3, v1].into_iter().collect());
 }
 

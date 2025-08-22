@@ -20,8 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::collections::HashMap;
-
+use ahash::{AHashMap, AHashSet};
 use smallvec::SmallVec;
 
 use crate::{
@@ -106,8 +105,8 @@ pub struct PairRing {
     pub opposite_b: Option<usize>,
 
     /// Neighbor sets (excluding {v0,v1})
-    pub common_neighbors: std::collections::HashSet<usize>,
-    pub union_neighbors: std::collections::HashSet<usize>,
+    pub common_neighbors: AHashSet<usize>,
+    pub union_neighbors: AHashSet<usize>,
 
     /// True if the edge is on the border (i.e., one of the incident faces is None/removed).
     pub is_border_edge: bool,
@@ -119,8 +118,8 @@ pub struct Mesh<T: Scalar, const N: usize> {
     pub half_edges: Vec<HalfEdge>,
     pub faces: Vec<Face>,
 
-    pub edge_map: HashMap<(usize, usize), usize>,
-    pub(crate) vertex_spatial_hash: HashMap<(i64, i64, i64), Vec<usize>>,
-    pub(crate) face_split_map: HashMap<usize, FaceSplitMap>,
-    pub half_edge_split_map: HashMap<usize, (usize, usize)>,
+    pub edge_map: AHashMap<(usize, usize), usize>,
+    pub(crate) vertex_spatial_hash: AHashMap<(i64, i64, i64), Vec<usize>>,
+    pub(crate) face_split_map: AHashMap<usize, FaceSplitMap>,
+    pub half_edge_split_map: AHashMap<usize, (usize, usize)>,
 }

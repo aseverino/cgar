@@ -22,12 +22,13 @@
 
 use std::{
     array::from_fn,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::VecDeque,
     hash::Hash,
     ops::{Add, Div, Mul, Neg, Sub},
     time::Instant,
 };
 
+use ahash::{AHashMap, AHashSet};
 use smallvec::SmallVec;
 
 use crate::{
@@ -94,13 +95,13 @@ pub enum SplitType {
 
 pub struct Splits<T: Scalar, const N: usize> {
     pub splits:
-        HashMap<ApproxPointKey, (Point<T, N>, SplitType, usize, SmallVec<[EndPointHandle; 2]>)>,
+        AHashMap<ApproxPointKey, (Point<T, N>, SplitType, usize, SmallVec<[EndPointHandle; 2]>)>,
 }
 
 impl<T: Scalar, const N: usize> Splits<T, N> {
     pub fn new() -> Self {
         Self {
-            splits: HashMap::new(),
+            splits: AHashMap::new(),
         }
     }
 }
@@ -168,7 +169,7 @@ where
         } else {
             let boundary_map = self.build_boundary_map(intersection_segments);
 
-            let mut boundary_faces = HashSet::new();
+            let mut boundary_faces = AHashSet::new();
             for &(a, b) in &boundary_map {
                 boundary_faces.insert(a);
                 boundary_faces.insert(b);
@@ -184,7 +185,7 @@ where
                 include_on_surface,
             );
 
-            let mut face_pairs: HashMap<usize, Vec<usize>> = HashMap::new();
+            let mut face_pairs: AHashMap<usize, Vec<usize>> = AHashMap::new();
             for seg_idx in 0..intersection_segments.len() {
                 let seg = &intersection_segments[seg_idx];
                 let he = self
@@ -763,8 +764,8 @@ where
         tree_a = a.build_face_tree();
         tree_b = b.build_face_tree();
 
-        let mut intersection_by_edge_a = HashMap::new();
-        let mut intersection_by_edge_b = HashMap::new();
+        let mut intersection_by_edge_a = AHashMap::new();
+        let mut intersection_by_edge_b = AHashMap::new();
 
         println!("Processing remaining segments A");
         let start = Instant::now();
@@ -865,7 +866,7 @@ where
 
         // 6. Create result mesh
         let mut result = Mesh::new();
-        let mut vid_map = HashMap::new();
+        let mut vid_map = AHashMap::new();
 
         // Add A vertices
         for (i, v) in a.vertices.iter().enumerate() {
@@ -1030,8 +1031,8 @@ where
         }
 
         // First let's drain the coplanar segments into a separate structure
-        let mut coplanar_groups: HashMap<Plane<T, N>, Vec<IntersectionSegment<T, N>>> =
-            HashMap::new();
+        let mut coplanar_groups: AHashMap<Plane<T, N>, Vec<IntersectionSegment<T, N>>> =
+            AHashMap::new();
 
         println!(
             "intersection_segments.len() = {}",
@@ -1067,7 +1068,7 @@ where
             intersection_segments.len()
         );
 
-        let mut vertex_to_segments: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut vertex_to_segments: AHashMap<usize, Vec<usize>> = AHashMap::new();
 
         for (seg_idx, seg) in intersection_segments.iter().enumerate() {
             let [v0, v1] = seg.resulting_vertices_pair;
@@ -1078,7 +1079,7 @@ where
         // === NON-COPLANAR SEGMENTS: Build double-linked structure ===
         for (seg_idx, seg) in intersection_segments.iter_mut().enumerate() {
             let [v0, v1] = seg.resulting_vertices_pair;
-            let mut connected_segments = HashSet::new();
+            let mut connected_segments = AHashSet::new();
 
             if let Some(segments) = vertex_to_segments.get(&v0) {
                 for &other_idx in segments {
@@ -1303,7 +1304,7 @@ where
         b: &Mesh<T, N>,
         tree_b: &AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
-        boundary_faces: &HashSet<usize>,
+        boundary_faces: &AHashSet<usize>,
         include_on_surface: bool,
     ) -> (usize, usize) {
         let mut selected_face = usize::MAX;
@@ -1372,7 +1373,6 @@ where
 pub fn remove_duplicate_segments<T: Scalar + Eq + Hash, const N: usize>(
     segments: &mut Vec<IntersectionSegment<T, N>>,
 ) {
-    use std::collections::HashMap;
     use std::hash::{Hash, Hasher};
 
     struct SegmentKey<'a, T: Scalar, const N: usize>(&'a Point<T, N>, &'a Point<T, N>);
@@ -1399,7 +1399,7 @@ pub fn remove_duplicate_segments<T: Scalar + Eq + Hash, const N: usize>(
         }
     }
 
-    let mut seen: HashMap<u64, (usize, bool)> = HashMap::new();
+    let mut seen: AHashMap<u64, (usize, bool)> = AHashMap::new();
     let mut invalidation_updates = Vec::new();
 
     for (i, seg) in segments.iter().enumerate() {
@@ -1453,11 +1453,9 @@ where
         + Add<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    use std::collections::{HashMap, HashSet};
-
     // 1) adjacency and one seg index per undirected edge
-    let mut adj: HashMap<usize, HashSet<usize>> = HashMap::new();
-    let mut edge_to_seg: HashMap<(usize, usize), usize> = HashMap::new();
+    let mut adj: AHashMap<usize, AHashSet<usize>> = AHashMap::new();
+    let mut edge_to_seg: AHashMap<(usize, usize), usize> = AHashMap::new();
 
     for (ei, seg) in group.iter().enumerate() {
         let [u, v] = seg.resulting_vertices_pair;
@@ -1556,7 +1554,6 @@ where
         + Neg<Output = T>,
 {
     use crate::geometry::{Aabb, AabbTree, point::Point};
-    use std::collections::HashSet;
 
     if x_edges.is_empty() || y_edges.is_empty() {
         return Vec::new();
@@ -1567,7 +1564,7 @@ where
 
     // Collect unique X-vertices (stable order)
     let mut ordered_x_verts = Vec::new();
-    let mut seen = HashSet::with_capacity(x_edges.len() * 2);
+    let mut seen = AHashSet::with_capacity(x_edges.len() * 2);
     for &[u, v] in x_edges {
         if seen.insert(u) {
             ordered_x_verts.push(u);
@@ -1688,7 +1685,7 @@ where
 fn process_segment_and_edge_map<T: Scalar, const N: usize>(
     mesh: &mut Mesh<T, N>,
     intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-    intersections_edge_map: &mut HashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
+    intersections_edge_map: &mut AHashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
     i: usize,
     splits: &mut Splits<T, N>,
     tree: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
@@ -1729,7 +1726,7 @@ fn process_t_junction<T: Scalar, const N: usize>(
     tree_x: &mut AabbTree<CgarF64, N, Point<CgarF64, N>, usize>,
     t_junction: &TJunction,
     intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-    intersections_edge_map: &mut HashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
+    intersections_edge_map: &mut AHashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
 ) where
     T: Scalar,
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,

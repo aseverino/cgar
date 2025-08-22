@@ -22,10 +22,10 @@
 
 use std::{
     array::from_fn,
-    collections::HashSet,
     ops::{Add, Div, Mul, Neg, Sub},
 };
 
+use ahash::AHashSet;
 use smallvec::SmallVec;
 
 use crate::{
@@ -422,9 +422,8 @@ impl_mesh! {
     }
 
     /// Collect unique faces incident to `v` (with real faces only)
-    pub fn incident_faces(&self, v: usize) -> std::collections::HashSet<usize> {
-        use std::collections::HashSet;
-        let mut faces = HashSet::new();
+    pub fn incident_faces(&self, v: usize) -> AHashSet<usize> {
+        let mut faces = AHashSet::new();
         let ring = self.vertex_ring_ccw(v);
         for &fopt in &ring.faces_ccw {
             if let Some(f) = fopt {
@@ -1275,7 +1274,7 @@ impl_mesh! {
             Add<&'a T, Output = T> +
             Div<&'a T, Output = T>,
     {
-        use std::collections::{HashSet, VecDeque};
+        use std::collections::VecDeque;
 
         let zero = T::zero();
         let one  = T::one();
@@ -1328,7 +1327,7 @@ impl_mesh! {
         };
 
         // neighbors of a live face via twins (skip borders / removed faces)
-        let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &HashSet<usize>| {
+        let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &AHashSet<usize>| {
             let (e0,e1,e2) = self.face_edges(f);
             for e in [e0,e1,e2] {
                 let tw = mesh.half_edges[e].twin;
@@ -1342,7 +1341,7 @@ impl_mesh! {
 
         // --- BFS over descendants + neighbors ---
         let mut q: VecDeque<usize> = VecDeque::new();
-        let mut seen: HashSet<usize> = HashSet::new();
+        let mut seen: AHashSet<usize> = AHashSet::new();
         q.push_back(start_face);
 
         let mut steps = 0usize;
@@ -1455,7 +1454,7 @@ impl_mesh! {
             Add<&'a T, Output = T> +
             Div<&'a T, Output = T>,
     {
-        use std::collections::{HashSet, VecDeque};
+        use std::collections::VecDeque;
 
         let zero = T::zero();
         let one  = T::one();
@@ -1536,7 +1535,7 @@ impl_mesh! {
         };
 
         // neighbors of a live face via twins (skip borders / removed faces)
-        let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &HashSet<usize>| {
+        let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &AHashSet<usize>| {
             let (e0,e1,e2) = get_face_cycle(mesh, f);
             for e in [e0,e1,e2] {
                 let tw = mesh.half_edges[e].twin;
@@ -1550,7 +1549,7 @@ impl_mesh! {
 
         // --- BFS over descendants + neighbors ---
         let mut q: VecDeque<usize> = VecDeque::new();
-        let mut seen: HashSet<usize> = HashSet::new();
+        let mut seen: AHashSet<usize> = AHashSet::new();
         q.push_back(start_face);
 
         let mut steps = 0usize;
@@ -1669,7 +1668,7 @@ impl_mesh! {
     /// For OnEdge: (f, he_of_f_edge, u in [0,1] along that half-edge).
     pub fn find_valid_face_almost_working(&self, start_face: usize, point: &Point<T, N>) -> (usize, usize, T)
     {
-        use std::collections::{VecDeque, HashSet};
+        use std::collections::VecDeque;
 
         let zero = T::zero();
         let one  = T::one();
@@ -1737,7 +1736,7 @@ impl_mesh! {
         };
 
         // neighbors of a live face via twins (skip borders / removed faces)
-        let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &HashSet<usize>| {
+        let push_live_neighbors = |mesh: &Mesh<T, N>, f: usize, q: &mut VecDeque<usize>, seen: &AHashSet<usize>| {
             let (e0,e1,e2) = get_face_cycle(mesh, f);
             for e in [e0,e1,e2] {
                 let tw = mesh.half_edges[e].twin;
@@ -1751,7 +1750,7 @@ impl_mesh! {
 
         // --- BFS over descendants + neighbors ---
         let mut q: VecDeque<usize> = VecDeque::new();
-        let mut seen: HashSet<usize> = HashSet::new();
+        let mut seen: AHashSet<usize> = AHashSet::new();
         q.push_back(start_face);
 
         let mut steps = 0usize;
@@ -1869,7 +1868,7 @@ impl_mesh! {
             Add<&'a T, Output = T> +
             Div<&'a T, Output = T>,
     {
-        use std::collections::{VecDeque, HashSet};
+        use std::collections::VecDeque;
 
         let zero = T::zero();
         let one  = T::one();
@@ -1928,7 +1927,7 @@ impl_mesh! {
 
         // BFS over descendants through half_edge_split_map
         let mut q: VecDeque<usize> = VecDeque::new();
-        let mut seen: HashSet<usize> = HashSet::new();
+        let mut seen: AHashSet<usize> = AHashSet::new();
         q.push_back(he_start);
 
         let mut steps = 0usize;
@@ -2092,7 +2091,7 @@ impl_mesh! {
             }
         }
 
-        let mut edge_set = HashSet::new();
+        let mut edge_set = AHashSet::new();
         for (_i, he) in self.half_edges.iter().enumerate() {
             if he.removed {
                 continue;
@@ -2147,7 +2146,7 @@ impl_mesh! {
     }
 
     pub fn validate_half_edges(&self) {
-        let mut edge_set = HashSet::new();
+        let mut edge_set = AHashSet::new();
         for (_i, he) in self.half_edges.iter().enumerate() {
             if he.removed {
                 continue;
@@ -2225,8 +2224,6 @@ impl_mesh! {
     }
 
     pub fn vertex_ring_ccw(&self, v: usize) -> VertexRing {
-        use std::collections::HashSet;
-
         // --- Seed: ensure we start from an OUTGOING half-edge of v ---
         let mut seed = match self.vertices[v].half_edge {
             Some(h) => h,
@@ -2249,7 +2246,7 @@ impl_mesh! {
         // If *all* spokes are removed, return an empty ring.
         {
             let mut cur = seed;
-            let mut seen = HashSet::new();
+            let mut seen = AHashSet::new();
             while self.half_edges[cur].removed && seen.insert(cur) {
                 cur = self.rot_ccw_around_vertex(cur);
                 if cur == seed { break; }
@@ -2274,7 +2271,7 @@ impl_mesh! {
 
         let start = seed;
         let mut cur = start;
-        let mut seen = HashSet::new();
+        let mut seen = AHashSet::new();
 
         loop {
             // Emit only live spokes (but still rotate across anything, since wiring is valid)
@@ -2345,9 +2342,8 @@ impl_mesh! {
             Some(self.half_edges[hn].vertex)
         } else { None };
 
-        use std::collections::HashSet;
-        let set0: HashSet<_> = ring0.neighbors_ccw.iter().copied().filter(|&x| x != v1).collect();
-        let set1: HashSet<_> = ring1.neighbors_ccw.iter().copied().filter(|&x| x != v0).collect();
+        let set0: AHashSet<_> = ring0.neighbors_ccw.iter().copied().filter(|&x| x != v1).collect();
+        let set1: AHashSet<_> = ring1.neighbors_ccw.iter().copied().filter(|&x| x != v0).collect();
 
         let is_border_edge = !(self.face_ok(he_v0v1) && self.face_ok(he_v1v0));
 
@@ -2370,7 +2366,7 @@ impl_mesh! {
         let Some(pr) = self.ring_pair(v0, v1) else { return false; };
 
         // Gather expected opposite set (ignoring None)
-        let mut expected = std::collections::HashSet::new();
+        let mut expected = AHashSet::new();
         if let Some(a) = pr.opposite_a { expected.insert(a); }
         if let Some(b) = pr.opposite_b { expected.insert(b); }
 

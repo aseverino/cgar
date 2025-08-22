@@ -22,6 +22,8 @@
 
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+use ahash::AHashSet;
+
 use crate::{
     geometry::{point::*, vector::*},
     impl_mesh,
@@ -127,15 +129,14 @@ impl_mesh! {
         pr: &PairRing,
         v0: usize,
         v1: usize,
-    ) -> (std::collections::HashSet<usize>, std::collections::HashSet<usize>) {
-        use std::collections::HashSet;
+    ) -> (AHashSet<usize>, AHashSet<usize>) {
 
-        let set0: HashSet<_> = pr.ring0.neighbors_ccw
+        let set0: AHashSet<_> = pr.ring0.neighbors_ccw
             .iter().copied()
             .filter(|&x| x != v1 && x != v0) // exclude the edge endpoint and (defensively) the center
             .collect();
 
-        let set1: HashSet<_> = pr.ring1.neighbors_ccw
+        let set1: AHashSet<_> = pr.ring1.neighbors_ccw
             .iter().copied()
             .filter(|&x| x != v0 && x != v1)
             .collect();
@@ -156,12 +157,11 @@ impl_mesh! {
         if !self.rings_adjacency_ok(&pr, v0, v1) { return false; }
 
         // Build the intersection directly from the rings
-        use std::collections::HashSet;
         let (set0, set1) = self.neighbor_sets_excluding_endpoints(&pr, v0, v1);
-        let common: HashSet<_> = set0.intersection(&set1).copied().collect();
+        let common: AHashSet<_> = set0.intersection(&set1).copied().collect();
 
         // Expected set from the two incident faces (ignoring missing ones)
-        let mut expected = HashSet::new();
+        let mut expected = AHashSet::new();
         if let Some(a) = pr.opposite_a { expected.insert(a); }
         if let Some(b) = pr.opposite_b { expected.insert(b); }
 
@@ -177,9 +177,8 @@ impl_mesh! {
         let Some(pr) = self.ring_pair(v0, v1) else { return true; };
         if !self.rings_adjacency_ok(&pr, v0, v1) { return true; }
 
-        use std::collections::HashSet;
         let (set0, set1) = self.neighbor_sets_excluding_endpoints(&pr, v0, v1);
-        let mut inter: HashSet<_> = set0.intersection(&set1).copied().collect();
+        let mut inter: AHashSet<_> = set0.intersection(&set1).copied().collect();
 
         // Duplicates if there are shared neighbors **beyond the face opposites**
         if let Some(a) = pr.opposite_a { inter.remove(&a); }

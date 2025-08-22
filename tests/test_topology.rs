@@ -1,3 +1,4 @@
+use ahash::AHashSet;
 // tests/test_topology.rs
 use cgar::geometry::{point::Point, vector::Vector};
 use cgar::mesh::basic_types::{Mesh, VertexRing};
@@ -217,14 +218,14 @@ fn ring_pair_interior_edge_has_two_opposites_and_not_border() {
     );
 
     // 3) Recompute common neighbors directly from rings (excluding endpoints)
-    let mut s0: std::collections::HashSet<_> = pair
+    let mut s0: AHashSet<_> = pair
         .ring0
         .neighbors_ccw
         .iter()
         .copied()
         .filter(|&x| x != 2)
         .collect();
-    let mut s1: std::collections::HashSet<_> = pair
+    let mut s1: AHashSet<_> = pair
         .ring1
         .neighbors_ccw
         .iter()

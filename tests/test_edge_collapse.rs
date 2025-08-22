@@ -1,3 +1,4 @@
+use ahash::AHashSet;
 // tests/test_edge_collapse.rs
 use cgar::geometry::{point::Point, spatial_element::SpatialElement, vector::Vector};
 use cgar::mesh::{
@@ -438,14 +439,14 @@ fn test_ring_pair_computation() {
         assert!(!pr.ring1.neighbors_ccw.is_empty());
 
         // In a square, vertices 0 and 2 should have common neighbors {1, 3}
-        let set0: std::collections::HashSet<_> = pr
+        let set0: AHashSet<_> = pr
             .ring0
             .neighbors_ccw
             .iter()
             .copied()
             .filter(|&n| n != 2) // exclude v1 from v0's ring
             .collect();
-        let set1: std::collections::HashSet<_> = pr
+        let set1: AHashSet<_> = pr
             .ring1
             .neighbors_ccw
             .iter()
@@ -453,8 +454,7 @@ fn test_ring_pair_computation() {
             .filter(|&n| n != 0) // exclude v0 from v1's ring
             .collect();
 
-        let common_neighbors: std::collections::HashSet<_> =
-            set0.intersection(&set1).copied().collect();
+        let common_neighbors: AHashSet<_> = set0.intersection(&set1).copied().collect();
 
         assert_eq!(common_neighbors.len(), 2); // Should be {1, 3}
         assert!(common_neighbors.contains(&1));

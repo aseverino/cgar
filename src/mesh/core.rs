@@ -22,11 +22,11 @@
 
 use std::{
     array::from_fn,
-    collections::{HashMap, HashSet},
     ops::{Add, Div, Mul, Neg, Sub},
     process::Output,
 };
 
+use ahash::{AHashMap, AHashSet};
 use smallvec::*;
 
 use crate::{
@@ -51,10 +51,10 @@ impl_mesh! {
             vertices: Vec::new(),
             half_edges: Vec::new(),
             faces: Vec::new(),
-            edge_map: HashMap::new(),
-            vertex_spatial_hash: HashMap::new(),
-            face_split_map: HashMap::new(),
-            half_edge_split_map: HashMap::new(),
+            edge_map: AHashMap::new(),
+            vertex_spatial_hash: AHashMap::new(),
+            face_split_map: AHashMap::new(),
+            half_edge_split_map: AHashMap::new(),
         }
     }
 
@@ -91,12 +91,12 @@ impl_mesh! {
     pub fn build_boundary_map(
         &self,
         intersection_segments: &[IntersectionSegment<T, N>],
-    ) -> HashSet<(usize, usize)> {
+    ) -> AHashSet<(usize, usize)> {
         fn ordered(a: usize, b: usize) -> (usize, usize) {
             if a < b { (a, b) } else { (b, a) }
         }
 
-        let mut boundary_edges = HashSet::new();
+        let mut boundary_edges = AHashSet::new();
 
         for (seg_idx, seg) in intersection_segments.iter().enumerate() {
             let he = self
@@ -217,8 +217,8 @@ impl_mesh! {
         }
     }
 
-    pub fn build_face_adjacency_graph(&self) -> HashMap<usize, Vec<usize>> {
-        let mut adjacency_graph = HashMap::new();
+    pub fn build_face_adjacency_graph(&self) -> AHashMap<usize, Vec<usize>> {
+        let mut adjacency_graph = AHashMap::new();
 
         for face_idx in 0..self.faces.len() {
             let mut adjacent_faces = Vec::new();
@@ -430,7 +430,7 @@ impl_mesh! {
         let initial_count = self.vertices.len();
 
         // Build spatial hash for efficient duplicate detection
-        let mut spatial_groups: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+        let mut spatial_groups: AHashMap<(i64, i64, i64), Vec<usize>> = AHashMap::new();
 
         for (vertex_idx, vertex) in self.vertices.iter().enumerate() {
             let hash_key = self.position_to_hash_key(&vertex.position);
@@ -439,7 +439,7 @@ impl_mesh! {
 
         // Find duplicates within each spatial group
         let mut vertex_mapping = (0..self.vertices.len()).collect::<Vec<_>>();
-        let mut duplicates = HashSet::new();
+        let mut duplicates = AHashSet::new();
 
         for group in spatial_groups.values() {
             if group.len() < 2 {
@@ -518,7 +518,7 @@ impl_mesh! {
         }
 
         // Rebuild edge map with new vertex indices
-        let mut new_edge_map = HashMap::new();
+        let mut new_edge_map = AHashMap::new();
         for (&(old_v1, old_v2), &he_idx) in &self.edge_map {
             if old_v1 < old_to_new.len() && old_v2 < old_to_new.len() {
                 let new_v1 = old_to_new[old_v1];
@@ -532,7 +532,7 @@ impl_mesh! {
         }
 
         // Rebuild spatial hash with new vertex indices
-        let mut new_spatial_hash: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+        let mut new_spatial_hash: AHashMap<(i64, i64, i64), Vec<usize>> = AHashMap::new();
         for (vertex_idx, vertex) in new_vertices.iter().enumerate() {
             let hash_key = self.position_to_hash_key(&vertex.position);
             new_spatial_hash
