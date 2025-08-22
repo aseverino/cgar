@@ -20,6 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod ball;
 pub mod cgar_f64;
 pub mod cgar_rational;
 pub mod lazy_exact;

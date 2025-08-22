@@ -30,6 +30,7 @@ use num_traits::ToPrimitive;
 use once_cell::sync::OnceCell;
 use rug::Rational;
 
+use crate::numeric::ball::Ball;
 use crate::numeric::scalar::{FromRef, RefInto, Scalar};
 use crate::numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational};
 use crate::operations::{Abs, One, Zero};
@@ -100,13 +101,14 @@ impl Scalar for LazyExact {
     // - fast path: |approx(self - other)| <= query_tolerance
     // - else: exact equality
     fn approx_eq(&self, other: &Self) -> bool {
-        let diff_approx = (&self.approx().0 - other.approx().0).abs();
-        if diff_approx <= CgarF64::query_tolerance().0 {
+        let diff = self.clone() - other.clone();
+        let b = diff.ball();
+        // User “query tolerance” becomes a *margin* on top of proven radius
+        let tol = CgarF64::query_tolerance().0;
+        if b.m.abs() <= b.r + tol {
             return true;
         }
-        // If approx says “close to zero”, sign() would already fallback to exact,
-        // but here we want a boolean “approximately equal”; exact== is a safe tie-breaker.
-        (self.clone() - other.clone()).exact().is_zero()
+        diff.exact().is_zero()
     }
 }
 
@@ -155,6 +157,7 @@ impl FromRef<CgarF64> for LazyExact {
                 cell
             },
             exact: OnceCell::new(),
+            ball: OnceCell::new(),
             depth: 1,
         }))
     }
@@ -195,6 +198,7 @@ struct Node {
     kind: Kind,
     approx: OnceCell<CgarF64>,
     exact: OnceCell<CgarRational>,
+    ball: OnceCell<Ball>,
     depth: u32,
 }
 
@@ -298,6 +302,7 @@ impl LazyExact {
                 cell
             },
             exact: OnceCell::new(),
+            ball: OnceCell::new(),
             depth: 1,
         }))
     }
@@ -322,6 +327,7 @@ impl LazyExact {
                 let _ = cell.set((*exact_arc).clone());
                 cell
             },
+            ball: OnceCell::new(),
             depth: 1,
         }))
     }
@@ -369,12 +375,11 @@ impl LazyExact {
     /// - else compute exact and use sign(exact)
     /// Returns -1, 0, or +1.
     pub fn sign(&self) -> i8 {
-        let a = self.approx();
-        let tol = CgarF64::query_tolerance();
-        if a.abs() > tol {
-            return if a.0 > 0.0 { 1 } else { -1 };
+        let b = self.ball();
+        if let Some(s) = b.sign_if_certain() {
+            return s; // decided in double with a sound, expression-specific bound
         }
-        // Straddles zero -> evaluate exactly.
+        // Uncertain ⇒ exact
         let e = self.exact();
         if e.is_zero() {
             0
@@ -514,6 +519,7 @@ impl LazyExact {
                 c
             },
             exact: OnceCell::new(),
+            ball: OnceCell::new(),
             depth,
         }))
     }
@@ -645,6 +651,28 @@ impl LazyExact {
     pub fn has_exact(&self) -> bool {
         self.0.exact.get().is_some()
     }
+
+    #[inline]
+    fn ball(&self) -> Ball {
+        *self
+            .0
+            .ball
+            .get_or_init(|| Self::eval_ball_kind(&self.0.kind))
+    }
+
+    #[inline]
+    fn eval_ball_kind(kind: &Kind) -> Ball {
+        use Kind::*;
+        match kind {
+            LeafApprox(a) => Ball::from_f64(a.0),
+            LeafExact(e) => Ball::from_f64(e.to_f64().unwrap_or(0.0)),
+            Add(a, b) => a.ball().add(b.ball()),
+            Sub(a, b) => a.ball().sub(b.ball()),
+            Mul(a, b) => a.ball().mul(b.ball()),
+            Div(a, b) => a.ball().div(b.ball()),
+            Neg(x) => a_neg(x),
+        }
+    }
 }
 
 impl Zero for LazyExact {
@@ -710,4 +738,9 @@ impl SubAssign<&LazyExact> for LazyExact {
             *self = self.clone() - rhs.clone();
         }
     }
+}
+
+#[inline]
+fn a_neg(x: &LazyExact) -> Ball {
+    x.ball().neg()
 }
