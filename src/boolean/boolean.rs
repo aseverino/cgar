@@ -29,7 +29,8 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
-use smallvec::SmallVec;
+use smallvec::*;
+use std::collections::hash_map::Entry;
 
 use crate::{
     geometry::{
@@ -39,8 +40,9 @@ use crate::{
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
         tri_tri_intersect::{
-            TriPrecomp, TriTriIntersectionResult, tri_tri_intersection,
-            tri_tri_intersection_with_precomp, tri_tri_intersection_with_precomp_p,
+            ContactOnTri, EndpointInfo, TriPrecomp, TriTriIntersectionDetailed,
+            TriTriIntersectionResult, tri_tri_intersection, tri_tri_intersection_with_precomp,
+            tri_tri_intersection_with_precomp_detailed, tri_tri_intersection_with_precomp_p,
         },
         util::point_from_segment_and_u,
         vector::{Vector, VectorOps},
@@ -277,8 +279,6 @@ where
         coplanar: bool,
         skip_endpoint_b: bool,
     ) {
-        use std::collections::hash_map::Entry;
-
         // Reserve slot
         let seg_idx = container.len();
         container.push(IntersectionSegment::new(
@@ -637,6 +637,8 @@ where
         // 1. Collect ALL intersection segments
         let mut intersection_segments_a = Vec::new();
         let mut intersection_segments_b = Vec::new();
+        let intersection_segments = [&mut intersection_segments_a, &mut intersection_segments_b];
+
         let start = Instant::now();
         let mut tree_a = a.build_face_tree();
         let mut tree_b = b.build_face_tree();
@@ -644,6 +646,9 @@ where
 
         let mut splits_a = Splits::new();
         let mut splits_b = Splits::new();
+
+        let splits = [&mut splits_a, &mut splits_b];
+        let meshes = [&a, &b];
 
         let start = Instant::now();
 
@@ -658,75 +663,134 @@ where
             for &fb in &candidates {
                 let pb_idx = b.face_vertices(*fb);
                 let pb: [&Point<T, N>; 3] = from_fn(|i| &b.vertices[pb_idx[i]].position);
-
                 let pre_b = TriPrecomp::new(&pb);
-                match tri_tri_intersection_with_precomp(&pa, &pb, &pre_a, &pre_b) {
-                    // match tri_tri_intersection_with_precomp_p(&pa, &pb, &pre_a) {
-                    TriTriIntersectionResult::Proper(segment) => {
-                        if segment.length2().is_positive() {
-                            Self::create_intersection_segment(
-                                &a,
-                                &mut splits_a,
-                                &mut intersection_segments_a,
-                                &segment,
-                                fa,
+
+                let vertices_indices = [&pa_idx, &pb_idx];
+                let faces = [fa, *fb];
+
+                let mut split_idx_info = usize::MAX;
+
+                match tri_tri_intersection_with_precomp_detailed(&pa, &pb, &pre_a, &pre_b) {
+                    TriTriIntersectionDetailed::Proper { ends } => {
+                        for mesh_i in 0..2 {
+                            let on_x = if mesh_i == 0 {
+                                [&ends[0].on_p, &ends[1].on_p]
+                            } else {
+                                [&ends[0].on_q, &ends[1].on_q]
+                            };
+                            let mut intersection_endpoint_0 =
+                                IntersectionEndPoint::<T, N>::new_default();
+                            let mut intersection_endpoint_1 =
+                                IntersectionEndPoint::<T, N>::new_default();
+                            let intersection_endpoints =
+                                [&mut intersection_endpoint_0, &mut intersection_endpoint_1];
+
+                            for end_p in 0..2 {
+                                let mut split_type = None;
+                                match &on_x[end_p] {
+                                    ContactOnTri::Vertex(i) => {
+                                        intersection_endpoints[end_p].vertex_hint =
+                                            Some([vertices_indices[mesh_i][*i], usize::MAX]);
+                                    }
+                                    ContactOnTri::Edge { e, u } => {
+                                        intersection_endpoints[end_p].vertex_hint = Some([
+                                            vertices_indices[mesh_i][e.0],
+                                            vertices_indices[mesh_i][e.1],
+                                        ]);
+
+                                        let he = meshes[mesh_i].edge_map[&(
+                                            vertices_indices[mesh_i][e.0],
+                                            vertices_indices[mesh_i][e.1],
+                                        )];
+                                        intersection_endpoints[end_p].half_edge_hint = Some(he);
+                                        intersection_endpoints[end_p].half_edge_u_hint =
+                                            Some(u.clone());
+
+                                        split_type = Some(SplitType::Edge);
+                                        split_idx_info = he;
+                                    }
+                                    ContactOnTri::Interior { bary } => {
+                                        intersection_endpoints[end_p].face_hint =
+                                            Some(faces[mesh_i]);
+                                        intersection_endpoints[end_p].barycentric_hint =
+                                            Some(bary.clone());
+
+                                        split_type = Some(SplitType::Face);
+                                        split_idx_info = faces[mesh_i];
+                                    }
+                                }
+
+                                if let Some(split_type) = split_type {
+                                    let key = point_key(&ends[end_p].point);
+                                    match splits[mesh_i].splits.entry(key) {
+                                        Entry::Occupied(mut occ) => {
+                                            occ.get_mut().3.push(EndPointHandle {
+                                                segment_idx: intersection_segments[mesh_i].len(),
+                                                endpoint_idx: end_p,
+                                            });
+                                            continue;
+                                        }
+                                        Entry::Vacant(_) => {}
+                                    }
+
+                                    match splits[mesh_i].splits.entry(key) {
+                                        Entry::Occupied(mut occ) => {
+                                            occ.get_mut().3.push(EndPointHandle {
+                                                segment_idx: intersection_segments[mesh_i].len(),
+                                                endpoint_idx: end_p,
+                                            });
+                                        }
+                                        Entry::Vacant(vac) => {
+                                            vac.insert((
+                                                ends[end_p].point.clone(),
+                                                split_type,
+                                                split_idx_info,
+                                                {
+                                                    let mut v: SmallVec<[EndPointHandle; 2]> =
+                                                        SmallVec::new();
+                                                    v.push(EndPointHandle {
+                                                        segment_idx: intersection_segments[mesh_i]
+                                                            .len(),
+                                                        endpoint_idx: end_p,
+                                                    });
+                                                    v
+                                                },
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            intersection_segments[mesh_i].push(IntersectionSegment::new(
+                                intersection_endpoint_0,
+                                intersection_endpoint_1,
+                                &Segment::new(&ends[0].point, &ends[1].point),
+                                faces[mesh_i],
+                                [usize::MAX, usize::MAX],
                                 false,
-                                false,
-                            );
-                            Self::create_intersection_segment(
-                                &b,
-                                &mut splits_b,
-                                &mut intersection_segments_b,
-                                &segment,
-                                *fb,
-                                false,
-                                false,
-                            );
+                            ));
                         }
                     }
-                    TriTriIntersectionResult::Coplanar(segment) => {
-                        if segment.length2().is_positive() {
-                            Self::create_intersection_segment(
-                                &a,
-                                &mut splits_a,
-                                &mut intersection_segments_a,
-                                &segment,
-                                fa,
-                                true,
-                                false,
-                            );
-                            Self::create_intersection_segment(
-                                &b,
-                                &mut splits_b,
-                                &mut intersection_segments_b,
-                                &segment,
-                                *fb,
-                                true,
-                                false,
-                            );
-                        }
-                    }
-                    TriTriIntersectionResult::CoplanarPolygon(vs) => {
-                        for segment in vs {
-                            Self::create_intersection_segment(
-                                &a,
-                                &mut splits_a,
-                                &mut intersection_segments_a,
-                                &segment,
-                                fa,
-                                true,
-                                false,
-                            );
-                            Self::create_intersection_segment(
-                                &b,
-                                &mut splits_b,
-                                &mut intersection_segments_b,
-                                &segment,
-                                *fb,
-                                true,
-                                false,
-                            );
-                        }
+                    TriTriIntersectionDetailed::Coplanar { segs } => {
+                        // for segment in segs {
+                        //     Self::create_intersection_segment(
+                        //         &a,
+                        //         &mut splits_a,
+                        //         &mut intersection_segments_a,
+                        //         &segment,
+                        //         fa,
+                        //         true,
+                        //         false,
+                        //     );
+                        //     Self::create_intersection_segment(
+                        //         &b,
+                        //         &mut splits_b,
+                        //         &mut intersection_segments_b,
+                        //         &segment,
+                        //         *fb,
+                        //         true,
+                        //         false,
+                        //     );
+                        // }
                     }
                     _ => {}
                 }

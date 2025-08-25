@@ -505,6 +505,7 @@ where
             let t = da / &denom; // t = da / (da - db)
             let dir = (p[ib] - p[ia]).as_vector();
             let ip = p[ia].add_vector(&dir.scale(&t));
+
             if inside_q_2d(&ip) && push_uniq(ip) == 2 {
                 // Fast path: both endpoints obtained from P edges; done.
                 return TriTriIntersectionResult::Proper(Segment::new(&uniq[0], &uniq[1]));
@@ -1175,4 +1176,597 @@ where
         return TriTriIntersectionResult::None;
     }
     tri_tri_intersection_with_precomp(p, q, pre_p, &pre_q)
+}
+
+// New code for early triangle calculations
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhichTri {
+    P,
+    Q,
+}
+
+#[derive(Clone, Debug)]
+pub enum ContactOnTri<T: Scalar> {
+    Vertex(usize),                    // exact vertex index 0..2 on that triangle
+    Edge { e: (usize, usize), u: T }, // parameter along edge (i->j), u in [0,1]
+    Interior { bary: (T, T, T) },     // barycentric coords (λ0, λ1, λ2) w.r.t. that triangle
+}
+
+#[derive(Clone, Debug)]
+pub struct EndpointInfo<T: Scalar, const N: usize> {
+    pub point: Point<T, N>,
+    pub on_p: ContactOnTri<T>,
+    pub on_q: ContactOnTri<T>,
+}
+
+#[derive(Clone, Debug)]
+pub enum TriTriIntersectionDetailed<T: Scalar, const N: usize> {
+    Proper {
+        ends: [EndpointInfo<T, N>; 2],
+    },
+    Coplanar {
+        segs: Vec<(EndpointInfo<T, N>, EndpointInfo<T, N>)>,
+    },
+    None,
+}
+
+#[inline(always)]
+fn edge_param_along<T: Scalar, const N: usize>(
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    p: &Point<T, N>,
+) -> T
+where
+    for<'a> &'a T: Sub<&'a T, Output = T> + Div<&'a T, Output = T> + Add<&'a T, Output = T>,
+{
+    // Choose the axis with the largest |b[i] - a[i]| to compute t robustly
+    let mut k = 0usize;
+    let mut best = (&b[0] - &a[0]).abs();
+    for i in 1..N {
+        let e = (&b[i] - &a[i]).abs();
+        if (&e - &best).is_positive() {
+            best = e;
+            k = i;
+        }
+    }
+    if best.is_zero() {
+        // Degenerate edge; return 0 to avoid div-by-zero (caller will ignore t)
+        return T::zero();
+    }
+    &(&p[k] - &a[k]) / &(&b[k] - &a[k])
+}
+
+#[inline(always)]
+fn classify_on_tri<T: Scalar, const N: usize>(
+    r3: &Point<T, N>,
+    tri3: &[&Point<T, N>; 3],
+    pre: &TriPrecomp<T, N>,
+) -> ContactOnTri<T>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
+    Vector<T, 2>: VectorOps<T, 2>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    // Project point with the same axes used to build pre.tri2d
+    let (i0, i1, _) = pre.axes;
+    let r = project_to_2d(r3, i0, i1);
+
+    // Edge functions in the projected plane (consistent with pre.ccw)
+    let e0 = {
+        let ex = &pre.tri2d[1][0] - &pre.tri2d[0][0];
+        let ey = &pre.tri2d[1][1] - &pre.tri2d[0][1];
+        let rx = &r[0] - &pre.tri2d[0][0];
+        let ry = &r[1] - &pre.tri2d[0][1];
+        &ex * &ry - &ey * &rx
+    };
+    let e1 = {
+        let ex = &pre.tri2d[2][0] - &pre.tri2d[1][0];
+        let ey = &pre.tri2d[2][1] - &pre.tri2d[1][1];
+        let rx = &r[0] - &pre.tri2d[1][0];
+        let ry = &r[1] - &pre.tri2d[1][1];
+        &ex * &ry - &ey * &rx
+    };
+    let e2 = {
+        let ex = &pre.tri2d[0][0] - &pre.tri2d[2][0];
+        let ey = &pre.tri2d[0][1] - &pre.tri2d[2][1];
+        let rx = &r[0] - &pre.tri2d[2][0];
+        let ry = &r[1] - &pre.tri2d[2][1];
+        &ex * &ry - &ey * &rx
+    };
+
+    let z0 = e0.is_zero();
+    let z1 = e1.is_zero();
+    let z2 = e2.is_zero();
+
+    // Vertex cases: two zero edge-functions
+    if z0 && z2 {
+        return ContactOnTri::Vertex(0);
+    } else if z0 && z1 {
+        return ContactOnTri::Vertex(1);
+    } else if z1 && z2 {
+        return ContactOnTri::Vertex(2);
+    }
+
+    // Edge cases: exactly one edge-function is zero
+    if z0 {
+        // Edge (0,1)
+        let u = edge_param_along::<T, N>(tri3[0], tri3[1], r3);
+        return ContactOnTri::Edge { e: (0, 1), u };
+    }
+    if z1 {
+        // Edge (1,2)
+        let u = edge_param_along::<T, N>(tri3[1], tri3[2], r3);
+        return ContactOnTri::Edge { e: (1, 2), u };
+    }
+    if z2 {
+        // Edge (2,0)
+        let u = edge_param_along::<T, N>(tri3[2], tri3[0], r3);
+        return ContactOnTri::Edge { e: (2, 0), u };
+    }
+
+    // Interior: compute barycentric coordinates in the same 2D projection
+    // area = cross(t1 - t0, t2 - t0)
+    let area = {
+        let x0 = &pre.tri2d[1][0] - &pre.tri2d[0][0];
+        let y0 = &pre.tri2d[1][1] - &pre.tri2d[0][1];
+        let x1 = &pre.tri2d[2][0] - &pre.tri2d[0][0];
+        let y1 = &pre.tri2d[2][1] - &pre.tri2d[0][1];
+        &x0 * &y1 - &y0 * &x1
+    };
+    // λ0 = cross(b - r, c - r) / area
+    // λ1 = cross(c - r, a - r) / area
+    // λ2 = cross(a - r, b - r) / area
+    let bx = &pre.tri2d[1][0] - &r[0];
+    let by = &pre.tri2d[1][1] - &r[1];
+    let cx = &pre.tri2d[2][0] - &r[0];
+    let cy = &pre.tri2d[2][1] - &r[1];
+    let ax = &pre.tri2d[0][0] - &r[0];
+    let ay = &pre.tri2d[0][1] - &r[1];
+
+    let num0 = &(&bx * &cy) - &(&by * &cx);
+    let num1 = &(&cx * &ay) - &(&cy * &ax);
+    let num2 = &(&ax * &by) - &(&ay * &bx);
+
+    // area must be non-zero for non-degenerate triangles (guaranteed by pre.degenerate)
+    let inv_area = &T::one() / &area;
+    let l0 = &num0 * &inv_area;
+    let l1 = &num1 * &inv_area;
+    let l2 = &num2 * &inv_area;
+
+    ContactOnTri::Interior { bary: (l0, l1, l2) }
+}
+
+#[inline(always)]
+fn merge_contact<T: Scalar>(a: &mut ContactOnTri<T>, b: ContactOnTri<T>) {
+    // Prefer more specific classifications: Vertex > Edge > Interior
+    match (&*a, b) {
+        (ContactOnTri::Vertex(_), _) => {}
+        (ContactOnTri::Edge { .. }, ContactOnTri::Vertex(v)) => {
+            *a = ContactOnTri::Vertex(v);
+        }
+        (ContactOnTri::Interior { .. }, ContactOnTri::Edge { e, u }) => {
+            *a = ContactOnTri::Edge { e, u };
+        }
+        (ContactOnTri::Interior { .. }, ContactOnTri::Vertex(v)) => {
+            *a = ContactOnTri::Vertex(v);
+        }
+        _ => {}
+    }
+}
+
+#[inline(always)]
+fn push_uniq_info<T: Scalar, const N: usize>(
+    uniq: &mut Vec<EndpointInfo<T, N>>,
+    merge2: &T,
+    mut info: EndpointInfo<T, N>,
+) where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Sub<&'a T, Output = T>,
+{
+    for u in uniq.iter_mut() {
+        let d = (&info.point - &u.point).as_vector();
+        let d2 = d.dot(&d);
+        if (&d2 - merge2).is_negative_or_zero() {
+            // Merge classifications (prefer most specific)
+            merge_contact(&mut u.on_p, info.on_p);
+            merge_contact(&mut u.on_q, info.on_q);
+            return;
+        }
+    }
+    uniq.push(info);
+}
+
+#[inline(always)]
+fn snap_exterior_to_edge<T: Scalar, const N: usize>(
+    point: &Point<T, N>,
+    tri: &[&Point<T, N>; 3],
+    contact: ContactOnTri<T>,
+) -> ContactOnTri<T>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    if let ContactOnTri::Interior { bary: (l0, l1, l2) } = contact.clone() {
+        // Check if any barycentric coordinate is negative (exterior point)
+        let l0_neg = l0.is_negative();
+        let l1_neg = l1.is_negative();
+        let l2_neg = l2.is_negative();
+
+        if l0_neg || l1_neg || l2_neg {
+            // Find closest edge by computing distance to each edge
+            let mut min_dist2 = T::from(1e300);
+            let mut closest_edge = (0usize, 1usize);
+            let mut closest_u = T::zero();
+
+            // Check all three edges
+            for (i, j) in [(0, 1), (1, 2), (2, 0)] {
+                let edge_vec = (tri[j] - tri[i]).as_vector();
+                let to_point = (point - tri[i]).as_vector();
+
+                // Project point onto edge
+                let edge_len2 = edge_vec.dot(&edge_vec);
+                if edge_len2.is_zero() {
+                    continue; // Degenerate edge
+                }
+
+                let t = &to_point.dot(&edge_vec) / &edge_len2;
+                let clamped_t = if t.is_negative() {
+                    T::zero()
+                } else if (&t - &T::one()).is_positive() {
+                    T::one()
+                } else {
+                    t
+                };
+
+                // Point on edge
+                let edge_point = tri[i].add_vector(&edge_vec.scale(&clamped_t));
+                let dist_vec = (point - &edge_point).as_vector();
+                let dist2 = dist_vec.dot(&dist_vec);
+
+                if (&dist2 - &min_dist2).is_negative() {
+                    min_dist2 = dist2;
+                    closest_edge = (i, j);
+                    closest_u = clamped_t;
+                }
+            }
+
+            return ContactOnTri::Edge {
+                e: closest_edge,
+                u: closest_u,
+            };
+        }
+    }
+
+    contact
+}
+
+pub fn tri_tri_intersection_with_precomp_detailed<T: Scalar, const N: usize>(
+    p: &[&Point<T, N>; 3],
+    q: &[&Point<T, N>; 3],
+    pre_p: &TriPrecomp<T, N>,
+    pre_q: &TriPrecomp<T, N>,
+) -> TriTriIntersectionDetailed<T, N>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, 2>: VectorOps<T, 2>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    if pre_p.degenerate || pre_q.degenerate {
+        return TriTriIntersectionDetailed::None;
+    }
+
+    // Signed distances of P to plane(Q)
+    let d_p0 = &pre_q.n.dot(&p[0].as_vector()) + &pre_q.d;
+    let d_p1 = &pre_q.n.dot(&p[1].as_vector()) + &pre_q.d;
+    let d_p2 = &pre_q.n.dot(&p[2].as_vector()) + &pre_q.d;
+
+    let zero_p = [d_p0.is_zero(), d_p1.is_zero(), d_p2.is_zero()];
+    let zc_p = zero_p.iter().filter(|z| **z).count();
+
+    if zc_p == 2 {
+        // Coplanar segment of P on triangle Q
+        let (i, j) = match zero_p {
+            [true, true, false] => (0, 1),
+            [true, false, true] => (0, 2),
+            [false, true, true] => (1, 2),
+            _ => unreachable!(),
+        };
+        if let Some((a3, b3)) = clip_segment_to_triangle_in_plane(p[i], p[j], q, &pre_q.n) {
+            // Classify endpoints on both triangles
+            let on_q_a = classify_on_tri::<T, N>(&a3, q, &pre_q);
+            let on_q_b = classify_on_tri::<T, N>(&b3, q, &pre_q);
+            let on_p_a = classify_on_tri::<T, N>(&a3, p, &pre_p);
+            let on_p_b = classify_on_tri::<T, N>(&b3, p, &pre_p);
+            return TriTriIntersectionDetailed::Proper {
+                ends: [
+                    EndpointInfo {
+                        point: a3,
+                        on_p: on_p_a,
+                        on_q: on_q_a,
+                    },
+                    EndpointInfo {
+                        point: b3,
+                        on_p: on_p_b,
+                        on_q: on_q_b,
+                    },
+                ],
+            };
+        }
+    }
+
+    // Strict separation by plane(Q)
+    if (d_p0.is_positive() && d_p1.is_positive() && d_p2.is_positive())
+        || (d_p0.is_negative() && d_p1.is_negative() && d_p2.is_negative())
+    {
+        return TriTriIntersectionDetailed::None;
+    }
+
+    // Completely coplanar
+    if d_p0.is_zero() && d_p1.is_zero() && d_p2.is_zero() {
+        // Defer to coplanar handler: build polygon edges, then classify endpoints
+        match coplanar_tri_tri_intersection(p, q, &pre_q.n) {
+            TriTriIntersectionResult::Proper(seg) | TriTriIntersectionResult::Coplanar(seg) => {
+                let a3 = seg.a.clone();
+                let b3 = seg.b.clone();
+                let on_q_a = classify_on_tri::<T, N>(&a3, q, &pre_q);
+                let on_q_b = classify_on_tri::<T, N>(&b3, q, &pre_q);
+                let on_p_a = classify_on_tri::<T, N>(&a3, p, &pre_p);
+                let on_p_b = classify_on_tri::<T, N>(&b3, p, &pre_p);
+                return TriTriIntersectionDetailed::Proper {
+                    ends: [
+                        EndpointInfo {
+                            point: a3,
+                            on_p: on_p_a,
+                            on_q: on_q_a,
+                        },
+                        EndpointInfo {
+                            point: b3,
+                            on_p: on_p_b,
+                            on_q: on_q_b,
+                        },
+                    ],
+                };
+            }
+            TriTriIntersectionResult::CoplanarPolygon(segs) => {
+                let mut out = Vec::with_capacity(segs.len());
+                for s in segs {
+                    let a3 = s.a.clone();
+                    let b3 = s.b.clone();
+                    let on_q_a = classify_on_tri::<T, N>(&a3, q, &pre_q);
+                    let on_q_b = classify_on_tri::<T, N>(&b3, q, &pre_q);
+                    let on_p_a = classify_on_tri::<T, N>(&a3, p, &pre_p);
+                    let on_p_b = classify_on_tri::<T, N>(&b3, p, &pre_p);
+                    out.push((
+                        EndpointInfo {
+                            point: a3,
+                            on_p: on_p_a,
+                            on_q: on_q_a,
+                        },
+                        EndpointInfo {
+                            point: b3,
+                            on_p: on_p_b,
+                            on_q: on_q_b,
+                        },
+                    ));
+                }
+                return TriTriIntersectionDetailed::Coplanar { segs: out };
+            }
+            TriTriIntersectionResult::None => return TriTriIntersectionDetailed::None,
+        }
+    }
+
+    // Collect unique endpoints, merging duplicates
+    let merge = T::point_merge_threshold();
+    let merge2 = &merge * &merge;
+    let mut uniq: Vec<EndpointInfo<T, N>> = Vec::with_capacity(2);
+
+    // Intersections from P-edges against plane(Q) (reuse cached distances)
+    for (ia, ib, da, db) in [
+        (0usize, 1usize, &d_p0, &d_p1),
+        (1usize, 2usize, &d_p1, &d_p2),
+        (2usize, 0usize, &d_p2, &d_p0),
+    ] {
+        let prod = da * db;
+        if prod.is_negative_or_zero() && !(da.is_zero() && db.is_zero()) {
+            let denom = da - db;
+            if denom.is_zero() {
+                continue;
+            }
+
+            let t = da / &denom;
+            let dir = (p[ib] - p[ia]).as_vector();
+            let ip = p[ia].add_vector(&dir.scale(&t));
+
+            if !pre_q.inside_2d(&ip) {
+                continue;
+            }
+
+            let on_p = if t.is_zero() {
+                ContactOnTri::Vertex(ia)
+            } else if (&(&t - &T::one())).is_zero() {
+                ContactOnTri::Vertex(ib)
+            } else {
+                ContactOnTri::Edge {
+                    e: (ia, ib),
+                    u: t.clone(),
+                }
+            };
+
+            // Classify vs Q and snap if exterior
+            let on_q = classify_on_tri::<T, N>(&ip, q, &pre_q);
+            let on_q = snap_exterior_to_edge(&ip, q, on_q);
+
+            push_uniq_info(
+                &mut uniq,
+                &merge2,
+                EndpointInfo {
+                    point: ip,
+                    on_p,
+                    on_q,
+                },
+            );
+            if uniq.len() == 2 {
+                return TriTriIntersectionDetailed::Proper {
+                    ends: [uniq.swap_remove(0), uniq.swap_remove(0)],
+                };
+            }
+        }
+    }
+
+    // Now distances of Q to plane(P), and Q-edges intersections
+    let d_q0 = &pre_p.n.dot(&q[0].as_vector()) + &pre_p.d;
+    let d_q1 = &pre_p.n.dot(&q[1].as_vector()) + &pre_p.d;
+    let d_q2 = &pre_p.n.dot(&q[2].as_vector()) + &pre_p.d;
+
+    let zero_q = [d_q0.is_zero(), d_q1.is_zero(), d_q2.is_zero()];
+    let zc_q = zero_q.iter().filter(|z| **z).count();
+    if zc_q == 2 {
+        let (i, j) = match zero_q {
+            [true, true, false] => (0, 1),
+            [true, false, true] => (0, 2),
+            [false, true, true] => (1, 2),
+            _ => unreachable!(),
+        };
+        if let Some((a3, b3)) = clip_segment_to_triangle_in_plane(q[i], q[j], p, &pre_p.n) {
+            // Classify endpoints on both triangles and return
+            let on_p_a = classify_on_tri::<T, N>(&a3, p, &pre_p);
+            let on_p_b = classify_on_tri::<T, N>(&b3, p, &pre_p);
+            let on_q_a = classify_on_tri::<T, N>(&a3, q, &pre_q);
+            let on_q_b = classify_on_tri::<T, N>(&b3, q, &pre_q);
+            return TriTriIntersectionDetailed::Proper {
+                ends: [
+                    EndpointInfo {
+                        point: a3,
+                        on_p: on_p_a,
+                        on_q: on_q_a,
+                    },
+                    EndpointInfo {
+                        point: b3,
+                        on_p: on_p_b,
+                        on_q: on_q_b,
+                    },
+                ],
+            };
+        }
+    }
+
+    if (d_q0.is_positive() && d_q1.is_positive() && d_q2.is_positive())
+        || (d_q0.is_negative() && d_q1.is_negative() && d_q2.is_negative())
+    {
+        // nothing more
+    } else {
+        // Q-edges against plane(P)
+        for (ia, ib, da, db) in [
+            (0usize, 1usize, &d_q0, &d_q1),
+            (1usize, 2usize, &d_q1, &d_q2),
+            (2usize, 0usize, &d_q2, &d_q0),
+        ] {
+            let prod = da * db;
+            if prod.is_negative_or_zero() && !(da.is_zero() && db.is_zero()) {
+                let denom = da - db;
+                if denom.is_zero() {
+                    continue;
+                }
+                let u = da / &denom;
+                let dir = (q[ib] - q[ia]).as_vector();
+                let iq = q[ia].add_vector(&dir.scale(&u));
+
+                if !pre_p.inside_2d(&iq) {
+                    continue;
+                }
+
+                let on_q = if u.is_zero() {
+                    ContactOnTri::Vertex(ia)
+                } else if (&(&u - &T::one())).is_zero() {
+                    ContactOnTri::Vertex(ib)
+                } else {
+                    ContactOnTri::Edge {
+                        e: (ia, ib),
+                        u: u.clone(),
+                    }
+                };
+
+                // Classify vs P and snap if exterior
+                let on_p = classify_on_tri::<T, N>(&iq, p, &pre_p);
+                let on_p = snap_exterior_to_edge(&iq, p, on_p);
+
+                push_uniq_info(
+                    &mut uniq,
+                    &merge2,
+                    EndpointInfo {
+                        point: iq,
+                        on_p,
+                        on_q,
+                    },
+                );
+                if uniq.len() == 2 {
+                    return TriTriIntersectionDetailed::Proper {
+                        ends: [uniq.swap_remove(0), uniq.swap_remove(0)],
+                    };
+                }
+            }
+        }
+    }
+
+    match uniq.len() {
+        0 => TriTriIntersectionDetailed::None,
+        1 => TriTriIntersectionDetailed::Proper {
+            ends: [uniq[0].clone(), uniq[0].clone()],
+        },
+        2 => TriTriIntersectionDetailed::Proper {
+            ends: [uniq.swap_remove(0), uniq.swap_remove(0)],
+        },
+        _ => {
+            // Farthest pair (keep associated classifications)
+            let mut max_d2 = T::zero();
+            let mut best = (0usize, 1usize);
+            for i in 0..uniq.len() {
+                for j in (i + 1)..uniq.len() {
+                    let v = (&uniq[j].point - &uniq[i].point).as_vector();
+                    let d2 = v.dot(&v);
+                    if (&d2 - &max_d2).is_positive() {
+                        max_d2 = d2;
+                        best = (i, j);
+                    }
+                }
+            }
+            TriTriIntersectionDetailed::Proper {
+                ends: [uniq[best.0].clone(), uniq[best.1].clone()],
+            }
+        }
+    }
+}
+
+#[inline(always)]
+pub fn tri_tri_intersection_detailed<T: Scalar, const N: usize>(
+    p: &[&Point<T, N>; 3],
+    q: &[&Point<T, N>; 3],
+) -> TriTriIntersectionDetailed<T, N>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
+    Vector<T, 2>: VectorOps<T, 2>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    let pre_p = TriPrecomp::new(p);
+    let pre_q = TriPrecomp::new(q);
+    tri_tri_intersection_with_precomp_detailed(p, q, &pre_p, &pre_q)
 }
