@@ -1201,12 +1201,8 @@ pub struct EndpointInfo<T: Scalar, const N: usize> {
 
 #[derive(Clone, Debug)]
 pub enum TriTriIntersectionDetailed<T: Scalar, const N: usize> {
-    Proper {
-        ends: [EndpointInfo<T, N>; 2],
-    },
-    Coplanar {
-        segs: Vec<(EndpointInfo<T, N>, EndpointInfo<T, N>)>,
-    },
+    Proper { ends: [EndpointInfo<T, N>; 2] },
+    Coplanar { segs: Vec<[EndpointInfo<T, N>; 2]> },
     None,
 }
 
@@ -1491,8 +1487,8 @@ where
             let on_q_b = classify_on_tri::<T, N>(&b3, q, &pre_q);
             let on_p_a = classify_on_tri::<T, N>(&a3, p, &pre_p);
             let on_p_b = classify_on_tri::<T, N>(&b3, p, &pre_p);
-            return TriTriIntersectionDetailed::Proper {
-                ends: [
+            return TriTriIntersectionDetailed::Coplanar {
+                segs: vec![[
                     EndpointInfo {
                         point: a3,
                         on_p: on_p_a,
@@ -1503,7 +1499,7 @@ where
                         on_p: on_p_b,
                         on_q: on_q_b,
                     },
-                ],
+                ]],
             };
         }
     }
@@ -1519,15 +1515,18 @@ where
     if d_p0.is_zero() && d_p1.is_zero() && d_p2.is_zero() {
         // Defer to coplanar handler: build polygon edges, then classify endpoints
         match coplanar_tri_tri_intersection(p, q, &pre_q.n) {
-            TriTriIntersectionResult::Proper(seg) | TriTriIntersectionResult::Coplanar(seg) => {
+            TriTriIntersectionResult::Proper(_seg) => {
+                unreachable!();
+            }
+            TriTriIntersectionResult::Coplanar(seg) => {
                 let a3 = seg.a.clone();
                 let b3 = seg.b.clone();
                 let on_q_a = classify_on_tri::<T, N>(&a3, q, &pre_q);
                 let on_q_b = classify_on_tri::<T, N>(&b3, q, &pre_q);
                 let on_p_a = classify_on_tri::<T, N>(&a3, p, &pre_p);
                 let on_p_b = classify_on_tri::<T, N>(&b3, p, &pre_p);
-                return TriTriIntersectionDetailed::Proper {
-                    ends: [
+                return TriTriIntersectionDetailed::Coplanar {
+                    segs: vec![[
                         EndpointInfo {
                             point: a3,
                             on_p: on_p_a,
@@ -1538,7 +1537,7 @@ where
                             on_p: on_p_b,
                             on_q: on_q_b,
                         },
-                    ],
+                    ]],
                 };
             }
             TriTriIntersectionResult::CoplanarPolygon(segs) => {
@@ -1550,7 +1549,7 @@ where
                     let on_q_b = classify_on_tri::<T, N>(&b3, q, &pre_q);
                     let on_p_a = classify_on_tri::<T, N>(&a3, p, &pre_p);
                     let on_p_b = classify_on_tri::<T, N>(&b3, p, &pre_p);
-                    out.push((
+                    out.push([
                         EndpointInfo {
                             point: a3,
                             on_p: on_p_a,
@@ -1561,7 +1560,7 @@ where
                             on_p: on_p_b,
                             on_q: on_q_b,
                         },
-                    ));
+                    ]);
                 }
                 return TriTriIntersectionDetailed::Coplanar { segs: out };
             }
@@ -1608,7 +1607,7 @@ where
 
             // Classify vs Q and snap if exterior
             let on_q = classify_on_tri::<T, N>(&ip, q, &pre_q);
-            let on_q = snap_exterior_to_edge(&ip, q, on_q);
+            // let on_q = snap_exterior_to_edge(&ip, q, on_q);
 
             push_uniq_info(
                 &mut uniq,

@@ -315,7 +315,10 @@ where
                     return twin;
                 }
             }
-            panic!("Face edge half-edge not found for ({u},{v}) on face {face}");
+            panic!(
+                "Face edge half-edge not found for ({u},{v}) on face {face}\n{:?}\n{:?}",
+                mesh.vertices[u].position, mesh.vertices[v].position
+            );
         }
 
         // Precompute per-call constants/refs once
@@ -630,9 +633,9 @@ where
         }
     }
 
-    pub fn boolean(&self, other: &Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
-        let mut a = self.clone();
-        let mut b = other.clone();
+    pub fn corefine_and_boolean(&mut self, other: &mut Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
+        let mut a = self;
+        let mut b = other;
 
         // 1. Collect ALL intersection segments
         let mut intersection_segments_a = Vec::new();
@@ -651,9 +654,11 @@ where
         let meshes = [&a, &b];
 
         let start = Instant::now();
+        let mut candidates = Vec::new();
+        let mut ends_vec = Vec::new();
 
         for fa in 0..a.faces.len() {
-            let mut candidates = Vec::new();
+            candidates.clear();
             tree_b.query(&a.face_aabb(fa), &mut candidates);
 
             let pa_idx = a.face_vertices(fa);
@@ -661,6 +666,8 @@ where
             let pre_a = TriPrecomp::new(&pa);
 
             for &fb in &candidates {
+                ends_vec.clear();
+
                 let pb_idx = b.face_vertices(*fb);
                 let pb: [&Point<T, N>; 3] = from_fn(|i| &b.vertices[pb_idx[i]].position);
                 let pre_b = TriPrecomp::new(&pb);
@@ -670,129 +677,118 @@ where
 
                 let mut split_idx_info = usize::MAX;
 
+                let mut coplanar = false;
+
                 match tri_tri_intersection_with_precomp_detailed(&pa, &pb, &pre_a, &pre_b) {
                     TriTriIntersectionDetailed::Proper { ends } => {
-                        for mesh_i in 0..2 {
-                            let on_x = if mesh_i == 0 {
-                                [&ends[0].on_p, &ends[1].on_p]
-                            } else {
-                                [&ends[0].on_q, &ends[1].on_q]
-                            };
-                            let mut intersection_endpoint_0 =
-                                IntersectionEndPoint::<T, N>::new_default();
-                            let mut intersection_endpoint_1 =
-                                IntersectionEndPoint::<T, N>::new_default();
-                            let intersection_endpoints =
-                                [&mut intersection_endpoint_0, &mut intersection_endpoint_1];
+                        ends_vec.push(ends);
+                    }
+                    TriTriIntersectionDetailed::Coplanar { segs } => {
+                        for ends in segs {
+                            ends_vec.push(ends);
+                        }
+                        coplanar = true;
+                    }
+                    _ => {}
+                }
 
-                            for end_p in 0..2 {
-                                let mut split_type = None;
-                                match &on_x[end_p] {
-                                    ContactOnTri::Vertex(i) => {
-                                        intersection_endpoints[end_p].vertex_hint =
-                                            Some([vertices_indices[mesh_i][*i], usize::MAX]);
+                for ends in &ends_vec {
+                    for mesh_i in 0..2 {
+                        let on_x = if mesh_i == 0 {
+                            [&ends[0].on_p, &ends[1].on_p]
+                        } else {
+                            [&ends[0].on_q, &ends[1].on_q]
+                        };
+                        let mut intersection_endpoint_0 =
+                            IntersectionEndPoint::<T, N>::new_default();
+                        let mut intersection_endpoint_1 =
+                            IntersectionEndPoint::<T, N>::new_default();
+                        let intersection_endpoints =
+                            [&mut intersection_endpoint_0, &mut intersection_endpoint_1];
+
+                        for end_x in 0..2 {
+                            let mut split_type = None;
+                            match &on_x[end_x] {
+                                ContactOnTri::Vertex(i) => {
+                                    intersection_endpoints[end_x].vertex_hint =
+                                        Some([vertices_indices[mesh_i][*i], usize::MAX]);
+                                }
+                                ContactOnTri::Edge { e, u } => {
+                                    intersection_endpoints[end_x].vertex_hint = Some([
+                                        vertices_indices[mesh_i][e.0],
+                                        vertices_indices[mesh_i][e.1],
+                                    ]);
+
+                                    let he = meshes[mesh_i].edge_map[&(
+                                        vertices_indices[mesh_i][e.0],
+                                        vertices_indices[mesh_i][e.1],
+                                    )];
+                                    intersection_endpoints[end_x].half_edge_hint = Some(he);
+                                    intersection_endpoints[end_x].half_edge_u_hint =
+                                        Some(u.clone());
+
+                                    split_type = Some(SplitType::Edge);
+                                    split_idx_info = he;
+                                }
+                                ContactOnTri::Interior { bary } => {
+                                    intersection_endpoints[end_x].face_hint = Some(faces[mesh_i]);
+                                    intersection_endpoints[end_x].barycentric_hint =
+                                        Some(bary.clone());
+
+                                    split_type = Some(SplitType::Face);
+                                    split_idx_info = faces[mesh_i];
+                                }
+                            }
+
+                            if let Some(split_type) = split_type {
+                                let key = point_key(&ends[end_x].point);
+                                match splits[mesh_i].splits.entry(key) {
+                                    Entry::Occupied(mut occ) => {
+                                        occ.get_mut().3.push(EndPointHandle {
+                                            segment_idx: intersection_segments[mesh_i].len(),
+                                            endpoint_idx: end_x,
+                                        });
+                                        continue;
                                     }
-                                    ContactOnTri::Edge { e, u } => {
-                                        intersection_endpoints[end_p].vertex_hint = Some([
-                                            vertices_indices[mesh_i][e.0],
-                                            vertices_indices[mesh_i][e.1],
-                                        ]);
-
-                                        let he = meshes[mesh_i].edge_map[&(
-                                            vertices_indices[mesh_i][e.0],
-                                            vertices_indices[mesh_i][e.1],
-                                        )];
-                                        intersection_endpoints[end_p].half_edge_hint = Some(he);
-                                        intersection_endpoints[end_p].half_edge_u_hint =
-                                            Some(u.clone());
-
-                                        split_type = Some(SplitType::Edge);
-                                        split_idx_info = he;
-                                    }
-                                    ContactOnTri::Interior { bary } => {
-                                        intersection_endpoints[end_p].face_hint =
-                                            Some(faces[mesh_i]);
-                                        intersection_endpoints[end_p].barycentric_hint =
-                                            Some(bary.clone());
-
-                                        split_type = Some(SplitType::Face);
-                                        split_idx_info = faces[mesh_i];
-                                    }
+                                    Entry::Vacant(_) => {}
                                 }
 
-                                if let Some(split_type) = split_type {
-                                    let key = point_key(&ends[end_p].point);
-                                    match splits[mesh_i].splits.entry(key) {
-                                        Entry::Occupied(mut occ) => {
-                                            occ.get_mut().3.push(EndPointHandle {
-                                                segment_idx: intersection_segments[mesh_i].len(),
-                                                endpoint_idx: end_p,
-                                            });
-                                            continue;
-                                        }
-                                        Entry::Vacant(_) => {}
+                                match splits[mesh_i].splits.entry(key) {
+                                    Entry::Occupied(mut occ) => {
+                                        occ.get_mut().3.push(EndPointHandle {
+                                            segment_idx: intersection_segments[mesh_i].len(),
+                                            endpoint_idx: end_x,
+                                        });
                                     }
-
-                                    match splits[mesh_i].splits.entry(key) {
-                                        Entry::Occupied(mut occ) => {
-                                            occ.get_mut().3.push(EndPointHandle {
-                                                segment_idx: intersection_segments[mesh_i].len(),
-                                                endpoint_idx: end_p,
-                                            });
-                                        }
-                                        Entry::Vacant(vac) => {
-                                            vac.insert((
-                                                ends[end_p].point.clone(),
-                                                split_type,
-                                                split_idx_info,
-                                                {
-                                                    let mut v: SmallVec<[EndPointHandle; 2]> =
-                                                        SmallVec::new();
-                                                    v.push(EndPointHandle {
-                                                        segment_idx: intersection_segments[mesh_i]
-                                                            .len(),
-                                                        endpoint_idx: end_p,
-                                                    });
-                                                    v
-                                                },
-                                            ));
-                                        }
+                                    Entry::Vacant(vac) => {
+                                        vac.insert((
+                                            ends[end_x].point.clone(),
+                                            split_type,
+                                            split_idx_info,
+                                            {
+                                                let mut v: SmallVec<[EndPointHandle; 2]> =
+                                                    SmallVec::new();
+                                                v.push(EndPointHandle {
+                                                    segment_idx: intersection_segments[mesh_i]
+                                                        .len(),
+                                                    endpoint_idx: end_x,
+                                                });
+                                                v
+                                            },
+                                        ));
                                     }
                                 }
                             }
-                            intersection_segments[mesh_i].push(IntersectionSegment::new(
-                                intersection_endpoint_0,
-                                intersection_endpoint_1,
-                                &Segment::new(&ends[0].point, &ends[1].point),
-                                faces[mesh_i],
-                                [usize::MAX, usize::MAX],
-                                false,
-                            ));
                         }
+                        intersection_segments[mesh_i].push(IntersectionSegment::new(
+                            intersection_endpoint_0,
+                            intersection_endpoint_1,
+                            &Segment::new(&ends[0].point, &ends[1].point),
+                            faces[mesh_i],
+                            [usize::MAX, usize::MAX],
+                            coplanar,
+                        ));
                     }
-                    TriTriIntersectionDetailed::Coplanar { segs } => {
-                        // for segment in segs {
-                        //     Self::create_intersection_segment(
-                        //         &a,
-                        //         &mut splits_a,
-                        //         &mut intersection_segments_a,
-                        //         &segment,
-                        //         fa,
-                        //         true,
-                        //         false,
-                        //     );
-                        //     Self::create_intersection_segment(
-                        //         &b,
-                        //         &mut splits_b,
-                        //         &mut intersection_segments_b,
-                        //         &segment,
-                        //         *fb,
-                        //         true,
-                        //         false,
-                        //     );
-                        // }
-                    }
-                    _ => {}
                 }
             }
         }
@@ -823,8 +819,10 @@ where
         );
         println!("Splits done in {:.2?}", start.elapsed());
 
+        let start = Instant::now();
         tree_a = a.build_face_tree();
         tree_b = b.build_face_tree();
+        println!("Rebuilt the face trees in {:.2?}", start.elapsed());
 
         let mut intersection_by_edge_a = AHashMap::new();
         let mut intersection_by_edge_b = AHashMap::new();
@@ -1289,15 +1287,21 @@ where
                     let new_segment =
                         Segment::new(&new_point, &intersection_segments[segment_idx].segment[1]);
 
-                    Self::create_intersection_segment(
-                        self,
-                        edge_splits,
-                        intersection_segments,
-                        &new_segment,
-                        f,
-                        intersection_segments[segment_idx].coplanar,
-                        true,
-                    );
+                    let find_face_result = self.find_valid_face(f, &new_point);
+
+                    if let FindFaceResult::OnVertex { f, v: _ } = find_face_result {
+                        Self::create_intersection_segment(
+                            self,
+                            edge_splits,
+                            intersection_segments,
+                            &new_segment,
+                            f,
+                            intersection_segments[segment_idx].coplanar,
+                            true,
+                        );
+                    } else {
+                        panic!("Invalid face while processing segment.");
+                    }
 
                     let seg = intersection_segments[segment_idx].b.clone();
                     let len = intersection_segments.len() - 1;

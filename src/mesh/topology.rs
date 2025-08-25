@@ -52,6 +52,7 @@ use crate::{
 /// - Inside:    (f, usize::MAX, usize::MAX, 0)
 /// - OnEdge:    (f, he_of_f_edge, usize::MAX, u in [0,1] along that half-edge)
 /// - OnVertex:  (f, usize::MAX, vertex_id, 0)
+#[derive(Debug)]
 pub enum FindFaceResult<T> {
     Inside { f: usize, bary: (T, T, T) },
     OnEdge { f: usize, he: usize, u: T },

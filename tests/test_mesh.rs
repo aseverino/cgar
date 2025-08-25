@@ -847,13 +847,13 @@ fn make_cube_exact(origin: [f64; 3], min: [f64; 3], max: [f64; 3]) -> Mesh<CgarR
 #[test]
 fn difference_coplanar_boolean() {
     // 1) Big unit cube [0,1]^3
-    let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_a = make_cube_exact([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
 
     // 2) Smaller cube slicing off the top-far corner
-    let small = make_cube([0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [1.0, 1.0, 1.0]);
+    let mut small = make_cube_exact([0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [1.0, 1.0, 1.0]);
 
     // 3) Perform boolean difference
-    let result_1 = big_a.boolean(&small, BooleanOp::Difference);
+    let result_1 = big_a.corefine_and_boolean(&mut small, BooleanOp::Difference);
 
     let _ = write_obj(
         &result_1,
@@ -868,12 +868,15 @@ fn difference_coplanar_boolean() {
 #[test]
 fn difference_boolean_inexact() {
     // 1) Big unit cube [0,1]^3
-    let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+    let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/a.obj");
+    let _ = write_obj(&big_b, "/mnt/v/cgar_meshes/b.obj");
 
     // 3) Perform boolean difference
     let start = Instant::now();
-    let result_1 = big_a.boolean(&big_b, BooleanOp::Difference);
+    let result_1 = big_a.corefine_and_boolean(&mut big_b, BooleanOp::Difference);
     let duration = start.elapsed();
     println!("Boolean difference took {:?}", duration);
 
@@ -890,12 +893,12 @@ fn difference_boolean_inexact() {
 #[test]
 fn difference_boolean_exact() {
     // 1) Big unit cube [0,1]^3
-    let big_a = make_cube_exact([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    let big_b = make_cube_exact([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_a = make_cube_exact([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_b = make_cube_exact([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
 
     // 3) Perform boolean difference
     let start = Instant::now();
-    let result_1 = big_a.boolean(&big_b, BooleanOp::Union);
+    let result_1 = big_a.corefine_and_boolean(&mut big_b, BooleanOp::Union);
     let duration = start.elapsed();
     println!("Boolean difference took {:?}", duration);
 
@@ -909,11 +912,11 @@ fn difference_boolean_exact() {
 #[test]
 fn intersection_boolean() {
     // 1) Big unit cube [0,1]^3
-    let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
 
     // 3) Perform boolean difference
-    let result_1 = big_a.boolean(&big_b, BooleanOp::Intersection);
+    let result_1 = big_a.corefine_and_boolean(&mut big_b, BooleanOp::Intersection);
 
     let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/intersection_boolean.obj");
 
@@ -925,11 +928,11 @@ fn intersection_boolean() {
 #[test]
 fn union_boolean() {
     // 1) Big unit cube [0,1]^3
-    let big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    let big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
 
     // 3) Perform boolean difference
-    let result_1 = big_a.boolean(&big_b, BooleanOp::Union);
+    let result_1 = big_a.corefine_and_boolean(&mut big_b, BooleanOp::Union);
 
     let _ = write_obj(&result_1, "/mnt/v/cgar_meshes/union_boolean.obj");
 
@@ -941,7 +944,7 @@ fn union_boolean() {
 #[test]
 fn difference_large_boolean() {
     unsafe { std::env::set_var("RUST_LIB_BACKTRACE", "1") };
-    let sphere =
+    let mut sphere =
         read_obj::<LazyExact, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
     let mut other_sphere =
         read_obj::<LazyExact, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
@@ -953,7 +956,7 @@ fn difference_large_boolean() {
     }
 
     let start = Instant::now();
-    let result = other_sphere.boolean(&sphere, BooleanOp::Difference);
+    let result = other_sphere.corefine_and_boolean(&mut sphere, BooleanOp::Difference);
     let duration = start.elapsed();
     println!("Boolean difference took {:?}", duration);
 
@@ -966,15 +969,15 @@ fn difference_large_boolean() {
 
 #[test]
 fn difference_large_torus_boolean() {
-    let sphere =
+    let mut sphere =
         read_obj::<CgarRational, _>("tests/resources/sphere.obj").expect("Failed to read sphere");
-    let toroid =
+    let mut toroid =
         read_obj::<CgarRational, _>("tests/resources/toroid.obj").expect("Failed to read toroid");
 
     println!("Loaded");
 
     let start = Instant::now();
-    let result = toroid.boolean(&sphere, BooleanOp::Difference);
+    let result = toroid.corefine_and_boolean(&mut sphere, BooleanOp::Difference);
     let duration = start.elapsed();
     println!("Boolean difference took {:?}", duration);
 
