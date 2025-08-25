@@ -112,6 +112,8 @@ pub struct PairRing {
     pub is_border_edge: bool,
 }
 
+pub(crate) type Bucket = SmallVec<[usize; 4]>;
+
 #[derive(Debug, Clone)]
 pub struct Mesh<T: Scalar, const N: usize> {
     pub vertices: Vec<Vertex<T, N>>,
@@ -119,7 +121,10 @@ pub struct Mesh<T: Scalar, const N: usize> {
     pub faces: Vec<Face>,
 
     pub edge_map: AHashMap<(usize, usize), usize>,
-    pub(crate) vertex_spatial_hash: AHashMap<(i64, i64, i64), Vec<usize>>,
-    pub(crate) face_split_map: AHashMap<usize, FaceSplitMap>,
     pub half_edge_split_map: AHashMap<usize, (usize, usize)>,
+
+    pub(crate) face_split_map: AHashMap<usize, FaceSplitMap>,
+    pub(crate) vertex_spatial_hash: AHashMap<u128, Bucket>,
+    pub(crate) cell: f64,     // grid cell size in world units
+    pub(crate) hash_inv: f64, // == 1.0 / cell
 }

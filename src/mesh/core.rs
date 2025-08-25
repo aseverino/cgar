@@ -50,7 +50,7 @@ use crate::{
 
 impl_mesh! {
     pub fn new() -> Self {
-        Self {
+        let s = Self {
             vertices: Vec::new(),
             half_edges: Vec::new(),
             faces: Vec::new(),
@@ -58,37 +58,11 @@ impl_mesh! {
             vertex_spatial_hash: AHashMap::new(),
             face_split_map: AHashMap::new(),
             half_edge_split_map: AHashMap::new(),
-        }
-    }
-
-    pub fn position_to_hash_key(&self, pos: &Point<T, N>) -> (i64, i64, i64) {
-        // Cell size tied to merge threshold keeps hashing consistent with equality.
-        let cell_approx: CgarF64 = T::point_merge_threshold().ref_into(); // cheap approx
-        let cell = cell_approx.0;
-        let inv = if cell.is_finite() && cell > 0.0 { 1.0 / cell } else { 1.0e5 };
-
-        #[inline(always)]
-        fn floor_i64(x: f64) -> i64 {
-            let xf = x.floor();
-            if xf >= i64::MAX as f64 { i64::MAX }
-            else if xf <= i64::MIN as f64 { i64::MIN }
-            else { xf as i64 }
-        }
-
-        // Support any N; unused axes map to 0.
-        let get = |i: usize| -> f64 {
-            if i < N {
-                let ai: CgarF64 = (&pos[i]).ref_into(); // cheap approx, no exact
-                ai.0
-            } else {
-                0.0
-            }
+            cell: 0.0,
+            hash_inv: 0.0,
         };
 
-        let x = floor_i64(get(0) * inv);
-        let y = floor_i64(get(1) * inv);
-        let z = floor_i64(get(2) * inv);
-        (x, y, z)
+        s.with_default_hash()
     }
 
     pub fn build_boundary_map(
@@ -433,10 +407,10 @@ impl_mesh! {
         let initial_count = self.vertices.len();
 
         // Build spatial hash for efficient duplicate detection
-        let mut spatial_groups: AHashMap<(i64, i64, i64), Vec<usize>> = AHashMap::new();
+        let mut spatial_groups: AHashMap<u128, Bucket> = AHashMap::new();
 
         for (vertex_idx, vertex) in self.vertices.iter().enumerate() {
-            let hash_key = self.position_to_hash_key(&vertex.position);
+            let hash_key = self.position_to_packed_key(&vertex.position);
             spatial_groups.entry(hash_key).or_default().push(vertex_idx);
         }
 
@@ -535,9 +509,9 @@ impl_mesh! {
         }
 
         // Rebuild spatial hash with new vertex indices
-        let mut new_spatial_hash: AHashMap<(i64, i64, i64), Vec<usize>> = AHashMap::new();
+        let mut new_spatial_hash: AHashMap<u128, Bucket> = AHashMap::new();
         for (vertex_idx, vertex) in new_vertices.iter().enumerate() {
-            let hash_key = self.position_to_hash_key(&vertex.position);
+            let hash_key = self.position_to_packed_key(&vertex.position);
             new_spatial_hash
                 .entry(hash_key)
                 .or_default()
@@ -681,12 +655,11 @@ impl_mesh! {
         compute_triangle_aabb(p0, p1, p2)
     }
 
-    fn get_or_insert_vertex(&mut self, pos: &Point<T, N>) -> (usize, bool) {
-        // Center cell
-        let (kx, ky, kz) = self.position_to_hash_key(pos);
+    pub fn get_or_insert_vertex(&mut self, pos: &Point<T, N>) -> (usize, bool) {
+        let center_key = self.position_to_packed_key(pos);
 
-        // 1) Check center cell first (fast path).
-        if let Some(bucket) = self.vertex_spatial_hash.get(&(kx, ky, kz)) {
+        // center cell first
+        if let Some(bucket) = self.vertex_spatial_hash.get(&center_key) {
             for &vi in bucket {
                 if kernel::are_equal(&self.vertices[vi].position, pos) {
                     return (vi, true);
@@ -694,28 +667,48 @@ impl_mesh! {
             }
         }
 
-        // 2) Probe 26 neighboring cells to catch cross-cell near-equals.
-        // Offsets are small fixed triplets; iterate deterministically.
-        for dx in -1i64..=1 {
-            for dy in -1i64..=1 {
-                for dz in -1i64..=1 {
-                    if dx == 0 && dy == 0 && dz == 0 { continue; }
-                    let key = (kx + dx, ky + dy, kz + dz);
-                    if let Some(bucket) = self.vertex_spatial_hash.get(&key) {
-                        for &vi in bucket {
-                            if kernel::are_equal(&self.vertices[vi].position, pos) {
-                                return (vi, true);
+        // 26 neighbors
+        const OFFS: [(i64,i64,i64); 26] = {
+            const fn r#gen() -> [(i64,i64,i64); 26] {
+                let mut arr = [(0,0,0); 26];
+                let mut i = 0;
+                let mut dx = -1;
+                while dx <= 1 {
+                    let mut dy = -1;
+                    while dy <= 1 {
+                        let mut dz = -1;
+                        while dz <= 1 {
+                            if !(dx == 0 && dy == 0 && dz == 0) {
+                                arr[i] = (dx,dy,dz);
+                                i += 1;
                             }
+                            dz += 1;
                         }
+                        dy += 1;
+                    }
+                    dx += 1;
+                }
+                arr
+            }
+            r#gen()
+        };
+
+        let (kx, ky, kz) = self.position_to_hash_key(pos);
+        for (dx,dy,dz) in OFFS {
+            let key = Self::pack_key3(kx + dx, ky + dy, kz + dz);
+            if let Some(bucket) = self.vertex_spatial_hash.get(&key) {
+                for &vi in bucket {
+                    if kernel::are_equal(&self.vertices[vi].position, pos) {
+                        return (vi, true);
                     }
                 }
             }
         }
 
-        // 3) Insert new vertex into the center cell.
+        // insert
         let idx = self.vertices.len();
         self.vertices.push(Vertex::new(pos.clone()));
-        self.vertex_spatial_hash.entry((kx, ky, kz)).or_default().push(idx);
+        self.vertex_spatial_hash.entry(center_key).or_default().push(idx);
         (idx, false)
     }
 
@@ -723,7 +716,7 @@ impl_mesh! {
         let idx = self.vertices.len();
         self.vertices.push(Vertex::new(position));
 
-        let key = self.position_to_hash_key(&self.vertices[idx].position);
+        let key = self.position_to_packed_key(&self.vertices[idx].position);
         self.vertex_spatial_hash.entry(key).or_default().push(idx);
 
         idx
@@ -1164,7 +1157,7 @@ impl_mesh! {
             panic!("Cannot find or insert vertex on a removed face");
         }
 
-        let he_ab = self.find_valid_half_edge(self.faces[face].half_edge, &p);
+        let he_ab = self.faces[face].half_edge;
         let he_bc = self.half_edges[he_ab].next;
         let he_ca = self.half_edges[he_bc].next;
 
