@@ -229,7 +229,7 @@ impl_mesh! {
     /// Adds a triangle face given three vertex indices (in CCW order).
     /// Border (outside) half-edges have `face = None` instead of pointing to a ghost/null face.
     /// Returns the index of the newly created face.
-    pub fn add_triangle(&mut self, v0: usize, v1: usize, v2: usize) -> usize {
+    pub fn add_triangle_old(&mut self, v0: usize, v1: usize, v2: usize) -> usize {
         // CCW triangle directed edges
         let edge_vertices = [(v0, v1), (v1, v2), (v2, v0)];
 
@@ -364,6 +364,237 @@ impl_mesh! {
         face_idx
     }
 
+    /// Atomic add of a CCW triangle (v0, v1, v2).
+    /// On return, the mesh has **no cracks**: border half-edges form proper cycles, no self-loops.
+    pub fn add_triangle(&mut self, v0: usize, v1: usize, v2: usize) -> usize {
+        #[inline(always)]
+        fn dir_is_free<TS: Scalar, const M: usize>(
+            this: &Mesh<TS, M>, from: usize, to: usize
+        ) -> bool {
+            if let Some(&h) = this.edge_map.get(&(from, to)) {
+                !this.half_edges[h].removed && this.half_edges[h].face.is_none()
+            } else {
+                true
+            }
+        }
+
+        /// Remove BORDER half-edge `b` from its border ring by stitching neighbors.
+        #[inline(always)]
+        fn unlink_border<TS: Scalar, const M: usize>(
+            this: &mut Mesh<TS, M>, b: usize
+        ) {
+            debug_assert!(b != usize::MAX);
+            debug_assert!(this.half_edges[b].face.is_none() && !this.half_edges[b].removed);
+            let p = this.half_edges[b].prev;
+            let n = this.half_edges[b].next;
+            if p != b && n != b {
+                // neighbors are border spokes as well
+                this.half_edges[p].next = n;
+                this.half_edges[n].prev = p;
+            }
+            // caller will overwrite b.{next,prev} when repurposing
+        }
+
+        /// Ensure (from->to) exists as **INTERIOR** for `face_idx`.
+        /// If it existed as BORDER, unlink then promote.
+        /// Returns (interior_idx, twin_idx, created_new_border_twin).
+        #[inline(always)]
+        fn ensure_dir<TS: Scalar, const M: usize>(
+            this: &mut Mesh<TS, M>, face_idx: usize, from: usize, to: usize
+        ) -> (usize, usize, bool) {
+            if let Some(&he) = this.edge_map.get(&(from, to)) {
+                // existed; must be free on this side (border)
+                debug_assert!(this.half_edges[he].face.is_none());
+                unlink_border::<TS, M>(this, he);
+                this.half_edges[he].face = Some(face_idx); // promote to interior
+                let t = this.half_edges[he].twin;
+                if t != usize::MAX { this.half_edges[t].twin = he; }
+                (he, t, false)
+            } else {
+                // create interior
+                let he = this.half_edges.len();
+                let mut h = HalfEdge::new(to);
+                h.face = Some(face_idx);
+                this.half_edges.push(h);
+                this.edge_map.insert((from, to), he);
+
+                // link/create twin
+                if let Some(&rev) = this.edge_map.get(&(to, from)) {
+                    this.half_edges[he].twin = rev;
+                    this.half_edges[rev].twin = he;
+                    (he, rev, false)
+                } else {
+                    // create a NEW border twin (to->from); we’ll rewire its component later
+                    let b = this.half_edges.len();
+                    let mut bh = HalfEdge::new(from);
+                    bh.twin = he;
+                    bh.next = b; // temporary
+                    bh.prev = b;
+                    // face=None (border)
+                    this.half_edges.push(bh);
+                    this.edge_map.insert((to, from), b);
+                    this.half_edges[he].twin = b;
+                    (he, b, true)
+                }
+            }
+        }
+
+        /// rotate around the **head** of interior half-edge `k`:
+        /// next interior ending at that head is `prev(twin(k))`.
+        #[inline(always)]
+        fn rotate_around_head<TS: Scalar, const M: usize>(
+            this: &Mesh<TS, M>, k: usize
+        ) -> usize {
+            let tk = this.half_edges[k].twin;
+            debug_assert!(tk != usize::MAX);
+            this.half_edges[tk].prev
+        }
+
+        /// Given a BORDER `b`, return the **next BORDER** in CCW order around the *outside face*.
+        /// We start from an interior with head==head(b) and rotate until we hit a border spoke.
+        #[inline(always)]
+        fn find_next_border<TS: Scalar, const M: usize>(
+            this: &Mesh<TS, M>, b: usize
+        ) -> usize {
+            debug_assert!(this.half_edges[b].face.is_none());
+            let t = this.half_edges[b].twin; // interior across b
+            debug_assert!(t != usize::MAX && this.half_edges[t].face.is_some());
+
+            let mut k = this.half_edges[t].prev; // interior with HEAD == head(b)
+            let start_k = k;
+            let limit = this.half_edges.len().saturating_add(64);
+            let mut steps = 0usize;
+
+            loop {
+                let cand = this.half_edges[k].twin; // spoke leaving head(b)
+                if cand != usize::MAX &&
+                   !this.half_edges[cand].removed &&
+                   this.half_edges[cand].face.is_none() &&
+                   cand != b {
+                    return cand; // next border around outside
+                }
+                k = rotate_around_head::<TS, M>(this, k);
+                steps += 1;
+                if k == start_k || steps > limit { break; }
+            }
+            usize::MAX // would indicate a crack; atomic add should avoid this
+        }
+
+        /// Rebuild the **single border component** that contains `start_b` (two-phase: collect then write).
+        #[inline(always)]
+        fn rebuild_border_component_from<TS: Scalar, const M: usize>(
+            this: &mut Mesh<TS, M>, start_b: usize, visited: &mut Vec<bool>
+        ) {
+            if start_b == usize::MAX { return; }
+            if this.half_edges[start_b].removed || this.half_edges[start_b].face.is_some() { return; }
+
+            // Phase 1: collect the ring without writing anything
+            let mut ring: Vec<usize> = Vec::with_capacity(16);
+            let mut cur = start_b;
+            let limit = this.half_edges.len().saturating_add(64);
+            let mut steps = 0usize;
+
+            while !visited[cur] {
+                visited[cur] = true;
+                ring.push(cur);
+                let nb = find_next_border::<TS, M>(this, cur);
+                assert!(nb != usize::MAX,
+                    "atomic add_triangle: border crack at vertex {} (no next border for {})",
+                    this.half_edges[cur].vertex, cur);
+                cur = nb;
+                steps += 1;
+                if cur == start_b || steps > limit { break; }
+            }
+
+            // Phase 2: write next/prev for the ring (reciprocal by construction)
+            let n = ring.len();
+            if n == 0 { return; }
+            for i in 0..n {
+                let b  = ring[i];
+                let nb = ring[(i + 1) % n];
+                let pb = ring[(i + n - 1) % n];
+                this.half_edges[b].next = nb;
+                this.half_edges[b].prev = pb;
+            }
+        }
+
+        // ---------- choose feasible orientation (auto-flip if needed) ----------
+        let ccw_ok = dir_is_free::<T, N>(self, v0, v1)
+                  && dir_is_free::<T, N>(self, v1, v2)
+                  && dir_is_free::<T, N>(self, v2, v0);
+        let cw_ok  = dir_is_free::<T, N>(self, v0, v2)
+                  && dir_is_free::<T, N>(self, v2, v1)
+                  && dir_is_free::<T, N>(self, v1, v0);
+
+        let (edges, verts) = if ccw_ok {
+            ([(v0, v1), (v1, v2), (v2, v0)], [v0, v1, v2])
+        } else if cw_ok {
+            ([(v0, v2), (v2, v1), (v1, v0)], [v0, v2, v1]) // auto-flip to feasible directed cycle
+        } else {
+            panic!("add_triangle: neither CCW nor CW directed sides are free (non-manifold/winding).");
+        };
+
+        // Fail fast if any selected directed edge already has a face on this side.
+        for &(from, to) in &edges {
+            if let Some(&h) = self.edge_map.get(&(from, to)) {
+                assert!(self.half_edges[h].face.is_none(),
+                        "selected orientation would reuse directed edge ({},{}) already bound to a face",
+                        from, to);
+            }
+        }
+
+        // ---------- create face & three directed edges ----------
+        let face_idx = self.faces.len();
+        self.faces.push(Face::new(0));
+
+        let (e0, t0, n0) = ensure_dir::<T, N>(self, face_idx, edges[0].0, edges[0].1);
+        let (e1, t1, n1) = ensure_dir::<T, N>(self, face_idx, edges[1].0, edges[1].1);
+        let (e2, t2, n2) = ensure_dir::<T, N>(self, face_idx, edges[2].0, edges[2].1);
+
+        // Interior CCW ring (of chosen orientation)
+        self.half_edges[e0].next = e1; self.half_edges[e1].prev = e0;
+        self.half_edges[e1].next = e2; self.half_edges[e2].prev = e1;
+        self.half_edges[e2].next = e0; self.half_edges[e0].prev = e2;
+
+        // ---------- weld ONLY the border components that changed ----------
+        // Start points are the **newly created** border twins.
+        let mut starts: [usize; 3] = [usize::MAX, usize::MAX, usize::MAX];
+        let mut m = 0usize;
+        if n0 { starts[m] = self.half_edges[e0].twin; m += 1; }
+        if n1 { starts[m] = self.half_edges[e1].twin; m += 1; }
+        if n2 { starts[m] = self.half_edges[e2].twin; m += 1; }
+
+        if m > 0 {
+            let mut visited = vec![false; self.half_edges.len()];
+            // de-dup starts that may lie on the same component
+            for s in 0..m {
+                let b = starts[s];
+                if b != usize::MAX && !visited[b] && self.half_edges[b].face.is_none() && !self.half_edges[b].removed {
+                    rebuild_border_component_from::<T, N>(self, b, &mut visited);
+                }
+            }
+        }
+        // (If no new borders were created, unlink_border() kept existing components valid.)
+
+        // ---------- finalize ----------
+        self.faces[face_idx].half_edge = e0;
+        self.vertices[verts[0]].half_edge.get_or_insert(e0);
+        self.vertices[verts[1]].half_edge.get_or_insert(e1);
+        self.vertices[verts[2]].half_edge.get_or_insert(e2);
+
+        // Strong local postcondition on touched borders: no self-loops among starts
+        #[cfg(debug_assertions)]
+        for &b in &starts {
+            if b != usize::MAX && b < self.half_edges.len() {
+                if !self.half_edges[b].removed && self.half_edges[b].face.is_none() {
+                    debug_assert!(self.half_edges[b].next != b && self.half_edges[b].prev != b,
+                                  "border self-loop at he {}", b);
+                }
+            }
+        }
+
+        face_idx
+    }
 
     pub fn remove_invalidated_faces(&mut self) {
         // Filter out invalidated faces
