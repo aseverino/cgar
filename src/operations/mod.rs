@@ -22,6 +22,7 @@
 
 pub mod abs;
 pub mod one;
+pub mod triangulation;
 pub mod zero;
 
 pub use abs::Abs;

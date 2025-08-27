@@ -28,15 +28,16 @@ pub mod half_edge;
 pub mod intersection_segment;
 pub mod spatial_hash;
 pub mod topology;
+pub mod triangle;
 pub mod vertex;
 
 #[macro_export]
 macro_rules! impl_mesh {
     ($($items:item)*) => {
-        impl<T: Scalar, const N: usize> Mesh<T, N>
+        impl<T: crate::numeric::scalar::Scalar, const N: usize> crate::mesh::basic_types::Mesh<T, N>
         where
-            Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-            Vector<T, N>: VectorOps<T, N>,
+            crate::geometry::point::Point<T, N>: crate::geometry::point::PointOps<T, N, Vector = crate::geometry::vector::Vector<T, N>>,
+            crate::geometry::vector::Vector<T, N>: crate::geometry::vector::VectorOps<T, N>,
             for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
                 + std::ops::Mul<&'a T, Output = T>
                 + std::ops::Add<&'a T, Output = T>

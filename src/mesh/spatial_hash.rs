@@ -44,7 +44,7 @@ impl_mesh! {
     }
 
     #[inline(always)]
-    fn pack_key3(kx: i64, ky: i64, kz: i64) -> u128 {
+    pub fn pack_key3(kx: i64, ky: i64, kz: i64) -> u128 {
         // 3 × 42-bit signed lanes into 126 bits (fits typical ranges).
         let mask = (1u128 << 42) - 1;
         let ux = (kx as i128 as u128) & mask;
