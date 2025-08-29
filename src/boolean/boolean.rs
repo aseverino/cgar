@@ -1162,31 +1162,6 @@ where
             seg.links.extend_from_slice(&links);
         }
 
-        // === COPLANAR SEGMENTS: Build links within each group ===
-        // for group in coplanar_groups.values_mut() {
-        //     let pairs: Vec<[usize; 2]> = group
-        //         .iter()
-        //         .map(|seg| seg.resulting_vertices_pair)
-        //         .collect();
-
-        //     for (i, seg) in group.iter_mut().enumerate() {
-        //         let [v0, v1] = pairs[i];
-        //         let mut links: Vec<usize> = pairs
-        //             .iter()
-        //             .enumerate()
-        //             .filter_map(|(j, &[ov0, ov1])| {
-        //                 if j != i && (ov0 == v0 || ov1 == v0 || ov0 == v1 || ov1 == v1) {
-        //                     Some(j)
-        //                 } else {
-        //                     None
-        //                 }
-        //             })
-        //             .collect();
-        //         links.sort_unstable();
-        //         seg.links.extend_from_slice(&links);
-        //     }
-        // }
-
         let mut triangles_per_group: Vec<CoplanarTriangle> = Vec::new();
         for (_plane, group) in &coplanar_groups {
             if group.len() >= 3 {
