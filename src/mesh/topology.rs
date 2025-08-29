@@ -2060,6 +2060,23 @@ impl_mesh! {
             .unwrap_or(usize::MAX)
     }
 
+    pub fn vertex_touches_face(&self, v: usize, face_id: usize) -> bool {
+        if v >= self.vertices.len() { return false; }
+        // follow outgoing ring
+        if let Some(mut h) = self.vertices[v].half_edge {
+            let start = h;
+            loop {
+                let he = &self.half_edges[h];
+                if he.face == Some(face_id) { return true; }
+                h = he.twin;
+                if h == usize::MAX { break; }
+                h = self.half_edges[h].next;
+                if h == start { break; }
+            }
+        }
+        false
+    }
+
     pub fn validate_connectivity(&self) {
         // For every half-edge, check next/prev/twin consistency:
         for (i, he) in self.half_edges.iter().enumerate() {
