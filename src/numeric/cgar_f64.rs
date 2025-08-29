@@ -29,7 +29,7 @@ use crate::{
         lazy_exact::LazyExact,
         scalar::{FromRef, RefInto, Scalar},
     },
-    operations::{Abs, One},
+    operations::{Abs, One, Zero},
 };
 
 use std::{
@@ -80,6 +80,17 @@ impl Scalar for CgarF64 {
     fn point_merge_threshold_squared() -> Self {
         let tol = Self::point_merge_threshold();
         CgarF64(tol.0 * tol.0)
+    }
+
+    /// Returns -1, 0, or +1.
+    fn sign(&self) -> i8 {
+        if self.is_positive() {
+            1
+        } else if self.is_negative() {
+            -1
+        } else {
+            0
+        }
     }
 
     fn approx_eq(&self, other: &Self) -> bool {

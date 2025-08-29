@@ -81,6 +81,8 @@ pub trait Scalar:
         if self > other { self } else { other }
     }
 
+    fn sign(&self) -> i8;
+
     fn default() -> Self {
         Self::from(0)
     }

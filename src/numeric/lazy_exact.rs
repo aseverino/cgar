@@ -98,6 +98,26 @@ impl Scalar for LazyExact {
         t.clone() * t
     }
 
+    /// Sign with lazy exact fallback:
+    /// - If |approx| > query_tolerance: use sign(approx)
+    /// - else compute exact and use sign(exact)
+    /// Returns -1, 0, or +1.
+    fn sign(&self) -> i8 {
+        let b = self.ball_ref();
+        if let Some(s) = b.sign_if_certain() {
+            return s; // decided in double with a sound, expression-specific bound
+        }
+        // Uncertain -> exact
+        let e = self.exact();
+        if e.is_zero() {
+            0
+        } else if e.is_positive() {
+            1
+        } else {
+            -1
+        }
+    }
+
     // approximate equality:
     // - fast path: |approx(self - other)| <= query_tolerance
     // - else: exact equality
@@ -472,26 +492,6 @@ impl LazyExact {
         };
         let _ = self.0.exact.set(v.clone());
         v
-    }
-
-    /// Sign with lazy exact fallback:
-    /// - If |approx| > query_tolerance: use sign(approx)
-    /// - else compute exact and use sign(exact)
-    /// Returns -1, 0, or +1.
-    pub fn sign(&self) -> i8 {
-        let b = self.ball_ref();
-        if let Some(s) = b.sign_if_certain() {
-            return s; // decided in double with a sound, expression-specific bound
-        }
-        // Uncertain -> exact
-        let e = self.exact();
-        if e.is_zero() {
-            0
-        } else if e.is_positive() {
-            1
-        } else {
-            -1
-        }
     }
 
     pub fn is_zero(&self) -> bool {

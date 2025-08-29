@@ -83,6 +83,17 @@ impl Scalar for CgarRational {
         &tol * &tol
     }
 
+    /// Returns -1, 0, or +1.
+    fn sign(&self) -> i8 {
+        if self.0.is_positive() {
+            1
+        } else if self.0.is_negative() {
+            -1
+        } else {
+            0
+        }
+    }
+
     fn approx_eq(&self, other: &Self) -> bool {
         // For rational numbers, we can use exact equality
         self.0 == other.0
