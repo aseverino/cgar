@@ -31,8 +31,9 @@ pub struct IntersectionEndPoint<T: Scalar, const N: usize> {
     pub vertex_hint: Option<[usize; 2]>,
     pub half_edge_hint: Option<usize>,
     pub half_edge_u_hint: Option<T>,
-    pub face_hint: Option<usize>, // only if interior
+    pub faces_hint: Option<[usize; 2]>,
     pub barycentric_hint: Option<(T, T, T)>,
+    pub resulting_vertex: Option<usize>,
 }
 
 impl<T: Scalar, const N: usize> IntersectionEndPoint<T, N> {
@@ -41,16 +42,18 @@ impl<T: Scalar, const N: usize> IntersectionEndPoint<T, N> {
         vertex_hint: Option<[usize; 2]>,
         half_edge_hint: Option<usize>,
         half_edge_u_hint: Option<T>,
-        face_hint: Option<usize>,
+        faces_hint: Option<[usize; 2]>,
         barycentric_hint: Option<(T, T, T)>,
+        resulting_vertex: Option<usize>,
     ) -> Self {
         Self {
             // point,
             vertex_hint,
             half_edge_hint,
             half_edge_u_hint,
-            face_hint: face_hint,
+            faces_hint: faces_hint,
             barycentric_hint,
+            resulting_vertex,
         }
     }
     pub fn new_default() -> Self {
@@ -59,8 +62,9 @@ impl<T: Scalar, const N: usize> IntersectionEndPoint<T, N> {
             vertex_hint: None,
             half_edge_hint: None,
             half_edge_u_hint: None,
-            face_hint: None,
+            faces_hint: None,
             barycentric_hint: None,
+            resulting_vertex: None,
         }
     }
 }
@@ -77,7 +81,6 @@ pub struct IntersectionSegment<T: Scalar, const N: usize> {
     pub b: IntersectionEndPoint<T, N>,
     pub segment: Segment<T, N>,
     pub initial_face_reference: usize,
-    pub resulting_vertices_pair: [usize; 2],
     pub links: SmallVec<[usize; 2]>,
     pub coplanar: bool,
     pub invalidated: bool,
@@ -114,7 +117,6 @@ impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
         b: IntersectionEndPoint<T, N>,
         segment: &Segment<T, N>,
         initial_face_reference: usize,
-        resulting_vertices_pair: [usize; 2],
         coplanar: bool,
     ) -> Self {
         Self {
@@ -122,7 +124,6 @@ impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
             b: b,
             segment: segment.clone(),
             initial_face_reference,
-            resulting_vertices_pair,
             links: SmallVec::new(),
             coplanar,
             invalidated: false,
@@ -135,14 +136,7 @@ impl<T: Scalar, const N: usize> IntersectionSegment<T, N> {
         segment: &Segment<T, N>,
         initial_face_reference: usize,
     ) -> Self {
-        Self::new(
-            a,
-            b,
-            segment,
-            initial_face_reference,
-            [usize::MAX, usize::MAX],
-            false,
-        )
+        Self::new(a, b, segment, initial_face_reference, false)
     }
 }
 

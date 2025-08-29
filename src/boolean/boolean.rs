@@ -85,27 +85,14 @@ fn point_key<T: Scalar, const N: usize>(p: &Point<T, N>) -> ApproxPointKey {
 
 #[derive(Debug, Clone, Copy)]
 pub struct EndPointHandle {
-    segment_idx: usize,
-    endpoint_idx: usize, // 0 or 1
+    pub segment_idx: usize,
+    pub endpoint_idx: usize, // 0 or 1
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SplitType {
     Edge,
     Face,
-}
-
-pub struct Splits<T: Scalar, const N: usize> {
-    pub splits:
-        AHashMap<ApproxPointKey, (Point<T, N>, SplitType, usize, SmallVec<[EndPointHandle; 2]>)>,
-}
-
-impl<T: Scalar, const N: usize> Splits<T, N> {
-    pub fn new() -> Self {
-        Self {
-            splits: AHashMap::new(),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -193,8 +180,8 @@ where
                 let he = self
                     .edge_map
                     .get(&(
-                        seg.resulting_vertices_pair[0],
-                        seg.resulting_vertices_pair[1],
+                        seg.a.resulting_vertex.unwrap(),
+                        seg.b.resulting_vertex.unwrap(),
                     ))
                     .expect("Edge must exist in edge_map");
 

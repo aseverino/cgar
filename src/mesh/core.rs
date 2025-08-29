@@ -79,8 +79,8 @@ impl_mesh! {
             let he = self
                 .edge_map
                 .get(&(
-                    seg.resulting_vertices_pair[0],
-                    seg.resulting_vertices_pair[1],
+                    seg[0].resulting_vertex.unwrap(),
+                    seg[1].resulting_vertex.unwrap(),
                 ))
                 .expect(&format!(
                     "Edge map must contain the segment vertices pair. Segment {}\n{:?}",
