@@ -30,7 +30,232 @@ use crate::{
     numeric::scalar::Scalar,
 };
 
+#[inline(always)]
+fn explain_edge_block<TS: Scalar, const M: usize>(
+    this: &Mesh<TS, M>,
+    from: usize,
+    to: usize,
+) -> String {
+    match this.edge_map.get(&(from, to)) {
+        None => "free (absent)".to_string(),
+        Some(&h) => {
+            if h >= this.half_edges.len() {
+                return format!("edge_map→{} (OOB)", h);
+            }
+            let he = &this.half_edges[h];
+            let kind = if he.removed {
+                "removed"
+            } else if he.face.is_none() {
+                "BORDER"
+            } else {
+                "INTERIOR"
+            };
+            let f = he.face.map(|x| x as isize).unwrap_or(-1);
+            let t = he.twin as isize;
+            let f_str = format!("{} h={} twin={} face={}", kind, h, t, f);
+            if let Some(f) = he.face {
+                if f < this.faces.len() && !this.faces[f].removed {
+                    let he0 = he;
+                    let he1 = &this.half_edges[he.next];
+                    let he2 = &this.half_edges[he1.next];
+                    let v0 = this.half_edges[he.twin].vertex;
+                    let v1 = he.vertex;
+                    let v2 = he1.vertex;
+                    let p0 = &this.vertices[v0].position;
+                    let p1 = &this.vertices[v1].position;
+                    let p2 = &this.vertices[v2].position;
+                    f_str
+                        + &format!(
+                            " verts=({},{},{}) pos=({:?},{:?},{:?})",
+                            v0, v1, v2, p0, p1, p2
+                        )
+                        .to_string()
+                } else {
+                    f_str.to_string()
+                }
+            } else {
+                f_str.to_string()
+            }
+        }
+    }
+}
+
 impl_mesh! {
+    /// Lightweight owner-safe map removal for (tail=head(twin), head=vertex)
+    #[inline(always)]
+    fn remove_map_entry_if_owner(&mut self, h: usize) {
+        if h >= self.half_edges.len() { return; }
+        let he = &self.half_edges[h];
+        let t = he.twin;
+        if t >= self.half_edges.len() { return; }
+        let u = self.half_edges[t].vertex; // tail(origin)
+        let v = he.vertex;                 // head
+        if let Some(&owner) = self.edge_map.get(&(u, v)) {
+            if owner == h { self.edge_map.remove(&(u, v)); }
+        }
+    }
+
+    /// Collect all border components reachable from `starts` in ONE pass.
+    /// This is your same algorithm, just seeded globally with a single `visited`.
+    pub fn weld_border_components_from(&mut self, starts: &[usize]) {
+        if starts.is_empty() { return; }
+        let mut visited = vec![false; self.half_edges.len()];
+        for &b in starts {
+            if b != usize::MAX
+                && b < self.half_edges.len()
+                && !self.half_edges[b].removed
+                && self.half_edges[b].face.is_none()
+                && !visited[b]
+            {
+                self.rebuild_border_component_from(b, &mut visited);
+            }
+        }
+    }
+
+    /// Phase 3 of your old `remove_triangle`, but batched over many vertices.
+    pub fn fix_vertices_outgoing_for(&mut self, verts: &[usize]) {
+        #[inline(always)]
+        fn is_live<TS: Scalar, const M: usize>(m: &Mesh<TS,M>, h: usize) -> bool {
+            h < m.half_edges.len() && !m.half_edges[h].removed
+        }
+        #[inline(always)]
+        fn is_outgoing_from<TS: Scalar, const M: usize>(m: &Mesh<TS,M>, h: usize, v: usize) -> bool {
+            is_live(m,h) && m.half_edges[m.half_edges[h].prev].vertex == v
+        }
+        #[inline(always)]
+        fn normalize_to_outgoing<TS: Scalar, const M: usize>(
+            m: &Mesh<TS,M>, h: usize, v: usize
+        ) -> Option<usize> {
+            if !is_live(m,h) { return None; }
+            if is_outgoing_from(m,h,v) { return Some(h); }
+            if m.half_edges[h].vertex == v {
+                let t = m.half_edges[h].twin;
+                if t < m.half_edges.len() && is_live(m,t) && is_outgoing_from(m,t,v) {
+                    return Some(t);
+                }
+            }
+            None
+        }
+        fn find_any_outgoing<TS: Scalar, const M: usize>(
+            m: &Mesh<TS,M>, v: usize
+        ) -> Option<usize> {
+            // Local walk from any spoke touching v (cheap global scan; this runs only for touched verts)
+            for h in 0..m.half_edges.len() {
+                if !is_live(m,h) { continue; }
+                if m.half_edges[h].vertex == v || m.half_edges[m.half_edges[h].twin].vertex == v {
+                    if let Some(hh) = normalize_to_outgoing(m,h,v) { return Some(hh); }
+                }
+            }
+            None
+        }
+
+        // De-dup input
+        use ahash::AHashSet;
+        let mut uniq: AHashSet<usize> = AHashSet::with_capacity(verts.len());
+        for &v in verts { uniq.insert(v); }
+
+        for v in uniq {
+            let needs = match self.vertices[v].half_edge {
+                Some(h) => !is_outgoing_from(self, h, v),
+                None => true,
+            };
+            if needs {
+                self.vertices[v].half_edge = find_any_outgoing(self, v);
+            }
+        }
+    }
+
+    /// NEW: remove many triangles but **defer** border stitching.
+    /// Returns (starts_for_weld, affected_vertices).
+    pub fn remove_triangles_deferred(&mut self, faces: &[usize]) -> (Vec<usize>, Vec<usize>) {
+        #[inline(always)]
+        fn is_live<TS: Scalar, const M: usize>(m: &Mesh<TS,M>, h: usize) -> bool {
+            h < m.half_edges.len() && !m.half_edges[h].removed
+        }
+        #[inline(always)]
+        fn key_pair<TS: Scalar, const M: usize>(m: &Mesh<TS, M>, h: usize) -> (usize, usize) {
+            let tail = m.half_edges[m.half_edges[h].twin].vertex;
+            let head = m.half_edges[h].vertex;
+            (tail, head)
+        }
+
+        let mut starts: Vec<usize> = Vec::with_capacity(faces.len() * 6);
+        let mut affected_vs: Vec<usize> = Vec::with_capacity(faces.len() * 3);
+
+        for &f in faces {
+            if f >= self.faces.len() || self.faces[f].removed { continue; }
+
+            // spokes of the face
+            let he0 = self.faces[f].half_edge;
+            let he1 = self.half_edges[he0].next;
+            let he2 = self.half_edges[he1].next;
+            let hes = [he0, he1, he2];
+
+            // capture tail vertices (origins) BEFORE mutation
+            affected_vs.push(self.half_edges[self.half_edges[he0].twin].vertex);
+            affected_vs.push(self.half_edges[self.half_edges[he1].twin].vertex);
+            affected_vs.push(self.half_edges[self.half_edges[he2].twin].vertex);
+
+            self.faces[f].removed = true;
+
+            for he in hes {
+                if !is_live(self, he) { continue; }
+                let twin = self.half_edges[he].twin;
+
+                let opp_alive = if let Some(adj_f) = self.half_edges[twin].face {
+                    !self.faces[adj_f].removed
+                } else {
+                    false
+                };
+
+                if opp_alive {
+                    // Case A: convert this INTERIOR→BORDER, make it a temp self-loop.
+                    self.half_edges[he].face = None;
+                    self.half_edges[he].next = he;
+                    self.half_edges[he].prev = he;
+                    self.half_edges[he].removed = false;
+
+                    // keep its (u,v) map as-is
+                    starts.push(he); // seed for welding later
+                } else {
+                    // Case B: delete BOTH spokes (no surviving opposite interior)
+                    if is_live(self, twin) {
+                        // If the opposite was border, DO NOT splice now. Just kill and drop map.
+                        self.remove_map_entry_if_owner(twin);
+                        self.half_edges[twin].removed = true;
+
+                        // Its neighbors will need welding later. Capture them as seeds if they exist.
+                        let bp = self.half_edges[twin].prev;
+                        let bn = self.half_edges[twin].next;
+                        if bp < self.half_edges.len() { starts.push(bp); }
+                        if bn < self.half_edges.len() { starts.push(bn); }
+                    }
+
+                    self.remove_map_entry_if_owner(he);
+                    self.half_edges[he].removed = true;
+                }
+            }
+
+            // Keep face handle pointing to any of its spokes; it's removed anyway.
+            self.faces[f].half_edge = he0;
+        }
+
+        // Debug: no removed spoke should still own its map entry
+        #[cfg(debug_assertions)]
+        {
+            for h in 0..self.half_edges.len() {
+                if self.half_edges[h].removed {
+                    let (u,v) = key_pair(self, h);
+                    if let Some(&owner) = self.edge_map.get(&(u,v)) {
+                        debug_assert_ne!(owner, h, "removed spoke {} still owns edge_map ({},{})", h, u, v);
+                    }
+                }
+            }
+        }
+
+        (starts, affected_vs)
+    }
+
     /// rotate around the **head** of interior half-edge `k`:
     /// next interior ending at that head is `prev(twin(k))`.
     #[inline(always)]
@@ -41,7 +266,6 @@ impl_mesh! {
         debug_assert!(tk != usize::MAX);
         self.half_edges[tk].prev
     }
-
     /// Given a BORDER `b`, return the **next BORDER** in CCW order around the *outside face*.
     /// We start from an interior with head==head(b) and rotate until we hit a border spoke.
     #[inline(always)]
@@ -460,7 +684,24 @@ impl_mesh! {
         } else if cw_ok {
             ([(v0, v2), (v2, v1), (v1, v0)], [v0, v2, v1]) // auto-flip to feasible directed cycle
         } else {
-            panic!("add_triangle: neither CCW nor CW directed sides are free (non-manifold/winding).");
+            eprintln!(
+        "add_triangle blocked for tri=({},{},{}):\n\
+         CCW edges: ({},{}): {}\n\
+         \t        ({},{}): {}\n\
+         \t        ({},{}): {}\n\
+         CW  edges: ({},{}): {}\n\
+         \t        ({},{}): {}\n\
+         \t        ({},{}): {}\n",
+        v0, v1, v2,
+        v0, v1, explain_edge_block(self, v0, v1),
+        v1, v2, explain_edge_block(self, v1, v2),
+        v2, v0, explain_edge_block(self, v2, v0),
+        v0, v2, explain_edge_block(self, v0, v2),
+        v2, v1, explain_edge_block(self, v2, v1),
+        v1, v0, explain_edge_block(self, v1, v0),
+    );
+            //panic!("add_triangle: neither CCW nor CW directed sides are free (non-manifold/winding).");
+            return usize::MAX;
         };
 
         // Fail fast if any selected directed edge already has a face on this side.
