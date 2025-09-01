@@ -20,8 +20,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::geometry::Point2;
 use crate::geometry::point::PointOps;
 use crate::geometry::segment::Segment;
+use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::vector::VectorOps;
 use crate::geometry::{point::Point, vector::Vector};
 use crate::numeric::cgar_f64::CgarF64;
@@ -358,4 +360,96 @@ where
     } else {
         panic!("point_in_or_on_triangle only supports N = 2 or N = 3");
     }
+}
+
+#[inline]
+pub fn orient2d<T: Scalar>(a: &Point2<T>, b: &Point2<T>, c: &Point2<T>) -> T
+where
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    // det | b-a, c-a |
+    let det = (&b[0] - &a[0]) * (&c[1] - &a[1]) - (&b[1] - &a[1]) * (&c[0] - &a[0]);
+    // light guard
+    let eps = (b[0].abs() + b[1].abs() + c[0].abs() + c[1].abs() + a[0].abs() + a[1].abs())
+        * T::from(1e-15);
+    if det.abs() <= eps { T::zero() } else { det }
+}
+
+#[inline]
+pub fn incircle<T: Scalar>(a: &Point2<T>, b: &Point2<T>, c: &Point2<T>, d: &Point2<T>) -> T
+where
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    // Compute with standard determinant expansion; apply light scaling guard.
+    // (Assumes abc CCW. If not, caller should flip sign or reorder.)
+    let ax = &a[0] - &d[0];
+    let ay = &a[1] - &d[1];
+    let a2 = &ax * &ax + &ay * &ay;
+    let bx = &b[0] - &d[0];
+    let by = &b[1] - &d[1];
+    let b2 = &bx * &bx + &by * &by;
+    let cx = &c[0] - &d[0];
+    let cy = &c[1] - &d[1];
+    let c2 = &cx * &cx + &cy * &cy;
+
+    let det = &ax * &(&(&by * &c2) - &(&b2 * &cy)) - &ay * &(&(&bx * &c2) - &(&b2 * &cx))
+        + &a2 * &(&(&bx * &cy) - &(&by * &cx));
+
+    let scale =
+        (&ax.abs() + &ay.abs() + bx.abs() + by.abs() + cx.abs() + cy.abs()).max(T::from(1.0));
+    let eps = &scale * &scale * T::from(1e-14);
+    if det.abs() <= eps { T::zero() } else { det }
+}
+
+#[inline]
+pub fn bbox<T: Scalar>(pts: &[Point2<T>]) -> (T, T, T, T)
+where
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    let mut minx = &pts[0][0];
+    let mut miny = &pts[0][1];
+    let mut maxx = &pts[0][0];
+    let mut maxy = &pts[0][1];
+    for p in &pts[1..] {
+        if (&p[0] - &minx).is_negative() {
+            minx = &p[0];
+        }
+        if (&p[1] - &miny).is_negative() {
+            miny = &p[1];
+        }
+        if (&p[0] - &maxx).is_positive() {
+            maxx = &p[0];
+        }
+        if (&p[1] - maxy).is_positive() {
+            maxy = &p[1];
+        }
+    }
+    (minx.clone(), miny.clone(), maxx.clone(), maxy.clone())
+}
+
+#[inline]
+pub fn centroid2<T: Scalar>(a: &Point2<T>, b: &Point2<T>) -> Point2<T>
+where
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    Point::<T, 2>::from_vals([
+        T::from_num_den(1, 2) * (&a[0] + &b[0]),
+        T::from_num_den(1, 2) * (&a[1] + &b[1]),
+    ])
 }
