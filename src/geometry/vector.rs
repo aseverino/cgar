@@ -44,6 +44,7 @@ where
     fn axpy(&mut self, a: &T, x: &Self);
     fn any_perpendicular(&self) -> Vector<T, N>;
     fn norm2(&self) -> T;
+    fn lerp(&self, with: &Self, u: &T) -> Self;
 }
 
 #[derive(Clone, Debug)]
@@ -192,6 +193,10 @@ where
     fn norm2(&self) -> T {
         self[0].clone() * self[0].clone() + self[1].clone() * self[1].clone()
     }
+
+    fn lerp(&self, _with: &Self, _u: &T) -> Self {
+        unimplemented!()
+    }
 }
 
 impl<T> VectorOps<T, 3> for Vector<T, 3>
@@ -245,6 +250,14 @@ where
         self[0].clone() * self[0].clone()
             + self[1].clone() * self[1].clone()
             + self[2].clone() * self[2].clone()
+    }
+
+    fn lerp(&self, with: &Self, u: &T) -> Self {
+        // (1 - u) * p0 + u * p1
+        let one = T::one();
+        let w0 = &one - u;
+        let w1 = u.clone();
+        &self.scale(&w0) + &with.scale(&w1)
     }
 }
 

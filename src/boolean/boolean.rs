@@ -33,6 +33,11 @@ use smallvec::*;
 use std::collections::hash_map::Entry;
 
 use crate::{
+    boolean::batching::{
+        allocate_vertices_for_splits_no_topology, build_face_pslgs, compact_jobs_for_delaunay,
+        dump_job_debug, print_face_job_and_dt, rewrite_faces_from_cdt_batch, validate_jobs_cdts,
+        weld_vertices,
+    },
     geometry::{
         Aabb, AabbTree,
         plane::Plane,
@@ -55,16 +60,17 @@ use crate::{
         topology::{FindFaceResult, VertexRayResult},
     },
     numeric::{cgar_f64::CgarF64, scalar::Scalar},
+    operations::triangulation::delaunay::{Delaunay, triangles_inside_for_job},
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ApproxPointKey {
     qx: i64,
     qy: i64,
     qz: i64, // use only N you need
 }
 
-fn point_key<T: Scalar, const N: usize>(p: &Point<T, N>) -> ApproxPointKey {
+pub fn point_key<T: Scalar, const N: usize>(p: &Point<T, N>) -> ApproxPointKey {
     let tol = T::point_merge_threshold();
 
     let tol_approx: CgarF64 = (&tol).ref_into();
@@ -257,369 +263,6 @@ where
         inside
     }
 
-    fn create_intersection_segment(
-        mesh: &Mesh<T, N>,
-        splits: &mut Splits<T, N>,
-        container: &mut Vec<IntersectionSegment<T, N>>,
-        segment: &Segment<T, N>,
-        main_face: usize,
-        coplanar: bool,
-        skip_endpoint_b: bool,
-    ) {
-        // Reserve slot
-        let seg_idx = container.len();
-        container.push(IntersectionSegment::new(
-            IntersectionEndPoint::new_default(),
-            IntersectionEndPoint::new_default(),
-            &segment,
-            main_face,
-            [usize::MAX, usize::MAX],
-            coplanar,
-        ));
-
-        #[inline(always)]
-        fn he_for_face_edge<T: Scalar, const N: usize>(
-            mesh: &Mesh<T, N>,
-            face: usize,
-            u: usize,
-            v: usize,
-        ) -> usize {
-            if let Some(&he) = mesh.edge_map.get(&(u, v)) {
-                if mesh.half_edges[he].face == Some(face) {
-                    return he;
-                }
-                let twin = mesh.half_edges[he].twin;
-                if mesh.half_edges[twin].face == Some(face) {
-                    return twin;
-                }
-            }
-            if let Some(&he) = mesh.edge_map.get(&(v, u)) {
-                if mesh.half_edges[he].face == Some(face) {
-                    return he;
-                }
-                let twin = mesh.half_edges[he].twin;
-                if mesh.half_edges[twin].face == Some(face) {
-                    return twin;
-                }
-            }
-            panic!(
-                "Face edge half-edge not found for ({u},{v}) on face {face}\n{:?}\n{:?}",
-                mesh.vertices[u].position, mesh.vertices[v].position
-            );
-        }
-
-        // Precompute per-call constants/refs once
-        let tol = T::point_merge_threshold();
-        let tol2 = &tol * &tol;
-        let [ia, ib, ic] = mesh.face_vertices(main_face);
-        let pa = &mesh.vertices[ia].position;
-        let pb = &mesh.vertices[ib].position;
-        let pc = &mesh.vertices[ic].position;
-        let he_ab = he_for_face_edge(mesh, main_face, ia, ib);
-        let he_bc = he_for_face_edge(mesh, main_face, ib, ic);
-        let he_ca = he_for_face_edge(mesh, main_face, ic, ia);
-
-        // Precompute quantizer scale once
-        let scale: CgarF64 = (&tol).ref_into();
-        let q_scale = 1.0 / scale.0;
-
-        #[inline(always)]
-        fn attach_handle_or_classify<T: Scalar, const N: usize>(
-            mesh: &Mesh<T, N>,
-            splits: &mut Splits<T, N>,
-            container: &mut Vec<IntersectionSegment<T, N>>,
-            seg_idx: usize,
-            endpoint_idx: usize,
-            face: usize,
-            pa: &Point<T, N>,
-            pb: &Point<T, N>,
-            pc: &Point<T, N>,
-            ia: usize,
-            ib: usize,
-            ic: usize,
-            he_ab: usize,
-            he_bc: usize,
-            he_ca: usize,
-            tol: &T,
-            tol2: &T,
-            q_scale: f64,
-            pos: &Point<T, N>,
-        ) where
-            Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-            Vector<T, N>: VectorOps<T, N>,
-            for<'a> &'a T: Sub<&'a T, Output = T>
-                + Mul<&'a T, Output = T>
-                + Add<&'a T, Output = T>
-                + Div<&'a T, Output = T>
-                + Neg<Output = T>,
-        {
-            // Cache probe
-            let key_q = point_key(pos);
-            match splits.splits.entry(key_q) {
-                Entry::Occupied(mut occ) => {
-                    occ.get_mut().3.push(EndPointHandle {
-                        segment_idx: seg_idx,
-                        endpoint_idx,
-                    });
-                    return;
-                }
-                Entry::Vacant(_) => {}
-            }
-
-            // Vertex snaps (exact zero preferred to avoid LazyExact eval)
-            let da = (pos - pa).as_vector().dot(&(pos - pa).as_vector());
-            if da.is_zero() {
-                container[seg_idx][endpoint_idx].vertex_hint = Some([ia, usize::MAX]);
-                return;
-            }
-            let db = (pos - pb).as_vector().dot(&(pos - pb).as_vector());
-            if db.is_zero() {
-                container[seg_idx][endpoint_idx].vertex_hint = Some([ib, usize::MAX]);
-                return;
-            }
-            let dc = (pos - pc).as_vector().dot(&(pos - pc).as_vector());
-            if dc.is_zero() {
-                container[seg_idx][endpoint_idx].vertex_hint = Some([ic, usize::MAX]);
-                return;
-            }
-
-            #[inline(always)]
-            fn try_edge<T: Scalar, const N: usize>(
-                mesh: &Mesh<T, N>,
-                splits: &mut Splits<T, N>,
-                container: &mut Vec<IntersectionSegment<T, N>>,
-                seg_idx: usize,
-                endpoint_idx: usize,
-                face: usize,
-                pu_idx: usize,
-                pv_idx: usize,
-                he: usize,
-                p: &Point<T, N>,
-                tol: &T,
-                tol2: &T,
-                q_scale: f64,
-            ) -> bool
-            where
-                Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-                Vector<T, N>: VectorOps<T, N>,
-                for<'a> &'a T: Sub<&'a T, Output = T>
-                    + Mul<&'a T, Output = T>
-                    + Add<&'a T, Output = T>
-                    + Div<&'a T, Output = T>
-                    + Neg<Output = T>,
-            {
-                let pu = &mesh.vertices[pu_idx].position;
-                let pv = &mesh.vertices[pv_idx].position;
-                let uv = (pv - pu).as_vector();
-                let uv2 = uv.dot(&uv);
-                if uv2.is_zero() {
-                    return false;
-                }
-
-                let up = (p - pu).as_vector();
-                let t = &up.dot(&uv) / &uv2;
-
-                // Range check with tol slack
-                if (&t + tol).is_negative() || (&(&t - &T::one()) - tol).is_positive() {
-                    return false;
-                }
-
-                // Distance check
-                let closest = pu + &(uv.scale(&t)).0;
-                let diff = (p - &closest).as_vector();
-                let d2 = diff.dot(&diff);
-                if (&d2 - tol2).is_positive() {
-                    return false;
-                }
-
-                // Snap to endpoints if within tol
-                if (&t).is_zero() {
-                    container[seg_idx][endpoint_idx].vertex_hint = Some([pu_idx, usize::MAX]);
-                    return true;
-                }
-                if (&(&t - &T::one())).is_zero() {
-                    container[seg_idx][endpoint_idx].vertex_hint = Some([pv_idx, usize::MAX]);
-                    return true;
-                }
-
-                // Record edge split hints
-                container[seg_idx][endpoint_idx].vertex_hint = Some([
-                    mesh.half_edges[he].vertex,
-                    mesh.half_edges[mesh.half_edges[he].twin].vertex,
-                ]);
-                container[seg_idx][endpoint_idx].half_edge_hint = Some(he);
-                container[seg_idx][endpoint_idx].half_edge_u_hint = Some(t.clone());
-
-                // Quantize pu + uv*t without allocating a Point unless we insert
-                let to_i64 = |val: &T| -> i64 {
-                    let cf: CgarF64 = val.ref_into();
-                    (cf.0 * q_scale).round() as i64
-                };
-
-                let mut qx = 0i64;
-                let mut qy = 0i64;
-                let mut qz = 0i64;
-                for i in 0..N.min(3) {
-                    let a = &pu[i];
-                    let b = &pv[i];
-                    let comp = a + &((&(b - a)) * &t);
-                    let qi = to_i64(&comp);
-                    if i == 0 {
-                        qx = qi
-                    } else if i == 1 {
-                        qy = qi
-                    } else {
-                        qz = qi
-                    }
-                }
-
-                let key_snap = ApproxPointKey {
-                    qx,
-                    qy: if N > 1 { qy } else { 0 },
-                    qz: if N > 2 { qz } else { 0 },
-                };
-
-                match splits.splits.entry(key_snap) {
-                    Entry::Occupied(mut occ) => {
-                        occ.get_mut().3.push(EndPointHandle {
-                            segment_idx: seg_idx,
-                            endpoint_idx,
-                        });
-                    }
-                    Entry::Vacant(vac) => {
-                        // Allocate snap Point only on insert
-                        let snap = pu + &(uv.scale(&t)).0;
-                        vac.insert((snap, SplitType::Edge, he, {
-                            let mut v: SmallVec<[EndPointHandle; 2]> = SmallVec::new();
-                            v.push(EndPointHandle {
-                                segment_idx: seg_idx,
-                                endpoint_idx,
-                            });
-                            v
-                        }));
-                    }
-                }
-                true
-            }
-
-            // Try each edge once (precomputed half-edges)
-            if try_edge(
-                mesh,
-                splits,
-                container,
-                seg_idx,
-                endpoint_idx,
-                face,
-                ia,
-                ib,
-                he_ab,
-                pos,
-                tol,
-                tol2,
-                q_scale,
-            ) {
-                return;
-            }
-            if try_edge(
-                mesh,
-                splits,
-                container,
-                seg_idx,
-                endpoint_idx,
-                face,
-                ib,
-                ic,
-                he_bc,
-                pos,
-                tol,
-                tol2,
-                q_scale,
-            ) {
-                return;
-            }
-            if try_edge(
-                mesh,
-                splits,
-                container,
-                seg_idx,
-                endpoint_idx,
-                face,
-                ic,
-                ia,
-                he_ca,
-                pos,
-                tol,
-                tol2,
-                q_scale,
-            ) {
-                return;
-            }
-
-            // Interior face split
-            container[seg_idx][endpoint_idx].face_hint = Some(face);
-            splits.splits.insert(
-                key_q,
-                (pos.clone(), SplitType::Face, face, {
-                    let mut v: SmallVec<[EndPointHandle; 2]> = SmallVec::new();
-                    v.push(EndPointHandle {
-                        segment_idx: seg_idx,
-                        endpoint_idx,
-                    });
-                    v
-                }),
-            );
-        }
-
-        // Endpoint A
-        attach_handle_or_classify(
-            mesh, splits, container, seg_idx, 0, main_face, pa, pb, pc, ia, ib, ic, he_ab, he_bc,
-            he_ca, &tol, &tol2, q_scale, &segment.a,
-        );
-
-        // Endpoint B
-        if !skip_endpoint_b {
-            attach_handle_or_classify(
-                mesh, splits, container, seg_idx, 1, main_face, pa, pb, pc, ia, ib, ic, he_ab,
-                he_bc, he_ca, &tol, &tol2, q_scale, &segment.b,
-            );
-        }
-    }
-
-    fn boolean_split(
-        mesh: &mut Mesh<T, N>,
-        tree: &mut AabbTree<T, N, Point<T, N>, usize>,
-        splits: &mut Splits<T, N>,
-        intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-    ) {
-        for (_key, endpoint_tup) in &splits.splits {
-            if endpoint_tup.1 == SplitType::Edge {
-                let result = mesh
-                    .split_edge(tree, endpoint_tup.2, &endpoint_tup.0, false)
-                    .expect("Failed to split edge");
-                for endpoint in endpoint_tup.3.iter() {
-                    intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
-                        .vertex_hint = Some([result.vertex, usize::MAX]);
-                    intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
-                        .half_edge_hint = None;
-                    intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
-                        .half_edge_u_hint = None;
-                }
-            } else {
-                let result = mesh
-                    .split_face(tree, endpoint_tup.2, &endpoint_tup.0, false)
-                    .expect("Failed to split face");
-                for endpoint in endpoint_tup.3.iter() {
-                    intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
-                        .vertex_hint = Some([result.vertex, usize::MAX]);
-                    intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx].face_hint =
-                        None;
-                    intersection_segments[endpoint.segment_idx][endpoint.endpoint_idx]
-                        .barycentric_hint = None;
-                }
-            }
-        }
-    }
-
     pub fn corefine_and_boolean(&mut self, other: &mut Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
         let mut a = self;
         let mut b = other;
@@ -630,14 +273,16 @@ where
         let intersection_segments = [&mut intersection_segments_a, &mut intersection_segments_b];
 
         let start = Instant::now();
+        println!("Beginning AABB computation...");
+
+        println!("total faces: {}", a.faces.len());
+        println!("total half-edges: {}", a.half_edges.len());
+        println!("total vertices: {}", a.vertices.len());
+
         let mut tree_a = a.build_face_tree();
         let mut tree_b = b.build_face_tree();
         println!("Total AABB computation: {:.2?}", start.elapsed());
 
-        let mut splits_a = Splits::new();
-        let mut splits_b = Splits::new();
-
-        let splits = [&mut splits_a, &mut splits_b];
         let meshes = [&a, &b];
 
         let start = Instant::now();
@@ -662,8 +307,6 @@ where
                 let vertices_indices = [&pa_idx, &pb_idx];
                 let faces = [fa, *fb];
 
-                let mut split_idx_info = usize::MAX;
-
                 let mut coplanar = false;
 
                 match tri_tri_intersection_with_precomp_detailed(&pa, &pb, &pre_a, &pre_b) {
@@ -680,8 +323,8 @@ where
                 }
 
                 for ends in &ends_vec {
-                    for mesh_i in 0..2 {
-                        let on_x = if mesh_i == 0 {
+                    for mesh_x in 0..2 {
+                        let on_x = if mesh_x == 0 {
                             [&ends[0].on_p, &ends[1].on_p]
                         } else {
                             [&ends[0].on_q, &ends[1].on_q]
@@ -694,85 +337,46 @@ where
                             [&mut intersection_endpoint_0, &mut intersection_endpoint_1];
 
                         for end_x in 0..2 {
-                            let mut split_type = None;
                             match &on_x[end_x] {
                                 ContactOnTri::Vertex(i) => {
                                     intersection_endpoints[end_x].vertex_hint =
-                                        Some([vertices_indices[mesh_i][*i], usize::MAX]);
+                                        Some([vertices_indices[mesh_x][*i], usize::MAX]);
                                 }
                                 ContactOnTri::Edge { e, u } => {
                                     intersection_endpoints[end_x].vertex_hint = Some([
-                                        vertices_indices[mesh_i][e.0],
-                                        vertices_indices[mesh_i][e.1],
+                                        vertices_indices[mesh_x][e.0],
+                                        vertices_indices[mesh_x][e.1],
                                     ]);
 
-                                    let he = meshes[mesh_i].edge_map[&(
-                                        vertices_indices[mesh_i][e.0],
-                                        vertices_indices[mesh_i][e.1],
+                                    let he = meshes[mesh_x].edge_map[&(
+                                        vertices_indices[mesh_x][e.0],
+                                        vertices_indices[mesh_x][e.1],
                                     )];
+
+                                    let f1 = meshes[mesh_x].half_edges[he].face.unwrap();
+                                    let f2 = meshes[mesh_x].half_edges
+                                        [meshes[mesh_x].half_edges[he].twin]
+                                        .face
+                                        .unwrap();
+
+                                    intersection_endpoints[end_x].faces_hint = Some([f1, f2]);
                                     intersection_endpoints[end_x].half_edge_hint = Some(he);
                                     intersection_endpoints[end_x].half_edge_u_hint =
                                         Some(u.clone());
-
-                                    split_type = Some(SplitType::Edge);
-                                    split_idx_info = he;
                                 }
                                 ContactOnTri::Interior { bary } => {
-                                    intersection_endpoints[end_x].face_hint = Some(faces[mesh_i]);
+                                    intersection_endpoints[end_x].faces_hint =
+                                        Some([faces[mesh_x], usize::MAX]);
                                     intersection_endpoints[end_x].barycentric_hint =
                                         Some(bary.clone());
-
-                                    split_type = Some(SplitType::Face);
-                                    split_idx_info = faces[mesh_i];
-                                }
-                            }
-
-                            if let Some(split_type) = split_type {
-                                let key = point_key(&ends[end_x].point);
-                                match splits[mesh_i].splits.entry(key) {
-                                    Entry::Occupied(mut occ) => {
-                                        occ.get_mut().3.push(EndPointHandle {
-                                            segment_idx: intersection_segments[mesh_i].len(),
-                                            endpoint_idx: end_x,
-                                        });
-                                        continue;
-                                    }
-                                    Entry::Vacant(_) => {}
-                                }
-
-                                match splits[mesh_i].splits.entry(key) {
-                                    Entry::Occupied(mut occ) => {
-                                        occ.get_mut().3.push(EndPointHandle {
-                                            segment_idx: intersection_segments[mesh_i].len(),
-                                            endpoint_idx: end_x,
-                                        });
-                                    }
-                                    Entry::Vacant(vac) => {
-                                        vac.insert((
-                                            ends[end_x].point.clone(),
-                                            split_type,
-                                            split_idx_info,
-                                            {
-                                                let mut v: SmallVec<[EndPointHandle; 2]> =
-                                                    SmallVec::new();
-                                                v.push(EndPointHandle {
-                                                    segment_idx: intersection_segments[mesh_i]
-                                                        .len(),
-                                                    endpoint_idx: end_x,
-                                                });
-                                                v
-                                            },
-                                        ));
-                                    }
                                 }
                             }
                         }
-                        intersection_segments[mesh_i].push(IntersectionSegment::new(
+                        intersection_segments[mesh_x].push(IntersectionSegment::new(
                             intersection_endpoint_0,
                             intersection_endpoint_1,
                             &Segment::new(&ends[0].point, &ends[1].point),
-                            faces[mesh_i],
-                            [usize::MAX, usize::MAX],
+                            faces[mesh_x],
                             coplanar,
                         ));
                     }
@@ -783,28 +387,70 @@ where
         println!("Intersections created in: {:.2?}", start.elapsed());
 
         // Remove duplicate segments from both lists.
-        // remove_duplicate_segments(&mut intersection_segments_a);
-        // remove_duplicate_segments(&mut intersection_segments_b);
+        remove_duplicate_and_invalid_segments(&mut intersection_segments_a);
+        remove_duplicate_and_invalid_segments(&mut intersection_segments_b);
 
-        println!("Splits on A ({})", splits_a.splits.len());
-        let start = Instant::now();
-        Self::boolean_split(
-            &mut a,
-            &mut tree_a,
-            &mut splits_a,
-            &mut intersection_segments_a,
-        );
-        println!("Splits done in {:.2?}", start.elapsed());
+        // Filter intersection_segments_a to only include segments with face id 9
+        // intersection_segments_a.retain(|seg| seg.initial_face_reference == 9);
+        // intersection_segments_a.truncate(100);
+        // intersection_segments_a.drain(..130);
+        // intersection_segments_a.truncate(20);
 
-        println!("Splits on B ({})", splits_b.splits.len());
+        println!("Splits on A {}", intersection_segments_a.len());
         let start = Instant::now();
-        Self::boolean_split(
-            &mut b,
-            &mut tree_b,
-            &mut splits_b,
-            &mut intersection_segments_b,
-        );
-        println!("Splits done in {:.2?}", start.elapsed());
+        let _created_a =
+            allocate_vertices_for_splits_no_topology(&mut a, &mut intersection_segments_a);
+        println!("Allocated vertices on A in {:.2?}", start.elapsed());
+        let start = Instant::now();
+        let jobs_a = build_face_pslgs(a, &intersection_segments_a);
+        println!("Built faces PSLGS on A in {:.2?}", start.elapsed());
+
+        // Build CDT per compacted job (example)
+        let mut cdts_a: Vec<Delaunay<T>> = Vec::with_capacity(jobs_a.len());
+        let start = Instant::now();
+
+        for job in &jobs_a {
+            let dt = Delaunay::build_with_constraints_bowyer_watson(
+                &job.points_uv,
+                &job.segments,
+                a,
+                job,
+            );
+            cdts_a.push(dt);
+        }
+        println!("Built Bowyer-Watson on A in {:.2?}", start.elapsed());
+        let start = Instant::now();
+        rewrite_faces_from_cdt_batch(a, &jobs_a, &cdts_a);
+        println!("Splits on A done in {:.2?}", start.elapsed());
+        let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
+
+        println!("Splits on B");
+        let start = Instant::now();
+        let _created_b =
+            allocate_vertices_for_splits_no_topology(&mut b, &mut intersection_segments_b);
+        println!("Allocated vertices on B in {:.2?}", start.elapsed());
+        let start = Instant::now();
+        let jobs_b = build_face_pslgs(b, &intersection_segments_b);
+        println!("Built faces PSLGS on B in {:.2?}", start.elapsed());
+
+        // Build CDT per compacted job (example)
+        let mut cdts_b: Vec<Delaunay<T>> = Vec::with_capacity(jobs_b.len());
+        let start = Instant::now();
+
+        for job in &jobs_b {
+            let dt = Delaunay::build_with_constraints_bowyer_watson(
+                &job.points_uv,
+                &job.segments,
+                a,
+                job,
+            );
+            cdts_b.push(dt);
+        }
+        println!("Built Bowyer-Watson on B in {:.2?}", start.elapsed());
+        let start = Instant::now();
+        rewrite_faces_from_cdt_batch(b, &jobs_b, &cdts_b);
+        println!("Splits on B done in {:.2?}", start.elapsed());
+        let _ = write_obj(&b, "/mnt/v/cgar_meshes/b.obj");
 
         let start = Instant::now();
         tree_a = a.build_face_tree();
@@ -814,35 +460,8 @@ where
         let mut intersection_by_edge_a = AHashMap::new();
         let mut intersection_by_edge_b = AHashMap::new();
 
-        println!("Processing remaining segments A");
-        let start = Instant::now();
-        let mut i = 0;
-
-        while i < intersection_segments_a.len() {
-            process_segment_and_edge_map(
-                &mut a,
-                &mut intersection_segments_a,
-                &mut intersection_by_edge_a,
-                i,
-                &mut splits_a,
-                &mut tree_a,
-            );
-            i += 1;
-        }
-
-        println!("Processing remaining segments B");
-        i = 0;
-        while i < intersection_segments_b.len() {
-            process_segment_and_edge_map(
-                &mut b,
-                &mut intersection_segments_b,
-                &mut intersection_by_edge_b,
-                i,
-                &mut splits_b,
-                &mut tree_b,
-            );
-            i += 1;
-        }
+        // let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
+        // let _ = write_obj(&b, "/mnt/v/cgar_meshes/b.obj");
 
         println!("Intersection segments processed in {:.2?}", start.elapsed());
 
@@ -851,21 +470,18 @@ where
         let mut edges_a = Vec::new();
         // gather all edges from intersection A
         for seg in &intersection_segments_a {
-            if seg.resulting_vertices_pair[0] != usize::MAX
-                && seg.resulting_vertices_pair[1] != usize::MAX
-            {
-                edges_a.push(seg.resulting_vertices_pair);
-            }
+            edges_a.push([
+                seg.a.resulting_vertex.unwrap(),
+                seg.b.resulting_vertex.unwrap(),
+            ]);
         }
 
         let mut edges_b = Vec::new();
-        // gather all edges from intersection B
         for seg in &intersection_segments_b {
-            if seg.resulting_vertices_pair[0] != usize::MAX
-                && seg.resulting_vertices_pair[1] != usize::MAX
-            {
-                edges_b.push(seg.resulting_vertices_pair);
-            }
+            edges_b.push([
+                seg.a.resulting_vertex.unwrap(),
+                seg.b.resulting_vertex.unwrap(),
+            ]);
         }
 
         println!(
@@ -1063,6 +679,12 @@ where
         result.remove_unused_vertices();
         result.remove_invalidated_faces();
 
+        let result_edges: Vec<[usize; 2]> = result.edge_map.keys().map(|&(u, v)| [u, v]).collect();
+        let t_junctions =
+            find_x_vertices_on_y_edges(&result, &result, &result_edges, &result_edges);
+
+        println!("t_junctions: {:?}", t_junctions);
+
         result
     }
 
@@ -1090,8 +712,8 @@ where
             if intersection_segments[i].coplanar {
                 let seg = intersection_segments.remove(i);
                 let edge = mesh.edge_map.get(&(
-                    seg.resulting_vertices_pair[0],
-                    seg.resulting_vertices_pair[1],
+                    seg.a.resulting_vertex.unwrap(),
+                    seg.b.resulting_vertex.unwrap(),
                 ));
                 if let Some(half_edge) = edge {
                     if let Some(face_0) = mesh.half_edges[*half_edge].face {
@@ -1118,14 +740,20 @@ where
         let mut vertex_to_segments: AHashMap<usize, Vec<usize>> = AHashMap::new();
 
         for (seg_idx, seg) in intersection_segments.iter().enumerate() {
-            let [v0, v1] = seg.resulting_vertices_pair;
+            let [v0, v1] = [
+                seg.a.resulting_vertex.unwrap(),
+                seg.b.resulting_vertex.unwrap(),
+            ];
             vertex_to_segments.entry(v0).or_default().push(seg_idx);
             vertex_to_segments.entry(v1).or_default().push(seg_idx);
         }
 
         // === NON-COPLANAR SEGMENTS: Build double-linked structure ===
         for (seg_idx, seg) in intersection_segments.iter_mut().enumerate() {
-            let [v0, v1] = seg.resulting_vertices_pair;
+            let [v0, v1] = [
+                seg.a.resulting_vertex.unwrap(),
+                seg.b.resulting_vertex.unwrap(),
+            ];
             let mut connected_segments = AHashSet::new();
 
             if let Some(segments) = vertex_to_segments.get(&v0) {
@@ -1162,171 +790,6 @@ where
         triangles_per_group
     }
 
-    fn check_for_process_segment_early_exit(
-        mesh: &Mesh<T, N>,
-        intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-        segment_idx: usize,
-    ) -> bool {
-        let mut vertex_ab = [usize::MAX; 2];
-        // We check if endpoints of the segment are already represented by vertices.
-        for i in 0..2 {
-            if intersection_segments[segment_idx][i].vertex_hint.is_some()
-                && intersection_segments[segment_idx][i]
-                    .half_edge_hint
-                    .is_none()
-            {
-                // If the vertex is already set and no half edge hint is defined, it means we can deterministically choose a vertex.
-                vertex_ab[i] = intersection_segments[segment_idx][i].vertex_hint.unwrap()[0];
-            }
-        }
-
-        // If they are, let's see if they are connected for an early exit.
-        if vertex_ab[0] != usize::MAX && vertex_ab[1] != usize::MAX {
-            if vertex_ab[0] == vertex_ab[1] {
-                // Both endpoints are the same vertex, so we invalidate and skip processing.
-                intersection_segments[segment_idx].invalidated = true;
-                return true;
-            } else {
-                let he_ab = mesh.vertices_connection(vertex_ab[0], vertex_ab[1]);
-                if he_ab != usize::MAX {
-                    // Both endpoints are connected, so we can simply return.
-                    intersection_segments[segment_idx].resulting_vertices_pair =
-                        [vertex_ab[0], vertex_ab[1]];
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    fn process_segment(
-        &mut self,
-        edge_splits: &mut Splits<T, N>,
-        aabb_tree: &mut AabbTree<T, N, Point<T, N>, usize>,
-        intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-        segment_idx: usize,
-    ) {
-        let mut vertex_ab = [usize::MAX, usize::MAX];
-
-        if Self::check_for_process_segment_early_exit(self, intersection_segments, segment_idx) {
-            return;
-        }
-
-        for i in 0..2 {
-            if intersection_segments[segment_idx][i]
-                .half_edge_hint
-                .is_some()
-                || intersection_segments[segment_idx][i].face_hint.is_some()
-            {
-                println!("{}, {:?}", i, intersection_segments[segment_idx]);
-                panic!("Shouldn't be using half_edge or face hints at this point.");
-            }
-        }
-
-        let starting_vertex = intersection_segments[segment_idx][0].vertex_hint.unwrap()[0];
-        let direction = intersection_segments[segment_idx].segment.direction();
-
-        let mut found = false;
-        for f in self.faces_around_vertex(starting_vertex) {
-            match self.cast_ray_from_vertex_in_triangle(f, starting_vertex, &direction) {
-                Some(VertexRayResult::EdgeIntersection {
-                    half_edge: he,
-                    distance: _t,
-                    edge_parameter: u,
-                }) => {
-                    found = true;
-                    let start = self.half_edges[self.half_edges[he].prev].vertex;
-                    let end = self.half_edges[he].vertex;
-                    let new_pos = point_from_segment_and_u(
-                        &self.vertices[start].position,
-                        &self.vertices[end].position,
-                        &u,
-                    );
-                    let split_result = self.split_edge(aabb_tree, he, &new_pos, false).unwrap();
-                    let new_point = &self.vertices[split_result.vertex].position;
-
-                    let new_segment =
-                        Segment::new(&new_point, &intersection_segments[segment_idx].segment[1]);
-
-                    let find_face_result = self.find_valid_face(f, &new_point);
-
-                    if let FindFaceResult::OnVertex { f, v: _ } = find_face_result {
-                        Self::create_intersection_segment(
-                            self,
-                            edge_splits,
-                            intersection_segments,
-                            &new_segment,
-                            f,
-                            intersection_segments[segment_idx].coplanar,
-                            true,
-                        );
-                    } else {
-                        panic!("Invalid face while processing segment.");
-                    }
-
-                    let seg = intersection_segments[segment_idx].b.clone();
-                    let len = intersection_segments.len() - 1;
-                    let new_intersection = &mut intersection_segments[len];
-                    new_intersection.b = seg;
-
-                    intersection_segments[segment_idx].segment[1] = new_point.clone();
-                    intersection_segments[segment_idx].b.face_hint = None;
-                    intersection_segments[segment_idx].b.half_edge_hint = None;
-                    intersection_segments[segment_idx].b.half_edge_u_hint = None;
-                    intersection_segments[segment_idx].b.vertex_hint =
-                        Some([split_result.vertex, usize::MAX]);
-
-                    intersection_segments[segment_idx].resulting_vertices_pair = [
-                        intersection_segments[segment_idx].a.vertex_hint.unwrap()[0],
-                        split_result.vertex,
-                    ];
-
-                    // new_intersection.resulting_vertices_pair = [
-                    //     split_result.vertex,
-                    //     intersection_segments[segment_idx].a.vertex_hint.unwrap()[0],
-                    // ];
-                }
-                Some(VertexRayResult::CollinearWithEdge(he)) => {
-                    println!("collinear with edge {:?}", he);
-                    found = true;
-                }
-                _ => {}
-            }
-
-            if found {
-                break;
-            }
-        }
-
-        if !found {
-            // for he in
-            println!("not found, {:?}", intersection_segments[segment_idx]);
-
-            let mut test_faces = Mesh::new();
-            for f in self.faces_around_vertex(starting_vertex) {
-                let mut vs = SmallVec::<[usize; 3]>::new();
-                for v in self.face_vertices(f) {
-                    vs.push(test_faces.add_vertex(self.vertices[v].position.clone()));
-                }
-
-                test_faces.add_triangle(vs[0], vs[1], vs[2]);
-            }
-
-            let _ = write_obj(&test_faces, "/mnt/v/cgar_meshes/test_faces.obj");
-
-            let mut test_direction_1 = Mesh::new();
-            test_direction_1.add_vertex(intersection_segments[segment_idx].segment.a.clone());
-            let _ = write_obj(&test_direction_1, "/mnt/v/cgar_meshes/direction_1.obj");
-
-            let mut test_direction_2 = Mesh::new();
-            test_direction_2.add_vertex(intersection_segments[segment_idx].segment.b.clone());
-            let _ = write_obj(&test_direction_2, "/mnt/v/cgar_meshes/direction_2.obj");
-
-            panic!("Failed to split edge.");
-        }
-    }
-
     fn get_seed_face(
         a: &Mesh<T, N>,
         b: &Mesh<T, N>,
@@ -1339,11 +802,13 @@ where
         let seed_idx = (0..intersection_segments.len())
             .filter(|&seg_idx| {
                 let seg = &intersection_segments[seg_idx];
-                let vertex_a = seg.resulting_vertices_pair[0];
-                let vertex_b = seg.resulting_vertices_pair[1];
+                let [v0, v1] = [
+                    seg.a.resulting_vertex.unwrap(),
+                    seg.b.resulting_vertex.unwrap(),
+                ];
                 let he = a
                     .edge_map
-                    .get(&(vertex_a, vertex_b))
+                    .get(&(v0, v1))
                     .expect("Edge must exist in edge map");
 
                 let face_0 = a.half_edges[*he].face.expect("Half-edge must have a face");
@@ -1362,11 +827,13 @@ where
             })
             .find(|&seg_idx| {
                 let seg = &intersection_segments[seg_idx];
-                let vertex_a = seg.resulting_vertices_pair[0];
-                let vertex_b = seg.resulting_vertices_pair[1];
+                let [v0, v1] = [
+                    seg.a.resulting_vertex.unwrap(),
+                    seg.b.resulting_vertex.unwrap(),
+                ];
                 let he = a
                     .edge_map
-                    .get(&(vertex_a, vertex_b))
+                    .get(&(v0, v1))
                     .expect("Edge must exist in edge map");
 
                 let mut faces = [usize::MAX, usize::MAX];
@@ -1398,65 +865,99 @@ where
     }
 }
 
-pub fn remove_duplicate_segments<T: Scalar + Eq + Hash, const N: usize>(
+pub fn remove_duplicate_and_invalid_segments<T: Scalar + Eq + Hash, const N: usize>(
     segments: &mut Vec<IntersectionSegment<T, N>>,
-) {
+) where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Segment<T, N>: SegmentOps<T, N>,
+{
+    use ahash::AHashMap;
+    use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    struct SegmentKey<'a, T: Scalar, const N: usize>(&'a Point<T, N>, &'a Point<T, N>);
-
-    impl<'a, T: Scalar, const N: usize> PartialEq for SegmentKey<'a, T, N> {
-        fn eq(&self, other: &Self) -> bool {
-            (self.0 == other.0 && self.1 == other.1) || (self.0 == other.1 && self.1 == other.0)
+    // Canonical, unordered hash-pair key (still verify equality on collisions)
+    #[derive(Copy, Clone, Eq, PartialEq, Hash)]
+    struct Key {
+        a: u64,
+        b: u64,
+    }
+    #[inline(always)]
+    fn point_hash<TT: Hash>(p: &TT) -> u64 {
+        let mut h = DefaultHasher::new();
+        p.hash(&mut h);
+        h.finish()
+    }
+    #[inline(always)]
+    fn make_key<TT: Scalar, const NN: usize>(p: &Point<TT, NN>, q: &Point<TT, NN>) -> Key {
+        let ha = point_hash(p);
+        let hb = point_hash(q);
+        if ha <= hb {
+            Key { a: ha, b: hb }
+        } else {
+            Key { a: hb, b: ha }
         }
     }
 
-    impl<'a, T: Scalar, const N: usize> Eq for SegmentKey<'a, T, N> {}
+    // For each hash key, keep a small bucket of indices whose endpoints truly match
+    // (prevents false positives if different segments collide on hashes)
+    let mut buckets: AHashMap<Key, smallvec::SmallVec<[usize; 4]>> = AHashMap::new();
 
-    impl<'a, T: Scalar, const N: usize> Hash for SegmentKey<'a, T, N> {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
-            self.0.hash(&mut hasher_a);
-            let ha = hasher_a.finish();
-
-            let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
-            self.1.hash(&mut hasher_b);
-            let hb = hasher_b.finish();
-
-            (ha ^ hb).hash(state);
-        }
-    }
-
-    let mut seen: AHashMap<u64, (usize, bool)> = AHashMap::new();
-    let mut invalidation_updates = Vec::new();
+    // We’ll mark invalidation after the scan
+    let mut invalidate = vec![false; segments.len()];
 
     for (i, seg) in segments.iter().enumerate() {
-        let key = SegmentKey(&seg.segment.a, &seg.segment.b);
+        // Zero-length → invalid
+        if seg.segment.length2().is_zero() {
+            invalidate[i] = true;
+            continue;
+        }
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        key.hash(&mut hasher);
-        let hash = hasher.finish();
+        let a_ref = &seg.segment.a;
+        let b_ref = &seg.segment.b;
+        let key = make_key(a_ref, b_ref);
 
-        match seen.get(&hash) {
-            Some(&(existing_i, existing_is_coplanar)) => {
-                // If current one is coplanar and previous was not, prefer current
-                if seg.coplanar && !existing_is_coplanar {
-                    invalidation_updates.push((existing_i, true));
-                    invalidation_updates.push((i, false));
-                    seen.insert(hash, (i, true));
-                } else {
-                    invalidation_updates.push((i, true));
-                }
+        let entry = buckets.entry(key).or_default();
+
+        // Try to find a true duplicate in the bucket (check actual endpoints)
+        let mut dup_of: Option<usize> = None;
+        for &j in entry.iter() {
+            let sj = &segments[j];
+            let same = (sj.segment.a == *a_ref && sj.segment.b == *b_ref)
+                || (sj.segment.a == *b_ref && sj.segment.b == *a_ref);
+            if same {
+                dup_of = Some(j);
+                break;
             }
+        }
+
+        match dup_of {
             None => {
-                invalidation_updates.push((i, false));
-                seen.insert(hash, (i, seg.coplanar));
+                // First time we see this undirected segment → keep it (for now)
+                entry.push(i);
+            }
+            Some(j) => {
+                // Duplicate found. Prefer COPLANAR over non-coplanar.
+                match (segments[j].coplanar, seg.coplanar) {
+                    (false, true) => {
+                        // Invalidate the previous non-coplanar; keep current coplanar
+                        invalidate[j] = true;
+                        // replace j with i in the bucket so further dupes compare against the kept one
+                        if let Some(slot) = entry.iter_mut().find(|slot| **slot == j) {
+                            *slot = i;
+                        }
+                    }
+                    _ => {
+                        // Current should be invalidated (either both coplanar or previous is coplanar)
+                        invalidate[i] = true;
+                    }
+                }
             }
         }
     }
 
-    for (index, should_invalidate) in invalidation_updates {
-        segments[index].invalidated = should_invalidate;
+    // Apply marks
+    for (i, inv) in invalidate.into_iter().enumerate() {
+        segments[i].invalidated = inv;
     }
 }
 
@@ -1486,10 +987,13 @@ where
     let mut edge_to_seg: AHashMap<(usize, usize), usize> = AHashMap::new();
 
     for (ei, seg) in group.iter().enumerate() {
-        let [u, v] = seg.resulting_vertices_pair;
-        adj.entry(u).or_default().insert(v);
-        adj.entry(v).or_default().insert(u);
-        edge_to_seg.entry(ordered(u, v)).or_insert(ei);
+        let [v0, v1] = [
+            seg.a.resulting_vertex.unwrap(),
+            seg.b.resulting_vertex.unwrap(),
+        ];
+        adj.entry(v0).or_default().insert(v1);
+        adj.entry(v1).or_default().insert(v0);
+        edge_to_seg.entry(ordered(v0, v1)).or_insert(ei);
     }
 
     // quick accessor for point coords
@@ -1550,6 +1054,7 @@ where
     out
 }
 
+#[derive(Debug)]
 struct TJunction {
     a_vertex: usize,
     b_edge: [usize; 2],
@@ -1709,44 +1214,6 @@ where
     out
 }
 
-fn process_segment_and_edge_map<T: Scalar, const N: usize>(
-    mesh: &mut Mesh<T, N>,
-    intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-    intersections_edge_map: &mut AHashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
-    i: usize,
-    splits: &mut Splits<T, N>,
-    tree: &mut AabbTree<T, N, Point<T, N>, usize>,
-) where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>
-        + Neg<Output = T>,
-{
-    if intersection_segments[i].invalidated || !intersection_segments[i].split {
-        return;
-    }
-    mesh.process_segment(splits, tree, intersection_segments, i);
-
-    let mut edge_verts = intersection_segments[i].resulting_vertices_pair;
-
-    if edge_verts[0] > edge_verts[1] {
-        edge_verts = [edge_verts[1], edge_verts[0]];
-    }
-
-    if !intersection_segments[i].invalidated
-        && edge_verts[0] != usize::MAX
-        && edge_verts[1] != usize::MAX
-    {
-        intersections_edge_map.insert(
-            (edge_verts[0], edge_verts[1]),
-            (i, intersection_segments[i].clone()),
-        );
-    }
-}
-
 fn process_t_junction<T: Scalar, const N: usize>(
     mesh_x: &mut Mesh<T, N>,
     mesh_y: &mut Mesh<T, N>,
@@ -1773,7 +1240,10 @@ fn process_t_junction<T: Scalar, const N: usize>(
         .get(&(t_junction.b_edge[0], t_junction.b_edge[1]))
         .expect("Segment must exist")
         .clone();
-    let original_vertices_pair = segment.1.resulting_vertices_pair;
+    let original_vertices_pair = [
+        segment.1.a.resulting_vertex.unwrap(),
+        segment.1.b.resulting_vertex.unwrap(),
+    ];
     let original_segment_b = segment.1.segment.b.clone();
 
     let split_result = mesh_x
@@ -1790,12 +1260,14 @@ fn process_t_junction<T: Scalar, const N: usize>(
         None,
         None,
         None,
+        None,
     );
-    segment.1.resulting_vertices_pair = [original_vertices_pair[0], split_result.vertex];
+    segment.1.a.resulting_vertex = Some(original_vertices_pair[0]);
+    segment.1.b.resulting_vertex = Some(split_result.vertex);
 
     segment.1.segment.b = mesh_y.vertices[t_junction.a_vertex].position.clone();
 
-    let new_segment = IntersectionSegment::new(
+    let mut new_segment = IntersectionSegment::new(
         segment.1.b.clone(),
         IntersectionEndPoint::new(
             Some([original_vertices_pair[1], usize::MAX]),
@@ -1803,17 +1275,22 @@ fn process_t_junction<T: Scalar, const N: usize>(
             None,
             None,
             None,
+            None,
         ),
         &Segment::new(&segment.1.segment.b, &original_segment_b),
         segment.1.initial_face_reference,
-        [split_result.vertex, original_vertices_pair[1]],
         segment.1.coplanar,
     );
+    new_segment.a.resulting_vertex = Some(split_result.vertex);
+    new_segment.b.resulting_vertex = Some(original_vertices_pair[1]);
 
     intersections_edge_map.remove(&(original_vertices_pair[0], original_vertices_pair[1]));
     intersection_segments[segment.0] = segment.1.clone();
 
-    let mut edge_verts = segment.1.resulting_vertices_pair;
+    let mut edge_verts = [
+        segment.1.a.resulting_vertex.unwrap(),
+        segment.1.b.resulting_vertex.unwrap(),
+    ];
 
     if edge_verts[0] > edge_verts[1] {
         edge_verts = [edge_verts[1], edge_verts[0]];
@@ -1821,7 +1298,10 @@ fn process_t_junction<T: Scalar, const N: usize>(
 
     intersections_edge_map.insert((edge_verts[0], edge_verts[1]), segment.clone());
 
-    let mut edge_verts = new_segment.resulting_vertices_pair;
+    let mut edge_verts = [
+        new_segment.a.resulting_vertex.unwrap(),
+        new_segment.b.resulting_vertex.unwrap(),
+    ];
 
     if edge_verts[0] > edge_verts[1] {
         edge_verts = [edge_verts[1], edge_verts[0]];

@@ -20,5 +20,17 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod batching;
-pub mod boolean;
+use crate::{geometry::point::Point, numeric::scalar::Scalar};
+
+pub mod cdt;
+pub mod delaunay;
+
+pub trait Triangulate2D<T: Scalar> {
+    fn triangulate(points: &[Point<T, 2>]) -> Triangulation<T>;
+}
+
+#[derive(Clone)]
+pub struct Triangulation<T: Scalar> {
+    pub points: Vec<Point<T, 2>>,
+    pub triangles: Vec<[usize; 3]>,
+}
