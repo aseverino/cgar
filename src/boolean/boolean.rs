@@ -29,14 +29,10 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
-use smallvec::*;
-use std::collections::hash_map::Entry;
 
 use crate::{
     boolean::batching::{
-        allocate_vertices_for_splits_no_topology, build_face_pslgs, compact_jobs_for_delaunay,
-        dump_job_debug, print_face_job_and_dt, rewrite_faces_from_cdt_batch, validate_jobs_cdts,
-        weld_vertices,
+        allocate_vertices_for_splits_no_topology, build_face_pslgs, rewrite_faces_from_cdt_batch,
     },
     geometry::{
         Aabb, AabbTree,
@@ -45,22 +41,17 @@ use crate::{
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
         tri_tri_intersect::{
-            ContactOnTri, EndpointInfo, TriPrecomp, TriTriIntersectionDetailed,
-            TriTriIntersectionResult, tri_tri_intersection, tri_tri_intersection_with_precomp,
-            tri_tri_intersection_with_precomp_detailed, tri_tri_intersection_with_precomp_p,
+            ContactOnTri, TriPrecomp, TriTriIntersectionDetailed,
+            tri_tri_intersection_with_precomp_detailed,
         },
-        util::point_from_segment_and_u,
         vector::{Vector, VectorOps},
     },
-    io::obj::write_obj,
-    kernel,
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
-        topology::{FindFaceResult, VertexRayResult},
     },
-    numeric::{cgar_f64::CgarF64, scalar::Scalar},
-    operations::triangulation::delaunay::{Delaunay, triangles_inside_for_job},
+    numeric::{cgar_f64::CgarF64, lazy_exact::ENABLE_PANIC_ON_EXACT, scalar::Scalar},
+    operations::triangulation::delaunay::Delaunay,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -272,26 +263,25 @@ where
         let mut intersection_segments_b = Vec::new();
         let intersection_segments = [&mut intersection_segments_a, &mut intersection_segments_b];
 
+        ENABLE_PANIC_ON_EXACT.store(true, std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
-        println!("Beginning AABB computation...");
-
-        println!("total faces: {}", a.faces.len());
-        println!("total half-edges: {}", a.half_edges.len());
-        println!("total vertices: {}", a.vertices.len());
-
-        let mut tree_a = a.build_face_tree();
-        let mut tree_b = b.build_face_tree();
+        // let (tree_a, aabb_lookup_a) = a.build_face_tree_with_lookup();
+        let tree_b = b.build_face_tree();
         println!("Total AABB computation: {:.2?}", start.elapsed());
 
         let meshes = [&a, &b];
 
         let start = Instant::now();
-        let mut candidates = Vec::new();
-        let mut ends_vec = Vec::new();
+        let mut candidates = Vec::with_capacity(64);
+        let mut ends_vec = Vec::with_capacity(64);
 
         for fa in 0..a.faces.len() {
             candidates.clear();
             tree_b.query(&a.face_aabb(fa), &mut candidates);
+
+            if candidates.is_empty() {
+                continue;
+            }
 
             let pa_idx = a.face_vertices(fa);
             let pa: [&Point<T, N>; 3] = from_fn(|i| &a.vertices[pa_idx[i]].position);
@@ -384,22 +374,21 @@ where
             }
         }
 
-        println!("Intersections created in: {:.2?}", start.elapsed());
+        println!("Intersections created in {:.2?}", start.elapsed());
 
         // Remove duplicate segments from both lists.
+        let start = Instant::now();
         remove_duplicate_and_invalid_segments(&mut intersection_segments_a);
         remove_duplicate_and_invalid_segments(&mut intersection_segments_b);
+        println!("Removed duplicates in {:.2?}", start.elapsed());
 
-        // Filter intersection_segments_a to only include segments with face id 9
-        // intersection_segments_a.retain(|seg| seg.initial_face_reference == 9);
-        // intersection_segments_a.truncate(100);
-        // intersection_segments_a.drain(..130);
-        // intersection_segments_a.truncate(20);
-
-        println!("Splits on A {}", intersection_segments_a.len());
+        println!("Splits on A: {}", intersection_segments_a.len());
         let start = Instant::now();
         let _created_a =
             allocate_vertices_for_splits_no_topology(&mut a, &mut intersection_segments_a);
+
+        //
+
         println!("Allocated vertices on A in {:.2?}", start.elapsed());
         let start = Instant::now();
         let jobs_a = build_face_pslgs(a, &intersection_segments_a);
@@ -421,10 +410,10 @@ where
         println!("Built Bowyer-Watson on A in {:.2?}", start.elapsed());
         let start = Instant::now();
         rewrite_faces_from_cdt_batch(a, &jobs_a, &cdts_a);
-        println!("Splits on A done in {:.2?}", start.elapsed());
-        let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
+        println!("Rewrite on A faces done in {:.2?}", start.elapsed());
+        // let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
 
-        println!("Splits on B");
+        println!("Splits on B: {}", intersection_segments_b.len());
         let start = Instant::now();
         let _created_b =
             allocate_vertices_for_splits_no_topology(&mut b, &mut intersection_segments_b);
@@ -449,7 +438,7 @@ where
         println!("Built Bowyer-Watson on B in {:.2?}", start.elapsed());
         let start = Instant::now();
         rewrite_faces_from_cdt_batch(b, &jobs_b, &cdts_b);
-        println!("Splits on B done in {:.2?}", start.elapsed());
+        println!("Rewrite on B faces done in {:.2?}", start.elapsed());
 
         intersection_segments_a.retain(|segment| !segment.invalidated);
         intersection_segments_b.retain(|segment| !segment.invalidated);
@@ -606,11 +595,11 @@ where
         result.remove_unused_vertices();
         result.remove_invalidated_faces();
 
-        let result_edges: Vec<[usize; 2]> = result.edge_map.keys().map(|&(u, v)| [u, v]).collect();
-        let t_junctions =
-            find_x_vertices_on_y_edges(&result, &result, &result_edges, &result_edges);
+        // let result_edges: Vec<[usize; 2]> = result.edge_map.keys().map(|&(u, v)| [u, v]).collect();
+        // let t_junctions =
+        //     find_x_vertices_on_y_edges(&result, &result, &result_edges, &result_edges);
 
-        println!("t_junctions: {:?}", t_junctions);
+        // println!("t_junctions: {:?}", t_junctions);
 
         result
     }
@@ -979,265 +968,4 @@ where
     }
 
     out
-}
-
-#[derive(Debug)]
-struct TJunction {
-    a_vertex: usize,
-    b_edge: [usize; 2],
-}
-
-/// Find all vertices from `a_edges` (by their vertex indices into `a_vertices`)
-/// that lie on any geometric edge (segment) defined by `b_edges` (indices into `b_vertices`).
-///
-/// Returns every (a_vertex_index, (b_u, b_v)) pair such that:
-///   1. The position of the a-vertex lies on segment (b_u,b_v) within T::tolerance()
-///      (orthogonal distance to the segment <= tol).
-///   2. The a-vertex is NOT within T::tolerance() of either endpoint of (b_u,b_v)
-///      (discard near-endpoint hits to avoid duplicating endpoints).
-/// A single a-vertex may appear multiple times if it lies on multiple distinct b-edges.
-/// Order is stable: vertices follow first appearance while scanning `a_edges` left-to-right;
-/// for each vertex, matching b-edges follow the order in `b_edges`.
-fn find_x_vertices_on_y_edges<T: Scalar, const N: usize>(
-    mesh_x: &Mesh<T, N>,
-    mesh_y: &Mesh<T, N>,
-    x_edges: &[[usize; 2]],
-    y_edges: &[[usize; 2]],
-) -> Vec<TJunction>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Div<&'a T, Output = T>
-        + Neg<Output = T>,
-{
-    use crate::geometry::{Aabb, AabbTree, point::Point};
-
-    if x_edges.is_empty() || y_edges.is_empty() {
-        return Vec::new();
-    }
-
-    let tol = T::tolerance();
-    let tol2 = &tol * &tol;
-
-    // Collect unique X-vertices (stable order)
-    let mut ordered_x_verts = Vec::new();
-    let mut seen = AHashSet::with_capacity(x_edges.len() * 2);
-    for &[u, v] in x_edges {
-        if seen.insert(u) {
-            ordered_x_verts.push(u);
-        }
-        if seen.insert(v) {
-            ordered_x_verts.push(v);
-        }
-    }
-
-    // Precompute per Y-edge data + build 3D AABB tree (the engine already uses 3D trees).
-    // Each edge AABB is expanded by tol to ensure we don't miss near-segment hits.
-    let mut edge_boxes: Vec<(Aabb<T, 3, Point<T, 3>>, usize)> = Vec::with_capacity(y_edges.len());
-    let mut ab_vecs: Vec<Vector<T, N>> = Vec::with_capacity(y_edges.len());
-    let mut ab_len2s: Vec<T> = Vec::with_capacity(y_edges.len());
-
-    for (ei, &[u, v]) in y_edges.iter().enumerate() {
-        let p0 = &mesh_y.vertices[u].position;
-        let p1 = &mesh_y.vertices[v].position;
-
-        // AABB in 3D with tolerance expansion
-        let mut minx = p0[0].clone().min(p1[0].clone());
-        let mut miny = p0[1].clone().min(p1[1].clone());
-        let mut minz = p0[2].clone().min(p1[2].clone());
-        let mut maxx = p0[0].clone().max(p1[0].clone());
-        let mut maxy = p0[1].clone().max(p1[1].clone());
-        let mut maxz = p0[2].clone().max(p1[2].clone());
-
-        minx = &minx - &tol;
-        miny = &miny - &tol;
-        minz = &minz - &tol;
-        maxx = &maxx + &tol;
-        maxy = &maxy + &tol;
-        maxz = &maxz + &tol;
-
-        let bb = Aabb::<T, 3, Point<T, 3>>::from_points(
-            &Point::<T, 3>::from_vals([minx, miny, minz]),
-            &Point::<T, 3>::from_vals([maxx, maxy, maxz]),
-        );
-        edge_boxes.push((bb, ei));
-
-        let ab = (p1 - p0).as_vector();
-        ab_vecs.push(ab.clone());
-        ab_len2s.push(ab.dot(&ab));
-    }
-
-    let tree_y = AabbTree::<T, 3, Point<T, 3>, usize>::build(edge_boxes);
-
-    let mut out = Vec::new();
-    let mut candidates = Vec::new();
-
-    for &xv in &ordered_x_verts {
-        let p = &mesh_x.vertices[xv].position;
-
-        // Query box around p with tol in 3D
-        let minq = Point::<T, 3>::from_vals([&p[0] - &tol, &p[1] - &tol, &p[2] - &tol]);
-        let maxq = Point::<T, 3>::from_vals([&p[0] + &tol, &p[1] + &tol, &p[2] + &tol]);
-        let query = Aabb::<T, 3, Point<T, 3>>::from_points(&minq, &maxq);
-
-        candidates.clear();
-        tree_y.query(&query, &mut candidates);
-
-        for &ei in &candidates {
-            let [u_idx, v_idx] = y_edges[*ei];
-            let p0 = &mesh_y.vertices[u_idx].position;
-            let p1 = &mesh_y.vertices[v_idx].position;
-
-            // Skip degenerate edges
-            let ab_len2 = &ab_len2s[*ei];
-            if ab_len2.is_zero() {
-                continue;
-            }
-            let ab_vec = &ab_vecs[*ei];
-
-            // Quick parametric projection
-            let ap = (p - p0).as_vector();
-            let t = &ap.dot(ab_vec) / ab_len2;
-
-            // Segment range test with slack (avoid PartialOrd on T)
-            if (&t + &tol).is_negative() || (&(&t - &T::one()) - &tol).is_positive() {
-                continue;
-            }
-
-            // Orthogonal distance test (approx-first)
-            let closest = p0 + &(ab_vec.scale(&t)).0;
-            let diff = (p - &closest).as_vector();
-            let d2 = diff.dot(&diff);
-            if (&d2 - &tol2).is_positive() {
-                continue;
-            }
-
-            // Discard near-endpoint hits
-            let d0 = (p - p0).as_vector().dot(&(p - p0).as_vector());
-            if (&d0 - &tol2).is_negative_or_zero() {
-                continue;
-            }
-            let d1 = (p - p1).as_vector().dot(&(p - p1).as_vector());
-            if (&d1 - &tol2).is_negative_or_zero() {
-                continue;
-            }
-
-            // Order edge indices (integer compare is fine)
-            let (mut be0, mut be1) = (u_idx, v_idx);
-            if be0 > be1 {
-                std::mem::swap(&mut be0, &mut be1);
-            }
-
-            out.push(TJunction {
-                a_vertex: xv,
-                b_edge: [be0, be1],
-            });
-        }
-    }
-
-    out
-}
-
-fn process_t_junction<T: Scalar, const N: usize>(
-    mesh_x: &mut Mesh<T, N>,
-    mesh_y: &mut Mesh<T, N>,
-    tree_x: &mut AabbTree<T, N, Point<T, N>, usize>,
-    t_junction: &TJunction,
-    intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-    intersections_edge_map: &mut AHashMap<(usize, usize), (usize, IntersectionSegment<T, N>)>,
-) where
-    T: Scalar,
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>
-        + Neg<Output = T>,
-{
-    let edge = mesh_x
-        .edge_map
-        .get(&(t_junction.b_edge[0], t_junction.b_edge[1]))
-        .expect("Edge must exist in edge_map");
-
-    let mut segment = intersections_edge_map
-        .get(&(t_junction.b_edge[0], t_junction.b_edge[1]))
-        .expect("Segment must exist")
-        .clone();
-    let original_vertices_pair = [
-        segment.1.a.resulting_vertex.unwrap(),
-        segment.1.b.resulting_vertex.unwrap(),
-    ];
-    let original_segment_b = segment.1.segment.b.clone();
-
-    let split_result = mesh_x
-        .split_edge(
-            tree_x,
-            *edge,
-            &mesh_y.vertices[t_junction.a_vertex].position,
-            false,
-        )
-        .unwrap();
-    segment.1.b = IntersectionEndPoint::new(
-        Some([t_junction.a_vertex, usize::MAX]),
-        None,
-        None,
-        None,
-        None,
-        None,
-    );
-    segment.1.a.resulting_vertex = Some(original_vertices_pair[0]);
-    segment.1.b.resulting_vertex = Some(split_result.vertex);
-
-    segment.1.segment.b = mesh_y.vertices[t_junction.a_vertex].position.clone();
-
-    let mut new_segment = IntersectionSegment::new(
-        segment.1.b.clone(),
-        IntersectionEndPoint::new(
-            Some([original_vertices_pair[1], usize::MAX]),
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        &Segment::new(&segment.1.segment.b, &original_segment_b),
-        segment.1.initial_face_reference,
-        segment.1.coplanar,
-    );
-    new_segment.a.resulting_vertex = Some(split_result.vertex);
-    new_segment.b.resulting_vertex = Some(original_vertices_pair[1]);
-
-    intersections_edge_map.remove(&(original_vertices_pair[0], original_vertices_pair[1]));
-    intersection_segments[segment.0] = segment.1.clone();
-
-    let mut edge_verts = [
-        segment.1.a.resulting_vertex.unwrap(),
-        segment.1.b.resulting_vertex.unwrap(),
-    ];
-
-    if edge_verts[0] > edge_verts[1] {
-        edge_verts = [edge_verts[1], edge_verts[0]];
-    }
-
-    intersections_edge_map.insert((edge_verts[0], edge_verts[1]), segment.clone());
-
-    let mut edge_verts = [
-        new_segment.a.resulting_vertex.unwrap(),
-        new_segment.b.resulting_vertex.unwrap(),
-    ];
-
-    if edge_verts[0] > edge_verts[1] {
-        edge_verts = [edge_verts[1], edge_verts[0]];
-    }
-
-    intersections_edge_map.insert(
-        (edge_verts[0], edge_verts[1]),
-        (intersection_segments.len(), new_segment.clone()),
-    );
-
-    intersection_segments.push(new_segment);
 }

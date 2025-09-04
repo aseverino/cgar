@@ -958,10 +958,6 @@ where
         });
     }
 
-    for j in &jobs {
-        println!("JOB: {:?}", j);
-    }
-
     jobs
 }
 
