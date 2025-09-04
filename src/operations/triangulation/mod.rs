@@ -22,7 +22,6 @@
 
 use crate::{geometry::point::Point, numeric::scalar::Scalar};
 
-pub mod cdt;
 pub mod delaunay;
 
 pub trait Triangulate2D<T: Scalar> {
