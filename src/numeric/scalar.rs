@@ -50,6 +50,7 @@ pub trait Scalar:
     + Div<Output = Self>
     + for<'a> AddAssign<&'a Self>
     + for<'a> SubAssign<&'a Self>
+    + Default
     + Debug
     + Abs
     + Zero
@@ -83,9 +84,6 @@ pub trait Scalar:
 
     fn sign(&self) -> i8;
 
-    fn default() -> Self {
-        Self::from(0)
-    }
     fn from_num_den(num: i32, den: i32) -> Self;
 
     fn cmp_ref(a: &Self, b: &Self) -> core::cmp::Ordering;

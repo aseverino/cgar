@@ -55,8 +55,8 @@ pub trait PointOps<T: Scalar, const N: usize>: Sized {
     fn midpoint(&self, other: &Self) -> Self;
 }
 
-impl<T: Scalar, const N: usize> Point<T, N> {
-    pub fn default() -> Point<T, N> {
+impl<T: Scalar, const N: usize> Default for Point<T, N> {
+    fn default() -> Point<T, N> {
         Point {
             coords: array::from_fn(|_| T::default()),
         }

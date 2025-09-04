@@ -41,6 +41,12 @@ use std::{
 #[derive(Clone, Debug)]
 pub struct CgarF64(pub f64);
 
+impl Default for CgarF64 {
+    fn default() -> Self {
+        CgarF64(0.0)
+    }
+}
+
 impl Scalar for CgarF64 {
     fn from_num_den(num: i32, den: i32) -> Self {
         CgarF64(num as f64 / den as f64)

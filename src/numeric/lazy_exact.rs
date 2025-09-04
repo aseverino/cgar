@@ -43,6 +43,12 @@ pub static ENABLE_PANIC_ON_EXACT: AtomicBool = AtomicBool::new(false);
 #[derive(Clone)]
 pub struct LazyExact(Arc<Node>);
 
+impl Default for LazyExact {
+    fn default() -> Self {
+        LazyExact::from_i32(0)
+    }
+}
+
 impl Scalar for LazyExact {
     fn min(self, other: Self) -> Self {
         if (&self - &other).sign() <= 0 {
@@ -57,10 +63,6 @@ impl Scalar for LazyExact {
         } else {
             other
         }
-    }
-
-    fn default() -> Self {
-        LazyExact::from_i32(0)
     }
 
     fn from_num_den(num: i32, den: i32) -> Self {

@@ -42,6 +42,12 @@ use std::{
 #[derive(Clone)]
 pub struct CgarRational(pub Rational);
 
+impl Default for CgarRational {
+    fn default() -> Self {
+        CgarRational(Rational::from((0, 1)))
+    }
+}
+
 impl Scalar for CgarRational {
     fn from_num_den(num: i32, den: i32) -> Self {
         CgarRational(Rational::from((num, den)))

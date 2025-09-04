@@ -38,6 +38,7 @@ pub trait SpatialElement<T: Scalar, const N: usize>:
     + PartialOrd
     + Into<[T; N]>
     + From<[T; N]>
+    + Default
 {
     fn new(coords: [T; N]) -> Self;
 
