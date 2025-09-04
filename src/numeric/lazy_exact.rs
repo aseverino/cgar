@@ -36,6 +36,10 @@ use crate::numeric::scalar::{FromRef, RefInto, Scalar};
 use crate::numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational};
 use crate::operations::{Abs, One, Zero};
 
+use std::sync::atomic::AtomicBool;
+
+pub static ENABLE_PANIC_ON_EXACT: AtomicBool = AtomicBool::new(false);
+
 #[derive(Clone)]
 pub struct LazyExact(Arc<Node>);
 
@@ -166,6 +170,29 @@ impl Scalar for LazyExact {
             _ => unreachable!(),
         }
     }
+
+    /// Try to get f64 value without forcing exact computation
+    fn as_f64_fast(&self) -> Option<f64> {
+        // Fast path: check if we already have exact computed
+        if let Some(exact) = self.0.exact.get() {
+            return exact.to_f64();
+        }
+
+        // Use ball approximation directly if tight enough
+        let ball = self.ball_ref();
+        if ball.r <= 1e-14 * ball.m.abs() {
+            return Some(ball.m);
+        }
+
+        None
+    }
+
+    #[inline(always)]
+    fn double_interval(&self) -> Option<(f64, f64)> {
+        let b = self.ball_ref();
+        // Ball is already outward-safe; just return center +/- radius.
+        Some((f64_next_down(b.m - b.r), f64_next_up(b.m + b.r)))
+    }
 }
 
 impl PartialEq for LazyExact {
@@ -291,12 +318,18 @@ enum Kind {
 impl LazyExact {
     const MAX_DEPTH: u32 = 1024;
 
-    #[inline(always)]
-    pub fn double_interval(&self) -> Option<(f64, f64)> {
-        let b = self.ball_ref();
-        // Ball is already outward-safe; just return center ± radius.
-        // If you want 1-ULP padding, you can wrap with next_down/next_up here.
-        Some((f64_next_down(b.m - b.r), f64_next_up(b.m + b.r)))
+    /// Fast comparison that avoids exact computation when possible
+    pub fn cmp_fast(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // Try ball-based comparison first
+        let diff = self - other;
+        if let Some(sign) = diff.ball_ref().sign_if_certain() {
+            return Some(match sign {
+                -1 => std::cmp::Ordering::Less,
+                0 => std::cmp::Ordering::Equal,
+                _ => std::cmp::Ordering::Greater,
+            });
+        }
+        None // Need exact computation
     }
 
     /// Return the f64 exactly represented by this node (only for true f64 leaves).
@@ -473,7 +506,9 @@ impl LazyExact {
 
     /// Exact value; computed lazily and cached.
     pub fn exact(&self) -> CgarRational {
-        // panic!("test");
+        // if ENABLE_PANIC_ON_EXACT.load(std::sync::atomic::Ordering::Relaxed) {
+        //     panic!("test");
+        // }
         if let Some(v) = self.0.exact.get() {
             return v.clone();
         }

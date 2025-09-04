@@ -24,6 +24,7 @@ use std::{
     array::from_fn,
     ops::{Add, Div, Mul, Neg, Sub},
     process::Output,
+    time::Instant,
 };
 
 use ahash::{AHashMap, AHashSet};
@@ -440,23 +441,29 @@ impl_mesh! {
         let mut face_aabbs = Vec::with_capacity(self.faces.len());
 
         for (face_idx, face) in self.faces.iter().enumerate() {
-            if face.removed { continue; }
-
-            let hes = self.face_half_edges(face_idx);
-            if hes[1] >= self.half_edges.len()
-                || hes[2] >= self.half_edges.len()
-                || self.half_edges[hes[2]].next != hes[0]
-            {
+            if face.removed || face.half_edge == usize::MAX {
                 continue;
             }
 
-            let v0_idx = self.half_edges[hes[0]].vertex;
-            let v1_idx = self.half_edges[hes[1]].vertex;
-            let v2_idx = self.half_edges[hes[2]].vertex;
-            if v0_idx >= self.vertices.len()
-                || v1_idx >= self.vertices.len()
-                || v2_idx >= self.vertices.len()
-            {
+            let he0 = face.half_edge;
+            if he0 >= self.half_edges.len() || self.half_edges[he0].removed {
+                continue;
+            }
+
+            let he1 = self.half_edges[he0].next;
+            let he2 = self.half_edges[he1].next;
+
+            // Quick validation - avoid bounds checks in hot path
+            if he1 >= self.half_edges.len() || he2 >= self.half_edges.len()
+                || self.half_edges[he2].next != he0 {
+                continue;
+            }
+
+            let v0_idx = self.half_edges[he0].vertex;
+            let v1_idx = self.half_edges[he1].vertex;
+            let v2_idx = self.half_edges[he2].vertex;
+
+            if v0_idx >= self.vertices.len() || v1_idx >= self.vertices.len() || v2_idx >= self.vertices.len() {
                 continue;
             }
 
@@ -464,18 +471,16 @@ impl_mesh! {
             let p1 = &self.vertices[v1_idx].position;
             let p2 = &self.vertices[v2_idx].position;
 
-            // Per-axis min/max via sign-of-difference (LazyExact-friendly)
-            let mins = std::array::from_fn(|i| min3_ref(&p0[i], &p1[i], &p2[i]).clone());
-            let maxs = std::array::from_fn(|i| max3_ref(&p0[i], &p1[i], &p2[i]).clone());
+            let aabb = if let Some(fast_aabb) = compute_triangle_aabb_fast(p0, p1, p2) {
+                fast_aabb
+            } else {
+                compute_triangle_aabb_exact(p0, p1, p2)
+            };
 
-            let aabb = Aabb::<T, N, Point<T, N>>::new(
-                Point::<T, N>::from_vals(mins),
-                Point::<T, N>::from_vals(maxs),
-            );
             face_aabbs.push((aabb, face_idx));
         }
 
-        AabbTree::<T, N, Point<T, N>, usize>::build(face_aabbs)
+        AabbTree::build(face_aabbs)
     }
 
     /// Compute the AABB of face `f`.
@@ -512,8 +517,13 @@ impl_mesh! {
         let p1 = &self.vertices[v1_idx].position;
         let p2 = &self.vertices[v2_idx].position;
 
-        // Compute AABB from the three vertices directly
-        compute_triangle_aabb(p0, p1, p2)
+        // Try fast approximate AABB first
+        if let Some(aabb) = compute_triangle_aabb_fast(p0, p1, p2) {
+            aabb
+        } else {
+            // Fallback to exact computation only if approximate fails
+            compute_triangle_aabb_exact(p0, p1, p2)
+        }
     }
 
     pub fn get_or_insert_vertex(&mut self, pos: &Point<T, N>) -> (usize, bool) {
@@ -1449,7 +1459,40 @@ where
     if (c - ab).is_positive() { c } else { ab }
 }
 
-pub fn compute_triangle_aabb<T: Scalar, const N: usize>(
+/// Fast approximate triangle AABB using double intervals
+pub fn compute_triangle_aabb_fast<T: Scalar, const N: usize>(
+    p0: &Point<T, N>,
+    p1: &Point<T, N>,
+    p2: &Point<T, N>,
+) -> Option<Aabb<T, N, Point<T, N>>>
+where
+    T: From<f64>,
+{
+    // Single allocation for all coordinates
+    let mut coords = [[0.0; N]; 3];
+
+    // Batch extract all coordinates
+    for i in 0..N {
+        coords[0][i] = p0[i].as_f64_fast()?;
+        coords[1][i] = p1[i].as_f64_fast()?;
+        coords[2][i] = p2[i].as_f64_fast()?;
+    }
+
+    // Vectorized min/max computation
+    let min_coords =
+        std::array::from_fn(|i| T::from(coords[0][i].min(coords[1][i]).min(coords[2][i])));
+
+    let max_coords =
+        std::array::from_fn(|i| T::from(coords[0][i].max(coords[1][i]).max(coords[2][i])));
+
+    Some(Aabb::new(
+        Point::<T, N>::from_vals(min_coords),
+        Point::<T, N>::from_vals(max_coords),
+    ))
+}
+
+/// Exact triangle AABB computation (fallback)
+pub fn compute_triangle_aabb_exact<T: Scalar, const N: usize>(
     p0: &Point<T, N>,
     p1: &Point<T, N>,
     p2: &Point<T, N>,

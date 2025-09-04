@@ -74,7 +74,7 @@ where
     /// while node AABBs are exact unions.
     pub fn build(mut items: Vec<(Aabb<T, N, P>, D)>) -> Self
     where
-        T: Scalar + From<CgarRational>,
+        T: Scalar,
     {
         if items.is_empty() {
             panic!("Cannot build tree from empty items");
@@ -85,7 +85,7 @@ where
 
     fn build_median(items: &mut Vec<(Aabb<T, N, P>, D)>) -> Self
     where
-        T: Scalar + From<CgarRational>,
+        T: Scalar,
     {
         let n = items.len();
         if n == 1 {
@@ -102,20 +102,18 @@ where
 
         let axis = choose_axis_approx::<T, N, P, D>(items);
         let mid = n / 2;
-        items.select_nth_unstable_by(mid, |(a, _), (b, _)| {
-            approx_center_axis::<T, N, P>(a, axis)
-                .partial_cmp(&approx_center_axis::<T, N, P>(b, axis))
-                .unwrap_or(Ordering::Equal)
-        });
+
+        // Use pdqsort-based select_nth with optimized comparison
+        items.select_nth_unstable_by(mid, |a, b| compare_centers(a, b, axis));
 
         let mut right_items = items.split_off(mid);
         let left_child = Box::new(Self::build_median(items));
         let right_child = Box::new(Self::build_median(&mut right_items));
 
-        let node_aabb = left_child.aabb().union(right_child.aabb()); // exact once
-        let total_items = left_child.size() + right_child.size();
+        // Try approximate union first
+        let node_aabb = left_child.aabb().union(right_child.aabb());
 
-        // approx union from children (no converts)
+        let total_items = left_child.size() + right_child.size();
         let (lmn, lmx) = left_child.approx_bounds();
         let (rmn, rmx) = right_child.approx_bounds();
         let (amin, amax) = approx_union(&lmn, &lmx, &rmn, &rmx);
@@ -130,8 +128,6 @@ where
             amax,
         }
     }
-
-    // ...existing code...
 
     fn build_binary_tree(mut items: Vec<(Aabb<T, N, P>, D)>) -> Self
     where
@@ -202,9 +198,18 @@ where
                 amin,
                 amax,
             } => {
+                // First: cheap approximate test
                 if !intersects_approx::<N>(amin, amax, qmn, qmx) {
                     return;
                 }
+                // Second: try approximate AABB test if possible
+                if let Some(definitely_no_intersect) = aabb.intersects_approx(q_exact) {
+                    if !definitely_no_intersect {
+                        return;
+                    }
+                }
+
+                // Third: exact test only if needed
                 if aabb.intersects(q_exact) {
                     out.push(data);
                 }
@@ -592,4 +597,31 @@ fn approx_from_exact<T: Scalar, const N: usize, P: SpatialElement<T, N>>(
         mx[i] = f64_next_up(hi);
     }
     (mn, mx)
+}
+
+#[inline(always)]
+fn approx_center_axis_fast<T: Scalar, const N: usize, P: SpatialElement<T, N>>(
+    aabb: &Aabb<T, N, P>,
+    axis: usize,
+) -> f64 {
+    // Try fast path first
+    if let Some(mn) = aabb.min[axis].as_f64_fast() {
+        if let Some(mx) = aabb.max[axis].as_f64_fast() {
+            return 0.5 * (mn + mx);
+        }
+    }
+
+    // Fallback to current approximation method
+    approx_center_axis(aabb, axis)
+}
+
+#[inline(always)]
+fn compare_centers<T: Scalar, const N: usize, P: SpatialElement<T, N>, D>(
+    a: &(Aabb<T, N, P>, D),
+    b: &(Aabb<T, N, P>, D),
+    axis: usize,
+) -> std::cmp::Ordering {
+    let ca = approx_center_axis_fast(&a.0, axis);
+    let cb = approx_center_axis_fast(&b.0, axis);
+    ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
 }

@@ -102,6 +102,14 @@ impl Scalar for CgarF64 {
         // total_cmp handles -0.0 and NaN deterministically
         a.0.total_cmp(&b.0)
     }
+
+    fn as_f64_fast(&self) -> Option<f64> {
+        Some(self.0)
+    }
+
+    fn double_interval(&self) -> Option<(f64, f64)> {
+        Some((self.0, self.0))
+    }
 }
 
 impl<'a, 'b> Add<&'b CgarF64> for &'a CgarF64 {

@@ -108,5 +108,12 @@ pub trait Scalar:
     fn point_merge_threshold_squared() -> Self;
 
     fn approx_eq(&self, other: &Self) -> bool;
-    // fn acos(&self) -> Self;
+
+    fn as_f64_fast(&self) -> Option<f64>;
+
+    /// Try to get a double interval [lo, hi] containing this value
+    /// Returns None if the approximation is unreliable
+    fn double_interval(&self) -> Option<(f64, f64)> {
+        None // Default implementation for non-LazyExact types
+    }
 }

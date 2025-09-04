@@ -36,6 +36,43 @@ pub struct Aabb<T: Scalar, const N: usize, P: SpatialElement<T, N>> {
 }
 
 impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
+    /// Fast approximate intersection test using double intervals
+    pub fn intersects_approx(&self, other: &Self) -> Option<bool> {
+        if let (Some(self_bounds), Some(other_bounds)) =
+            (self.double_bounds(), other.double_bounds())
+        {
+            for i in 0..N {
+                if self_bounds.1[i] < other_bounds.0[i] || other_bounds.1[i] < self_bounds.0[i] {
+                    return Some(false); // definitely no intersection
+                }
+            }
+            // Could intersect, need exact test or return uncertain
+            None
+        } else {
+            None // can't decide with approximation
+        }
+    }
+
+    /// Get double interval bounds if available
+    fn double_bounds(&self) -> Option<([f64; N], [f64; N])> {
+        let mut mins = [0.0; N];
+        let mut maxs = [0.0; N];
+
+        for i in 0..N {
+            if let Some((lo, hi)) = self.min[i].double_interval() {
+                mins[i] = lo;
+            } else {
+                return None;
+            }
+            if let Some((lo, hi)) = self.max[i].double_interval() {
+                maxs[i] = hi;
+            } else {
+                return None;
+            }
+        }
+        Some((mins, maxs))
+    }
+
     pub fn new(min: P, max: P) -> Self {
         Aabb {
             min,

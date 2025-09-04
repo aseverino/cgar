@@ -105,6 +105,14 @@ impl Scalar for CgarRational {
         (a.0.numer().clone() * b.0.denom().clone())
             .cmp(&(b.0.numer().clone() * a.0.denom().clone()))
     }
+
+    fn as_f64_fast(&self) -> Option<f64> {
+        Some(self.0.to_f64())
+    }
+
+    fn double_interval(&self) -> Option<(f64, f64)> {
+        Some((self.0.to_f64(), self.0.to_f64()))
+    }
 }
 
 impl<'a, 'b> Add<&'b CgarRational> for &'a CgarRational {
