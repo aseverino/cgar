@@ -85,21 +85,12 @@ pub fn rewrite_faces_from_cdt_batch<T: Scalar, const N: usize>(
     }
 
     let faces_vec: Vec<_> = to_remove.iter().copied().collect();
-    let (weld_starts, affected_vs) = mesh.remove_triangles_deferred(&faces_vec);
-    // mesh.weld_border_components_from(&weld_starts);
-    // mesh.fix_vertices_outgoing_for(&affected_vs);
+    let (_, _) = mesh.remove_triangles_deferred(&faces_vec);
 
-    println!("BEGINNING REWRITE");
+    let mut triangles = Vec::with_capacity(jobs.len() * 4);
 
-    // let _ = write_obj(&mesh, "/mnt/v/cgar_meshes/before.obj");
-
-    // Let's try simply adding the triangles from cdts.
-    for (i, (job, dt)) in jobs.iter().zip(cdts.iter()).enumerate() {
-        // let inside = triangles_inside_for_job(&dt.points, &dt.triangles, &job.segments);
-        for (ti, t) in dt.triangles.iter().enumerate() {
-            // if !inside.contains(&ti) {
-            // continue;
-            // }
+    for (job, dt) in jobs.iter().zip(cdts.iter()) {
+        for t in dt.triangles.iter() {
             let (a, b, c) = (t.0, t.1, t.2);
             // convert local indices to global
             let (ga, gb, gc) = (
@@ -107,13 +98,12 @@ pub fn rewrite_faces_from_cdt_batch<T: Scalar, const N: usize>(
                 job.verts_global[b],
                 job.verts_global[c],
             );
-            mesh.add_triangle(ga, gb, gc);
-            // let _ = write_obj(
-            //     &mesh,
-            //     &format!("/mnt/v/cgar_meshes/before_{}_{}.obj", i, ti),
-            // );
+
+            triangles.push((ga, gb, gc));
         }
     }
+
+    mesh.add_triangles_deferred(&triangles);
 }
 
 /// Consume CDT results and rebuild all faces in one batch.
