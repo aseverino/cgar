@@ -797,4 +797,136 @@ impl_mesh! {
 
         face_idx
     }
+
+    pub fn add_triangles_deferred(&mut self, triangles: &[(usize, usize, usize)]) -> Vec<usize> {
+        let mut new_borders = Vec::with_capacity(triangles.len() * 3);
+        let mut affected_vertices = Vec::with_capacity(triangles.len() * 3);
+        let mut face_indices = Vec::with_capacity(triangles.len());
+
+        for &(v0, v1, v2) in triangles {
+            let face_idx = self.add_triangle_no_weld(v0, v1, v2, &mut new_borders, &mut affected_vertices);
+            if face_idx != usize::MAX {
+                face_indices.push(face_idx);
+            }
+        }
+
+        // Single border rebuild pass for all affected components
+        if !new_borders.is_empty() {
+            self.weld_border_components_from(&new_borders);
+        }
+
+        // Single vertex fix pass
+        if !affected_vertices.is_empty() {
+            self.fix_vertices_outgoing_for(&affected_vertices);
+        }
+
+        face_indices
+    }
+
+    /// Core triangle addition without border rebuilding
+    fn add_triangle_no_weld(
+        &mut self,
+        v0: usize,
+        v1: usize,
+        v2: usize,
+        new_borders: &mut Vec<usize>,
+        affected_vertices: &mut Vec<usize>
+    ) -> usize {
+        let ccw_ok = self.dir_is_free(v0, v1) && self.dir_is_free(v1, v2) && self.dir_is_free(v2, v0);
+        let cw_ok = self.dir_is_free(v0, v2) && self.dir_is_free(v2, v1) && self.dir_is_free(v1, v0);
+
+        let (edges, verts) = if ccw_ok {
+            ([(v0, v1), (v1, v2), (v2, v0)], [v0, v1, v2])
+        } else if cw_ok {
+            ([(v0, v2), (v2, v1), (v1, v0)], [v0, v2, v1])
+        } else {
+            return usize::MAX;
+        };
+
+        let face_idx = self.faces.len();
+        self.faces.push(Face::new(0));
+
+        let (e0, _, n0, p0n0) = self.ensure_dir_no_weld(face_idx, edges[0].0, edges[0].1);
+        let (e1, _, n1, p1n1) = self.ensure_dir_no_weld(face_idx, edges[1].0, edges[1].1);
+        let (e2, _, n2, p2n2) = self.ensure_dir_no_weld(face_idx, edges[2].0, edges[2].1);
+
+        // Interior ring
+        self.half_edges[e0].next = e1;
+        self.half_edges[e1].prev = e0;
+        self.half_edges[e1].next = e2;
+        self.half_edges[e2].prev = e1;
+        self.half_edges[e2].next = e0;
+        self.half_edges[e0].prev = e2;
+
+        // Collect border starts for later welding
+        if n0 { new_borders.push(self.half_edges[e0].twin); }
+        if n1 { new_borders.push(self.half_edges[e1].twin); }
+        if n2 { new_borders.push(self.half_edges[e2].twin); }
+
+        if let Some((p, n)) = p0n0 { new_borders.extend_from_slice(&[p, n]); }
+        if let Some((p, n)) = p1n1 { new_borders.extend_from_slice(&[p, n]); }
+        if let Some((p, n)) = p2n2 { new_borders.extend_from_slice(&[p, n]); }
+
+        // Collect affected vertices
+        affected_vertices.extend_from_slice(&verts);
+
+        self.faces[face_idx].half_edge = e0;
+        face_idx
+    }
+
+    /// Lightweight dir_is_free check
+    #[inline(always)]
+    fn dir_is_free(&self, from: usize, to: usize) -> bool {
+        if let Some(&h) = self.edge_map.get(&(from, to)) {
+            !self.half_edges[h].removed && self.half_edges[h].face.is_none()
+        } else {
+            true
+        }
+    }
+
+    /// ensure_dir without border component rebuilding
+    #[inline(always)]
+    fn ensure_dir_no_weld(
+        &mut self,
+        face_idx: usize,
+        from: usize,
+        to: usize,
+    ) -> (usize, usize, bool, Option<(usize, usize)>) {
+        if let Some(&he) = self.edge_map.get(&(from, to)) {
+            let p = self.half_edges[he].prev;
+            let n = self.half_edges[he].next;
+
+            // Unlink from border ring
+            if p != he && n != he {
+                self.half_edges[p].next = n;
+                self.half_edges[n].prev = p;
+            }
+
+            self.half_edges[he].face = Some(face_idx);
+            let t = self.half_edges[he].twin;
+            (he, t, false, Some((p, n)))
+        } else {
+            let he = self.half_edges.len();
+            let mut h = HalfEdge::new(to);
+            h.face = Some(face_idx);
+            self.half_edges.push(h);
+            self.edge_map.insert((from, to), he);
+
+            if let Some(&rev) = self.edge_map.get(&(to, from)) {
+                self.half_edges[he].twin = rev;
+                self.half_edges[rev].twin = he;
+                (he, rev, false, None)
+            } else {
+                let b = self.half_edges.len();
+                let mut bh = HalfEdge::new(from);
+                bh.twin = he;
+                bh.next = b;  // temporary self-loop
+                bh.prev = b;
+                self.half_edges.push(bh);
+                self.edge_map.insert((to, from), b);
+                self.half_edges[he].twin = b;
+                (he, b, true, None)
+            }
+        }
+    }
 }
