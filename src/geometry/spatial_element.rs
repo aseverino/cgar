@@ -40,6 +40,8 @@ pub trait SpatialElement<T: Scalar, const N: usize>:
     + From<[T; N]>
     + Default
 {
+    type With<U: Scalar>: SpatialElement<U, N>;
+
     fn new(coords: [T; N]) -> Self;
 
     fn from_vals<V>(vals: [V; N]) -> Self
@@ -49,4 +51,7 @@ pub trait SpatialElement<T: Scalar, const N: usize>:
     fn coords(&self) -> &[T; N];
     fn coords_mut(&mut self) -> &mut [T; N];
     fn iter(&self) -> std::slice::Iter<'_, T>;
+    fn cast<U: Scalar>(&self) -> Self::With<U>
+    where
+        U: From<T>;
 }

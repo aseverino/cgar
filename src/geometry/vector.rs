@@ -51,6 +51,7 @@ where
 pub struct Vector<T: Scalar, const N: usize>(pub Point<T, N>);
 
 impl<T: Scalar, const N: usize> SpatialElement<T, N> for Vector<T, N> {
+    type With<U: Scalar> = Vector<U, N>;
     fn new(coords: [T; N]) -> Vector<T, N> {
         Vector(Point { coords })
     }
@@ -72,6 +73,13 @@ impl<T: Scalar, const N: usize> SpatialElement<T, N> for Vector<T, N> {
 
     fn iter(&self) -> std::slice::Iter<'_, T> {
         self.0.coords.iter()
+    }
+
+    fn cast<U: Scalar>(&self) -> Self::With<U>
+    where
+        U: From<T>,
+    {
+        Vector::<U, N>::from_vals(from_fn(|i| U::from(self.0.coords[i].clone())))
     }
 }
 

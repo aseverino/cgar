@@ -28,7 +28,7 @@ use std::{
 
 use crate::{
     geometry::{
-        Aabb,
+        Aabb, point,
         spatial_element::SpatialElement,
         vector::{Vector, VectorOps},
     },
@@ -64,6 +64,8 @@ impl<T: Scalar, const N: usize> Default for Point<T, N> {
 }
 
 impl<T: Scalar, const N: usize> SpatialElement<T, N> for Point<T, N> {
+    type With<U: Scalar> = Point<U, N>;
+
     fn new(coords: [T; N]) -> Point<T, N> {
         Point { coords }
     }
@@ -87,6 +89,13 @@ impl<T: Scalar, const N: usize> SpatialElement<T, N> for Point<T, N> {
 
     fn iter(&self) -> std::slice::Iter<'_, T> {
         self.coords.iter()
+    }
+
+    fn cast<U: Scalar>(&self) -> Self::With<U>
+    where
+        U: From<T>,
+    {
+        Point::<U, N>::from_vals(from_fn(|i| U::from(self.coords[i].clone())))
     }
 }
 
