@@ -49,8 +49,6 @@ where
         }
     }
 
-    println!("no materializing");
-
     return true;
 }
 
@@ -399,15 +397,29 @@ where
         + std::ops::Div<&'a T, Output = T>
         + std::ops::Neg<Output = T>,
 {
-    // det | b-a, c-a |
     let det = (&b[0] - &a[0]) * (&c[1] - &a[1]) - (&b[1] - &a[1]) * (&c[0] - &a[0]);
-    // light guard
-    let eps = (b[0].abs() + b[1].abs() + c[0].abs() + c[1].abs() + a[0].abs() + a[1].abs())
-        * T::from(EPS);
-    if (&det.abs() - &eps).is_negative_or_zero() {
-        T::zero()
+
+    let scale_approx = if let (Some(a0), Some(a1), Some(b0), Some(b1), Some(c0), Some(c1)) = (
+        a[0].as_f64_fast(),
+        a[1].as_f64_fast(),
+        b[0].as_f64_fast(),
+        b[1].as_f64_fast(),
+        c[0].as_f64_fast(),
+        c[1].as_f64_fast(),
+    ) {
+        (a0.abs() + a1.abs() + b0.abs() + b1.abs() + c0.abs() + c1.abs()) * EPS
     } else {
-        det
+        EPS // Conservative fallback without exact computation
+    };
+
+    if let Some(det_approx) = det.as_f64_fast() {
+        if det_approx.abs() <= scale_approx {
+            T::zero()
+        } else {
+            det
+        }
+    } else {
+        det // Can't determine with approximation, return raw determinant
     }
 }
 
@@ -473,6 +485,34 @@ where
         }
     }
     (minx.clone(), miny.clone(), maxx.clone(), maxy.clone())
+}
+
+#[inline]
+pub fn bbox_approx<T: Scalar>(pts: &[Point2<T>]) -> (f64, f64, f64, f64) {
+    let mut minx = pts[0][0].ball_center_f64();
+    let mut miny = pts[0][1].ball_center_f64();
+    let mut maxx = minx;
+    let mut maxy = miny;
+
+    for p in &pts[1..] {
+        let px = p[0].ball_center_f64();
+        let py = p[1].ball_center_f64();
+
+        if px < minx {
+            minx = px;
+        }
+        if py < miny {
+            miny = py;
+        }
+        if px > maxx {
+            maxx = px;
+        }
+        if py > maxy {
+            maxy = py;
+        }
+    }
+
+    (minx, miny, maxx, maxy)
 }
 
 #[inline]

@@ -35,6 +35,7 @@ use crate::{
     mesh::{basic_types::Mesh, intersection_segment::IntersectionSegment},
     numeric::{
         cgar_f64::CgarF64,
+        lazy_exact::LazyExact,
         scalar::{RefInto, Scalar},
     },
     operations::triangulation::delaunay::Delaunay,
@@ -741,19 +742,51 @@ where
         return false;
     }
     let (minx, maxx) = if (&a[0] - &b[0]).is_negative_or_zero() {
-        (a[0].clone(), b[0].clone())
+        (&a[0], &b[0])
     } else {
-        (b[0].clone(), a[0].clone())
+        (&b[0], &a[0])
     };
     let (miny, maxy) = if (&a[1] - &b[1]).is_negative_or_zero() {
-        (a[1].clone(), b[1].clone())
+        (&a[1], &b[1])
     } else {
-        (b[1].clone(), a[1].clone())
+        (&b[1], &a[1])
     };
     (&p[0] - &minx).is_positive_or_zero()
         && (&p[0] - &maxx).is_negative_or_zero()
         && (&p[1] - &miny).is_positive_or_zero()
         && (&p[1] - &maxy).is_negative_or_zero()
+}
+
+#[inline]
+fn on_segment_uv_fast<T: Scalar + PartialOrd>(a: &Point2<T>, b: &Point2<T>, p: &Point2<T>) -> bool
+where
+    for<'x> &'x T: std::ops::Sub<&'x T, Output = T>
+        + std::ops::Mul<&'x T, Output = T>
+        + std::ops::Add<&'x T, Output = T>
+        + std::ops::Div<&'x T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    let ax = a[0].ball_center_f64();
+    let ay = a[1].ball_center_f64();
+    let bx = b[0].ball_center_f64();
+    let by = b[1].ball_center_f64();
+    let px = p[0].ball_center_f64();
+    let py = p[1].ball_center_f64();
+
+    let ux = bx - ax;
+    let uy = by - ay;
+    let vx = px - ax;
+    let vy = py - ay;
+    let cross = ux * vy - uy * vx;
+    let eps = EPS * (ux.abs() + uy.abs()).max(1.0);
+
+    if cross.abs() > eps {
+        return false;
+    }
+
+    let (minx, maxx) = if ax <= bx { (ax, bx) } else { (bx, ax) };
+    let (miny, maxy) = if ay <= by { (ay, by) } else { (by, ay) };
+    px >= minx - eps && px <= maxx + eps && py >= miny - eps && py <= maxy + eps
 }
 
 #[inline]
@@ -790,13 +823,15 @@ fn add_split_or_chain_uv<T: Scalar + PartialOrd>(
     let b = &points_uv[lb];
 
     // degenerate AB guard
-    if (&a[0] - &b[0]).is_zero() && (&a[1] - &b[1]).is_zero() {
+    if (a[0].ball_center_f64() - b[0].ball_center_f64()).abs() < EPS
+        && (a[1].ball_center_f64() - b[1].ball_center_f64()).abs() < EPS
+    {
         return;
     }
 
     // collect all local indices strictly between la and lb on segment in UV
     let mut mids: Vec<usize> = (0..points_uv.len())
-        .filter(|&k| k != la && k != lb && on_segment_uv(a, b, &points_uv[k]))
+        .filter(|&k| k != la && k != lb && on_segment_uv_fast(a, b, &points_uv[k]))
         .collect();
 
     if mids.is_empty() {

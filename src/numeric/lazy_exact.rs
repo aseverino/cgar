@@ -201,6 +201,10 @@ impl Scalar for LazyExact {
         // Ball is already outward-safe; just return center +/- radius.
         Some((f64_next_down(b.m - b.r), f64_next_up(b.m + b.r)))
     }
+
+    fn ball_center_f64(&self) -> f64 {
+        self.ball_ref().m
+    }
 }
 
 impl PartialEq for LazyExact {
@@ -514,9 +518,10 @@ impl LazyExact {
 
     /// Exact value; computed lazily and cached.
     pub fn exact(&self) -> CgarRational {
-        // if ENABLE_PANIC_ON_EXACT.load(std::sync::atomic::Ordering::Relaxed) {
-        //     panic!("test");
-        // }
+        if ENABLE_PANIC_ON_EXACT.load(std::sync::atomic::Ordering::Relaxed) {
+            panic!("test");
+            // println!("materialized");
+        }
         if let Some(v) = self.0.exact.get() {
             return v.clone();
         }

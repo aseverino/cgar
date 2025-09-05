@@ -28,7 +28,7 @@ use crate::geometry::Point2;
 use crate::geometry::point::Point;
 use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::util::EPS;
-use crate::kernel::predicates::{bbox, incircle, orient2d};
+use crate::kernel::predicates::{bbox, bbox_approx, incircle, orient2d};
 use crate::mesh::basic_types::Mesh;
 use crate::numeric::scalar::Scalar;
 
@@ -145,19 +145,18 @@ where
         }
 
         // Create super-triangle that contains all points
-        let (minx, miny, maxx, maxy) = bbox(&points);
+        let (minx, miny, maxx, maxy) = bbox_approx(&points);
         let dx = &maxx - &minx;
         let dy = &maxy - &miny;
         let delta = dx.max(dy);
-        let cx = &(minx + maxx) * &T::from_num_den(1, 2);
-        let cy = &(miny + maxy) * &T::from_num_den(1, 2);
+        let cx = &(minx + maxx) * 0.5;
+        let cy = &(miny + maxy) * 0.5;
 
-        let r = T::from(64) * delta + T::one();
-        let sqrt_3 = T::from(SQRT_3);
-        let p_super0 =
-            Point2::<T>::from_vals([T::from(cx.clone()), T::from(&(&cy + &T::from(2.0)) * &r)]);
-        let p_super1 = Point2::<T>::from_vals([T::from(&cx - &(&sqrt_3 * &r)), T::from(&cy - &r)]);
-        let p_super2 = Point2::<T>::from_vals([T::from(&cx + &(&sqrt_3 * &r)), T::from(&cy - &r)]);
+        let r = 64.0 * delta + 1.0;
+        let sqrt_3 = SQRT_3;
+        let p_super0 = Point2::<T>::from_vals([T::from(cx.clone()), T::from((cy + 2.0) * r)]);
+        let p_super1 = Point2::<T>::from_vals([T::from(&cx - (sqrt_3 * r)), T::from(cy - r)]);
+        let p_super2 = Point2::<T>::from_vals([T::from(&cx + (sqrt_3 * r)), T::from(cy - r)]);
 
         let s0 = points.len();
         let s1 = s0 + 1;
@@ -189,7 +188,7 @@ where
         // Find triangles whose circumcircle contains p
         let mut bad_triangles = Vec::new();
         for (i, &t) in triangles.iter().enumerate() {
-            if Self::point_in_circumcircle(p, t, points) {
+            if Self::point_in_circumcircle_fast(p, t, points) {
                 bad_triangles.push(i);
             }
         }
@@ -246,6 +245,31 @@ where
         };
 
         incircle(&points[aa], &points[bb], &points[cc], p).is_positive()
+    }
+
+    fn point_in_circumcircle_fast(p: &Point2<T>, t: Triangle, points: &[Point2<T>]) -> bool {
+        // Fast approximation using ball centers directly
+        if let Some((cx, cy, r2)) =
+            circumcircle_approx_fast(&points[t.0], &points[t.1], &points[t.2])
+        {
+            let px = p[0].ball_center_f64();
+            let py = p[1].ball_center_f64();
+
+            if [px, py, cx, cy, r2].iter().all(|x| x.is_finite()) {
+                let dx = px - cx;
+                let dy = py - cy;
+                let dist2 = dx * dx + dy * dy;
+
+                // Conservative bounds: if clearly outside, return false
+                if dist2 > r2 * (1.0 + EPS) {
+                    return false;
+                }
+                // If clearly inside, could return true, but being conservative here
+            }
+        }
+
+        // Fallback to exact incircle test
+        Self::point_in_circumcircle(p, t, points)
     }
 
     /// Complete Bowyer-Watson with constraint handling
@@ -1347,4 +1371,39 @@ where
     }
 
     accepted
+}
+
+fn circumcircle_approx_fast<T: Scalar>(
+    a: &Point2<T>,
+    b: &Point2<T>,
+    c: &Point2<T>,
+) -> Option<(f64, f64, f64)> {
+    let ax = a[0].ball_center_f64();
+    let ay = a[1].ball_center_f64();
+    let bx = b[0].ball_center_f64();
+    let by = b[1].ball_center_f64();
+    let cx = c[0].ball_center_f64();
+    let cy = c[1].ball_center_f64();
+
+    if ![ax, ay, bx, by, cx, cy].iter().all(|x| x.is_finite()) {
+        return None;
+    }
+
+    let d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    if d.abs() < 1e-15 {
+        return None;
+    }
+
+    let a2 = ax * ax + ay * ay;
+    let b2 = bx * bx + by * by;
+    let c2 = cx * cx + cy * cy;
+
+    let ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d;
+    let uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+
+    let dx = ax - ux;
+    let dy = ay - uy;
+    let r2 = dx * dx + dy * dy;
+
+    Some((ux, uy, r2))
 }

@@ -266,7 +266,6 @@ where
         let mut intersection_segments_b = Vec::new();
         let intersection_segments = [&mut intersection_segments_a, &mut intersection_segments_b];
 
-        ENABLE_PANIC_ON_EXACT.store(true, std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
         // let (tree_a, aabb_lookup_a) = a.build_face_tree_with_lookup();
         let tree_b = b.build_face_tree();

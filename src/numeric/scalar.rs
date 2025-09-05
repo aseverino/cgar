@@ -114,4 +114,6 @@ pub trait Scalar:
     fn double_interval(&self) -> Option<(f64, f64)> {
         None // Default implementation for non-LazyExact types
     }
+
+    fn ball_center_f64(&self) -> f64;
 }

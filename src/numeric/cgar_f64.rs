@@ -116,6 +116,10 @@ impl Scalar for CgarF64 {
     fn double_interval(&self) -> Option<(f64, f64)> {
         Some((self.0, self.0))
     }
+
+    fn ball_center_f64(&self) -> f64 {
+        self.0
+    }
 }
 
 impl<'a, 'b> Add<&'b CgarF64> for &'a CgarF64 {
