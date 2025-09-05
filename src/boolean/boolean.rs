@@ -174,6 +174,9 @@ where
             let mut face_pairs: AHashMap<usize, Vec<usize>> = AHashMap::new();
             for seg_idx in 0..intersection_segments.len() {
                 let seg = &intersection_segments[seg_idx];
+                if seg[0].resulting_vertex == seg[1].resulting_vertex {
+                    continue; // degenerate segment
+                }
                 let he = self
                     .edge_map
                     .get(&(

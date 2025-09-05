@@ -24,6 +24,7 @@ use crate::geometry::Point2;
 use crate::geometry::point::PointOps;
 use crate::geometry::segment::Segment;
 use crate::geometry::spatial_element::SpatialElement;
+use crate::geometry::util::EPS;
 use crate::geometry::vector::VectorOps;
 use crate::geometry::{point::Point, vector::Vector};
 use crate::numeric::cgar_f64::CgarF64;
@@ -43,12 +44,39 @@ where
     for<'a> &'a T: Sub<&'a T, Output = T> + Mul<&'a T, Output = T>,
 {
     for i in 0..N {
-        if !(&p1.coords[i] - &p2.coords[i]).abs().is_zero() {
+        if !(&p1.coords[i] - &p2.coords[i]).is_zero() {
             return false;
         }
     }
 
+    println!("no materializing");
+
     return true;
+}
+
+pub fn are_approximately_equal<T: Scalar, const N: usize>(
+    p1: &Point<T, N>,
+    p2: &Point<T, N>,
+) -> bool
+where
+    for<'a> &'a T: Sub<&'a T, Output = T>,
+{
+    for i in 0..N {
+        let diff = &p1.coords[i] - &p2.coords[i];
+
+        // Fast path: try approximation first
+        if let Some(diff_f64) = diff.as_f64_fast() {
+            if diff_f64.abs() > T::point_merge_threshold().as_f64_fast().unwrap_or(EPS) {
+                return false;
+            }
+        } else {
+            // Fallback: use exact comparison only if approximation unavailable
+            if !diff.is_zero() {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 pub fn are_collinear<T, const N: usize>(a: &Point<T, N>, b: &Point<T, N>, c: &Point<T, N>) -> bool
@@ -375,8 +403,12 @@ where
     let det = (&b[0] - &a[0]) * (&c[1] - &a[1]) - (&b[1] - &a[1]) * (&c[0] - &a[0]);
     // light guard
     let eps = (b[0].abs() + b[1].abs() + c[0].abs() + c[1].abs() + a[0].abs() + a[1].abs())
-        * T::from(1e-15);
-    if det.abs() <= eps { T::zero() } else { det }
+        * T::from(EPS);
+    if (&det.abs() - &eps).is_negative_or_zero() {
+        T::zero()
+    } else {
+        det
+    }
 }
 
 #[inline]
@@ -405,8 +437,12 @@ where
 
     let scale =
         (&ax.abs() + &ay.abs() + bx.abs() + by.abs() + cx.abs() + cy.abs()).max(T::from(1.0));
-    let eps = &scale * &scale * T::from(1e-14);
-    if det.abs() <= eps { T::zero() } else { det }
+    let eps = &scale * &scale * T::from(EPS);
+    if (&det.abs() - &eps).is_negative_or_zero() {
+        T::zero()
+    } else {
+        det
+    }
 }
 
 #[inline]

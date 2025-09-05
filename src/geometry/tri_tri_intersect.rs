@@ -730,10 +730,15 @@ fn coplanar_axes<T: Scalar, const N: usize>(n: &Vector<T, N>) -> (usize, usize, 
 where
     for<'a> &'a T: Sub<&'a T, Output = T>,
 {
-    let na = [n[0].abs(), n[1].abs(), n[2].abs()];
-    let (i0, i1, drop) = if (&na[0] - &na[1]).is_positive() && (&na[0] - &na[2]).is_positive() {
+    let approx_mags = [
+        n[0].as_f64_fast().unwrap_or(0.0).abs(),
+        n[1].as_f64_fast().unwrap_or(0.0).abs(),
+        n[2].as_f64_fast().unwrap_or(0.0).abs(),
+    ];
+
+    let (i0, i1, drop) = if approx_mags[0] > approx_mags[1] && approx_mags[0] > approx_mags[2] {
         (1, 2, 0)
-    } else if (&na[1] - &na[2]).is_positive() {
+    } else if approx_mags[1] > approx_mags[2] {
         (0, 2, 1)
     } else {
         (0, 1, 2)

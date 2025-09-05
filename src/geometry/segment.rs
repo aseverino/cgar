@@ -24,6 +24,7 @@ use crate::{
     geometry::{
         point::{Point, PointOps},
         spatial_element::SpatialElement,
+        util::EPS,
         vector::{Vector, VectorOps},
     },
     numeric::scalar::Scalar,
@@ -128,7 +129,7 @@ where
             if db != T::zero() {
                 let t = &da / &db;
                 if let Some(prev_t) = &t_opt {
-                    if (&t - &prev_t).abs() > T::from(1e-10) {
+                    if (&t - &prev_t).abs() > T::from(EPS) {
                         return false;
                     }
                 } else {

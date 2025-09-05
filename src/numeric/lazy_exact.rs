@@ -30,7 +30,7 @@ use num_traits::ToPrimitive;
 use once_cell::sync::OnceCell;
 use rug::Rational;
 
-use crate::geometry::util::{f64_next_down, f64_next_up};
+use crate::geometry::util::{EPS, f64_next_down, f64_next_up};
 use crate::numeric::ball::Ball;
 use crate::numeric::scalar::{FromRef, RefInto, Scalar};
 use crate::numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational};
@@ -180,9 +180,15 @@ impl Scalar for LazyExact {
             return exact.to_f64();
         }
 
+        // Even faster path: check if this is already an f64 leaf
+        if let Kind::LeafApprox(a) = &self.0.kind {
+            return Some(a.0);
+        }
+
         // Use ball approximation directly if tight enough
         let ball = self.ball_ref();
-        if ball.r <= 1e-14 * ball.m.abs() {
+        let abs_m = ball.m.abs();
+        if abs_m != 0.0 && ball.r <= EPS * abs_m {
             return Some(ball.m);
         }
 
@@ -803,7 +809,7 @@ impl LazyExact {
     }
 
     #[inline]
-    fn ball_ref(&self) -> &Ball {
+    pub fn ball_ref(&self) -> &Ball {
         self.0
             .ball
             .get_or_init(|| Self::eval_ball_kind(&self.0.kind))

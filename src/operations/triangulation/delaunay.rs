@@ -27,6 +27,7 @@ use crate::boolean::batching::FaceJobUV;
 use crate::geometry::Point2;
 use crate::geometry::point::Point;
 use crate::geometry::spatial_element::SpatialElement;
+use crate::geometry::util::EPS;
 use crate::kernel::predicates::{bbox, incircle, orient2d};
 use crate::mesh::basic_types::Mesh;
 use crate::numeric::scalar::Scalar;
@@ -1017,7 +1018,7 @@ where
         let vx = px - ax;
         let vy = py - ay;
         let cross = ux * vy - uy * vx;
-        let eps = 1e-12 * (ux.abs() + uy.abs()).max(1.0);
+        let eps = EPS * (ux.abs() + uy.abs()).max(1.0);
         if cross.abs() > eps {
             return None;
         }
@@ -1027,7 +1028,7 @@ where
             return None;
         }
         let t = dot / len2;
-        if (-1e-12..=1.0 + 1e-12).contains(&t) {
+        if (-EPS..=1.0 + EPS).contains(&t) {
             Some(t.clamp(0.0, 1.0))
         } else {
             None
@@ -1067,10 +1068,10 @@ where
             let vx = qx - x0;
             let vy = qy - y0;
             let cross = ux * vy - uy * vx;
-            if cross.abs() <= 1e-14 * (ux.abs() + uy.abs()).max(1.0) {
+            if cross.abs() <= EPS * (ux.abs() + uy.abs()).max(1.0) {
                 let dot = ux * vx + uy * vy;
                 let len2 = ux * ux + uy * uy;
-                if dot >= -1e-14 && dot <= len2 + 1e-14 {
+                if dot >= -EPS && dot <= len2 + EPS {
                     return true;
                 }
             }

@@ -71,11 +71,11 @@ impl Scalar for CgarF64 {
     }
 
     fn area_degeneracy_threshold() -> Self {
-        CgarF64(1e-10) // Remove faces smaller than this
+        CgarF64(EPS) // Remove faces smaller than this
     }
 
     fn query_tolerance() -> Self {
-        CgarF64(1e-10)
+        CgarF64(EPS)
     }
 
     fn query_tolerance_squared() -> Self {

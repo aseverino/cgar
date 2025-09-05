@@ -77,6 +77,9 @@ impl_mesh! {
         let mut boundary_edges = AHashSet::new();
 
         for (seg_idx, seg) in intersection_segments.iter().enumerate() {
+            if seg[0].resulting_vertex == seg[1].resulting_vertex {
+                continue; // degenerate segment
+            }
             let he = self
                 .edge_map
                 .get(&(
@@ -438,34 +441,30 @@ impl_mesh! {
     where
         for<'a> &'a T: Sub<&'a T, Output = T>,
     {
+        let face_aabbs = self.internal_build_face_tree();
+        AabbTree::build(face_aabbs)
+    }
+
+    pub fn build_face_tree_with_lookup(&self) -> (AabbTree<T, N, Point<T, N>, usize>, Vec<Aabb<T, N, Point<T, N>>>)
+    where
+        for<'a> &'a T: Sub<&'a T, Output = T>,
+    {
+        let face_aabbs = self.internal_build_face_tree();
+        AabbTree::build_with_lookup(face_aabbs)
+    }
+
+    fn internal_build_face_tree(&self) -> Vec<(Aabb<T, N, Point<T, N>>, usize)> {
         let mut face_aabbs = Vec::with_capacity(self.faces.len());
 
         for (face_idx, face) in self.faces.iter().enumerate() {
-            if face.removed || face.half_edge == usize::MAX {
-                continue;
-            }
-
             let he0 = face.half_edge;
-            if he0 >= self.half_edges.len() || self.half_edges[he0].removed {
-                continue;
-            }
 
             let he1 = self.half_edges[he0].next;
             let he2 = self.half_edges[he1].next;
 
-            // Quick validation - avoid bounds checks in hot path
-            if he1 >= self.half_edges.len() || he2 >= self.half_edges.len()
-                || self.half_edges[he2].next != he0 {
-                continue;
-            }
-
             let v0_idx = self.half_edges[he0].vertex;
             let v1_idx = self.half_edges[he1].vertex;
             let v2_idx = self.half_edges[he2].vertex;
-
-            if v0_idx >= self.vertices.len() || v1_idx >= self.vertices.len() || v2_idx >= self.vertices.len() {
-                continue;
-            }
 
             let p0 = &self.vertices[v0_idx].position;
             let p1 = &self.vertices[v1_idx].position;
@@ -480,7 +479,7 @@ impl_mesh! {
             face_aabbs.push((aabb, face_idx));
         }
 
-        AabbTree::build(face_aabbs)
+        face_aabbs
     }
 
     /// Compute the AABB of face `f`.
@@ -532,7 +531,7 @@ impl_mesh! {
         // center cell first
         if let Some(bucket) = self.vertex_spatial_hash.get(&center_key) {
             for &vi in bucket {
-                if kernel::are_equal(&self.vertices[vi].position, pos) {
+                if kernel::are_approximately_equal(&self.vertices[vi].position, pos) {
                     return (vi, true);
                 }
             }

@@ -28,6 +28,7 @@ use crate::{
         Point2,
         point::{Point, PointOps},
         spatial_element::SpatialElement,
+        util::EPS,
         vector::{Vector, VectorOps},
     },
     kernel::predicates::orient2d,
@@ -863,7 +864,7 @@ where
     let vx = px - ax;
     let vy = py - ay;
     let cross = ux * vy - uy * vx;
-    let eps = 1e-12 * (ux.abs() + uy.abs()).max(1.0);
+    let eps: f64 = EPS * (ux.abs() + uy.abs()).max(1.0);
     if cross.abs() > eps {
         return (false, 0.0);
     }
@@ -873,7 +874,7 @@ where
         return (false, 0.0);
     }
     let t = dot / len2;
-    (t >= -1e-12 && t <= 1.0 + 1e-12, t)
+    (t >= -EPS && t <= 1.0 + EPS, t)
 }
 
 /// Return the global vertex from `candidates` that is *incident to this face*,

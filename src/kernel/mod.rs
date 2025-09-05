@@ -32,6 +32,6 @@ pub use kernel::{Kernel2, Kernel3};
 pub use orientation::orient;
 
 pub use predicates::{
-    are_collinear, are_equal, is_point_on_segment, point_in_or_on_triangle, point_u_on_segment,
-    triangle_is_degenerate,
+    are_approximately_equal, are_collinear, are_equal, is_point_on_segment,
+    point_in_or_on_triangle, point_u_on_segment, triangle_is_degenerate,
 };
