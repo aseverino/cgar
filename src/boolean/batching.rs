@@ -374,33 +374,49 @@ fn barycentric_uv<T: Scalar, const N: usize>(
 ) -> Point2<T>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'x> &'x T: std::ops::Add<&'x T, Output = T>
-        + std::ops::Sub<&'x T, Output = T>
-        + std::ops::Mul<&'x T, Output = T>
-        + std::ops::Div<&'x T, Output = T>,
+    Vector<T, N>: VectorOps<T, N>,
 {
-    let v0 = (b - a).as_vector();
-    let v1 = (c - a).as_vector();
-    let v2 = (p - a).as_vector();
+    // Extract ball centers for all coordinates
+    let mut p_coords = [0.0; N];
+    let mut a_coords = [0.0; N];
+    let mut b_coords = [0.0; N];
+    let mut c_coords = [0.0; N];
 
-    // Solve v2 = v0 * α + v1 * β in least-squares sense (2×2), but do it by
-    // dot products (stable if v0,v1 are independent)
-    let d00 = v0.dot(&v0);
-    let d01 = v0.dot(&v1);
-    let d11 = v1.dot(&v1);
-    let d20 = v2.dot(&v0);
-    let d21 = v2.dot(&v1);
-    let den = &d00 * &d11 - &d01 * &d01;
+    for i in 0..N {
+        p_coords[i] = p[i].ball_center_f64();
+        a_coords[i] = a[i].ball_center_f64();
+        b_coords[i] = b[i].ball_center_f64();
+        c_coords[i] = c[i].ball_center_f64();
+    }
 
-    if den.is_zero() {
-        // extremely degenerate; fall back to a 1D projection
+    // Compute vectors using f64 arithmetic
+    let mut v0 = [0.0; N]; // b - a
+    let mut v1 = [0.0; N]; // c - a  
+    let mut v2 = [0.0; N]; // p - a
+
+    for i in 0..N {
+        v0[i] = b_coords[i] - a_coords[i];
+        v1[i] = c_coords[i] - a_coords[i];
+        v2[i] = p_coords[i] - a_coords[i];
+    }
+
+    // Dot products
+    let d00: f64 = v0.iter().zip(&v0).map(|(x, y)| x * y).sum();
+    let d01: f64 = v0.iter().zip(&v1).map(|(x, y)| x * y).sum();
+    let d11: f64 = v1.iter().zip(&v1).map(|(x, y)| x * y).sum();
+    let d20: f64 = v2.iter().zip(&v0).map(|(x, y)| x * y).sum();
+    let d21: f64 = v2.iter().zip(&v1).map(|(x, y)| x * y).sum();
+
+    let den = d00 * d11 - d01 * d01;
+
+    if den.abs() < 1e-15 {
         return Point2::<T>::from_vals([T::zero(), T::zero()]);
     }
 
-    let alpha = (&d20 * &d11 - &d21 * &d01) / den.clone();
-    let beta = (&d21 * &d00 - &d20 * &d01) / den;
-    Point2::<T>::from_vals([alpha, beta])
+    let alpha = (d20 * d11 - d21 * d01) / den;
+    let beta = (d21 * d00 - d20 * d01) / den;
+
+    Point2::<T>::from_vals([T::from(alpha), T::from(beta)])
 }
 
 #[inline]
@@ -789,19 +805,19 @@ where
     px >= minx - eps && px <= maxx + eps && py >= miny - eps && py <= maxy + eps
 }
 
-#[inline]
-fn param_t_uv<T: Scalar>(a: &Point2<T>, b: &Point2<T>, p: &Point2<T>) -> T
-where
-    for<'x> &'x T: std::ops::Sub<&'x T, Output = T>
-        + std::ops::Mul<&'x T, Output = T>
-        + std::ops::Add<&'x T, Output = T>,
-{
-    // monotone parameter for ordering: (p-a)·(b-a)
-    let ab0 = &b[0] - &a[0];
-    let ab1 = &b[1] - &a[1];
-    let ap0 = &p[0] - &a[0];
-    let ap1 = &p[1] - &a[1];
-    &ap0 * &ab0 + &ap1 * &ab1
+fn param_t_uv<T: Scalar>(a: &Point2<T>, b: &Point2<T>, p: &Point2<T>) -> f64 {
+    let ax = a[0].ball_center_f64();
+    let ay = a[1].ball_center_f64();
+    let bx = b[0].ball_center_f64();
+    let by = b[1].ball_center_f64();
+    let px = p[0].ball_center_f64();
+    let py = p[1].ball_center_f64();
+
+    let abx = bx - ax;
+    let aby = by - ay;
+    let apx = px - ax;
+    let apy = py - ay;
+    apx * abx + apy * aby
 }
 
 fn add_split_or_chain_uv<T: Scalar + PartialOrd>(
@@ -839,7 +855,6 @@ fn add_split_or_chain_uv<T: Scalar + PartialOrd>(
         return;
     }
 
-    // sort by projection parameter
     mids.sort_by(|&i, &j| {
         let ti = param_t_uv(a, b, &points_uv[i]);
         let tj = param_t_uv(a, b, &points_uv[j]);
@@ -882,27 +897,25 @@ where
 
 // return true if p lies on segment ab in UV; also return the parameter t in [0,1] if wanted
 #[inline(always)]
-pub fn on_edge_with_t<TS: Scalar>(a: &Point2<TS>, b: &Point2<TS>, p: &Point2<TS>) -> (bool, f64)
-where
-    for<'x> &'x TS: std::ops::Sub<&'x TS, Output = TS>
-        + std::ops::Mul<&'x TS, Output = TS>
-        + std::ops::Add<&'x TS, Output = TS>,
-{
-    let ax = (a[0].clone().into() as CgarF64).0;
-    let ay = (a[1].clone().into() as CgarF64).0;
-    let bx = (b[0].clone().into() as CgarF64).0;
-    let by = (b[1].clone().into() as CgarF64).0;
-    let px = (p[0].clone().into() as CgarF64).0;
-    let py = (p[1].clone().into() as CgarF64).0;
+pub fn on_edge_with_t<TS: Scalar>(a: &Point2<TS>, b: &Point2<TS>, p: &Point2<TS>) -> (bool, f64) {
+    let ax = a[0].ball_center_f64();
+    let ay = a[1].ball_center_f64();
+    let bx = b[0].ball_center_f64();
+    let by = b[1].ball_center_f64();
+    let px = p[0].ball_center_f64();
+    let py = p[1].ball_center_f64();
+
     let ux = bx - ax;
     let uy = by - ay;
     let vx = px - ax;
     let vy = py - ay;
     let cross = ux * vy - uy * vx;
-    let eps: f64 = EPS * (ux.abs() + uy.abs()).max(1.0);
+    let eps = EPS * (ux.abs() + uy.abs()).max(1.0);
+
     if cross.abs() > eps {
         return (false, 0.0);
     }
+
     let dot = ux * vx + uy * vy;
     let len2 = ux * ux + uy * uy;
     if len2 <= 0.0 {
