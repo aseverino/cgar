@@ -41,7 +41,7 @@ use crate::{
     },
     impl_mesh,
     kernel::{self, predicates::TrianglePoint},
-    mesh::basic_types::{Mesh, PairRing, PointInMeshResult, RayCastResult, Triangle, VertexRing},
+    mesh::basic_types::{FaceInfo, Mesh, PairRing, PointInMeshResult, RayCastResult, VertexRing},
     numeric::{
         cgar_f64::CgarF64,
         scalar::{RefInto, Scalar},
@@ -1375,7 +1375,7 @@ impl_mesh! {
                 let mut boundary:  Vec<usize> = Vec::new();
 
                 for tri in &mapping.new_faces {
-                    let [i0,i1,i2] = tri.vertices;
+                    let [i0,i1,i2] = tri.vertices.as_array();
                     let (l0,l1,l2) = barycentric_coords(
                         point,
                         &self.vertices[i0].position,
@@ -1605,7 +1605,7 @@ impl_mesh! {
                 let mut boundary:  Vec<usize> = Vec::new();
 
                 for tri in &mapping.new_faces {
-                    let [i0,i1,i2] = tri.vertices;
+                    let [i0,i1,i2] = tri.vertices.as_array();
                     let cls = kernel::point_in_or_on_triangle(
                         point,
                         &self.vertices[i0].position,
@@ -1801,7 +1801,7 @@ impl_mesh! {
                 let mut boundary:  Vec<usize> = Vec::new();
 
                 for tri in &mapping.new_faces {
-                    let [i0,i1,i2] = tri.vertices;
+                    let [i0,i1,i2] = tri.vertices.as_array();
                     let cls = kernel::point_in_or_on_triangle(
                         point,
                         &self.vertices[i0].position,
@@ -2419,177 +2419,6 @@ impl_mesh! {
         let n = ab.cross(&ac);
         n.dot(&n)
     }
-
-    /// Find all self-intersections or overlaps among the mesh faces.
-    /// Requires N == 3 (triangle meshes in 3D).
-    pub fn find_self_intersections(&self) -> Vec<SelfIntersection>
-    where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    Segment<T, N>: SegmentOps<T, N>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>
-    {
-        if N != 3 {
-            // Only 3D triangle meshes are supported
-            return Vec::new();
-        }
-
-        use crate::geometry::tri_tri_intersect::{tri_tri_intersection, TriTriIntersectionResult};
-
-        // Build a face AABB tree (in CgarF64) for broad-phase culling
-        let face_boxes: Vec<(Aabb<T, N, Point<T, N>>, usize)> = (0..self.faces.len())
-            .filter(|&fi| !self.faces[fi].removed)
-            .map(|fi| {
-                let aabb_t = self.face_aabb(fi);
-                let min = aabb_t.min();
-                let max = aabb_t.max();
-                let box3 = Aabb::<T, N, Point<T, N>>::from_points(
-                    &Point::<T, N>::from_vals(from_fn(|i| min[i].clone())),
-                    &Point::<T, N>::from_vals(from_fn(|i| max[i].clone())),
-                );
-                (box3, fi)
-            })
-            .collect();
-
-        let tree = AabbTree::<T, N, Point<T, N>, usize>::build(face_boxes);
-
-        let tol = T::tolerance();
-        let tol2 = &tol * &tol;
-
-        let mut out = Vec::new();
-        let mut candidates = Vec::new();
-
-        // Helper: face vertices as [&Point; 3]
-        let tri_points = |f: usize| -> [&Point<T, N>; 3] {
-            let vs = self.face_vertices(f);
-            [
-                &self.vertices[vs[0]].position,
-                &self.vertices[vs[1]].position,
-                &self.vertices[vs[2]].position,
-            ]
-        };
-
-        // Helper: check if faces share an (undirected) mesh edge
-        let share_edge = |fa: usize, fb: usize| -> bool {
-            if self.are_faces_adjacent(fa, fb) { return true; }
-            let va = self.face_vertices(fa);
-            let vb = self.face_vertices(fb);
-            let ea = [
-                (va[0].min(va[1]), va[0].max(va[1])),
-                (va[1].min(va[2]), va[1].max(va[2])),
-                (va[2].min(va[0]), va[2].max(va[0])),
-            ];
-            let eb = [
-                (vb[0].min(vb[1]), vb[0].max(vb[1])),
-                (vb[1].min(vb[2]), vb[1].max(vb[2])),
-                (vb[2].min(vb[0]), vb[2].max(vb[0])),
-            ];
-            ea.iter().any(|e| eb.contains(e))
-        };
-
-        // Sweep all faces; for each face, query overlapping boxes and test only fb > fa to avoid duplicates
-        for fa in 0..self.faces.len() {
-            if self.faces[fa].removed {
-                continue;
-            }
-
-            // Query with the face AABB slightly dilated by tolerance
-            let aabb_t = self.face_aabb(fa);
-            let min = aabb_t.min();
-            let max = aabb_t.max();
-            let query = Aabb::<T, N, Point<T, N>>::from_points(
-                &Point::<T, N>::from_vals(from_fn(|i| (&min[i] - &T::tolerance()))),
-                &Point::<T, N>::from_vals(from_fn(|i| (&max[i] + &T::tolerance()))),
-            );
-
-            candidates.clear();
-            tree.query_valid(&query, &mut candidates);
-
-            if candidates.is_empty() {
-                continue;
-            }
-
-            let pa = tri_points(fa);
-
-            for &fb in &candidates {
-                let fb = *fb;
-                if fb <= fa {
-                    continue; // avoid duplicates and self
-                }
-                if self.faces[fb].removed {
-                    continue;
-                }
-
-                let pb = tri_points(fb);
-
-                match tri_tri_intersection(&pa, &pb) {
-                    TriTriIntersectionResult::Proper(seg) => {
-                        if seg.length2() > tol2 {
-                            println!("Non-coplanar crossing detected between faces {} and {}", fa, fb);
-                            out.push(SelfIntersection {
-                                a: fa, b: fb,
-                                kind: SelfIntersectionKind::NonCoplanarCrossing,
-                            });
-                        }
-                    }
-
-                    TriTriIntersectionResult::Coplanar(seg) => {
-                        // Skip adjacency also here
-                        if share_edge(fa, fb) { continue; }
-                        if seg.length2() > tol2 {
-                            let fa_vs = self.face_vertices(fa);
-                            let fb_vs = self.face_vertices(fb);
-
-                            println!("tol2: {:?}", tol2);
-
-                            println!("Coplanar edge overlap detected between faces {} and {}", fa, fb);
-                            println!("\n    FA Vertices:\n        {:?}\n        {:?}\n        {:?}", self.vertices[fa_vs[0]].position, self.vertices[fa_vs[1]].position, self.vertices[fa_vs[2]].position);
-                            println!("\n    FB Vertices:\n        {:?}\n        {:?}\n        {:?}", self.vertices[fb_vs[0]].position, self.vertices[fb_vs[1]].position, self.vertices[fb_vs[2]].position);
-                            out.push(SelfIntersection {
-                                a: fa, b: fb,
-                                kind: SelfIntersectionKind::CoplanarEdgeOverlap,
-                            });
-                        }
-                    }
-
-                    TriTriIntersectionResult::CoplanarPolygon(poly) => {
-                        // Skip adjacency here too (your split pairs fall here spuriously)
-                        if share_edge(fa, fb) { continue; }
-
-                        // Degeneracy filter: require ≥3 unique points & area > eps
-                        if coplanar_polygon_has_area(&poly, &tol) {
-                            println!("Coplanar area overlap detected between faces {} and {}", fa, fb);
-                            out.push(SelfIntersection {
-                                a: fa, b: fb,
-                                kind: SelfIntersectionKind::CoplanarAreaOverlap,
-                            });
-                        }
-                    }
-
-                    _ => {}
-                }
-            }
-        }
-
-        out
-    }
-
-    /// True if the mesh contains any self-intersection or coplanar overlap.
-    pub fn has_self_intersections(&self) -> bool
-    where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-    {
-        !self.find_self_intersections().is_empty()
-    }
-
 }
 
 pub fn ray_segment_intersection_2d<T>(

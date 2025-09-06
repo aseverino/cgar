@@ -28,16 +28,47 @@ use crate::{
     numeric::scalar::Scalar,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Triangle(pub usize, pub usize, pub usize);
+
+impl Triangle {
+    #[inline]
+    pub fn as_array(&self) -> [usize; 3] {
+        let v = [self.0, self.1, self.2];
+        [v[0], v[1], v[2]]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Edge(usize, usize);
+
+impl Edge {
+    #[inline]
+    pub fn new(a: usize, b: usize) -> Self {
+        if a < b { Edge(a, b) } else { Edge(b, a) }
+    }
+
+    #[inline]
+    pub fn a(&self) -> usize {
+        self.0
+    }
+
+    #[inline]
+    pub fn b(&self) -> usize {
+        self.1
+    }
+}
+
 #[derive(Debug, Clone, Default)]
-pub struct Triangle {
+pub struct FaceInfo {
     pub face_idx: usize,
-    pub vertices: [usize; 3],
+    pub vertices: Triangle,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct FaceSplitMap {
     pub face: usize,
-    pub new_faces: SmallVec<[Triangle; 3]>,
+    pub new_faces: SmallVec<[FaceInfo; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

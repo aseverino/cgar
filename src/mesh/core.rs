@@ -924,21 +924,21 @@ impl_mesh! {
         self.half_edges[ex_he_ad].twin = he_da; // external a->d | d->a
         self.half_edges[he_da].twin = ex_he_ad;
 
-        let triangle_wbc = Triangle {
+        let triangle_wbc = FaceInfo {
             face_idx: base_face_idx,
-            vertices: [w, b, c],
+            vertices: Triangle(w, b, c),
         };
-        let triangle_wab = Triangle {
+        let triangle_wab = FaceInfo {
             face_idx: base_face_idx + 1,
-            vertices: [w, a, b],
+            vertices: Triangle(w, a, b),
         };
-        let triangle_wcd = Triangle {
+        let triangle_wcd = FaceInfo {
             face_idx: base_face_idx + 2,
-            vertices: [w, c, d],
+            vertices: Triangle(w, c, d),
         };
-        let triangle_wda = Triangle {
+        let triangle_wda = FaceInfo {
             face_idx: base_face_idx + 3,
-            vertices: [w, d, a],
+            vertices: Triangle(w, d, a),
         };
 
         // Mark old faces as removed
@@ -1175,17 +1175,17 @@ impl_mesh! {
         self.edge_map.insert((b, w), base_he_idx_3);
         self.edge_map.insert((w, a), base_he_idx_3 + 1);
 
-        let triangle_awc = Triangle {
+        let triangle_awc = FaceInfo {
             face_idx: subface_1_idx,
-            vertices: [a, w, c],
+            vertices: Triangle(a, w, c),
         };
-        let triangle_cwb = Triangle {
+        let triangle_cwb = FaceInfo {
             face_idx: subface_2_idx,
-            vertices: [c, w, b],
+            vertices: Triangle(c, w, b),
         };
-        let triangle_bwa = Triangle {
+        let triangle_bwa = FaceInfo {
             face_idx: subface_3_idx,
-            vertices: [b, w, a],
+            vertices: Triangle(b, w, a),
         };
 
         let face_split = FaceSplitMap {

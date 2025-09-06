@@ -29,32 +29,10 @@ use crate::geometry::point::Point;
 use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::util::EPS;
 use crate::kernel::predicates::{bbox, bbox_approx, incircle, orient2d};
-use crate::mesh::basic_types::Mesh;
+use crate::mesh::basic_types::{Edge, Mesh, Triangle};
 use crate::numeric::scalar::Scalar;
 
 pub const SQRT_3: f64 = 1.7320508075688772;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Edge(usize, usize);
-
-impl Edge {
-    #[inline]
-    fn new(a: usize, b: usize) -> Self {
-        if a < b { Edge(a, b) } else { Edge(b, a) }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Triangle(pub usize, pub usize, pub usize);
-
-impl Triangle {
-    #[inline]
-    pub fn as_sorted_indices(&self) -> (usize, usize, usize) {
-        let mut v = [self.0, self.1, self.2];
-        v.sort_unstable();
-        (v[0], v[1], v[2])
-    }
-}
 
 #[derive(Default)]
 struct Adj {
@@ -224,10 +202,10 @@ where
 
         // Create new triangles by connecting boundary edges to new point
         for edge in boundary_edges {
-            let new_triangle = if orient2d(&points[edge.0], &points[edge.1], p).is_positive() {
-                Triangle(edge.0, edge.1, pid)
+            let new_triangle = if orient2d(&points[edge.a()], &points[edge.b()], p).is_positive() {
+                Triangle(edge.a(), edge.b(), pid)
             } else {
-                Triangle(edge.0, pid, edge.1)
+                Triangle(edge.a(), pid, edge.b())
             };
             triangles.push(new_triangle);
         }
@@ -305,11 +283,11 @@ where
 
         // 3) Insert constraints
         for e in &constraints {
-            if dt.edge_exists(e.0, e.1) {
+            if dt.edge_exists(*e) {
                 constrained.insert(*e);
                 continue;
             }
-            match dt.insert_constraint_walk(e.0, e.1, &mut adj, &constrained) {
+            match dt.insert_constraint_walk(e.a(), e.b(), &mut adj, &constrained) {
                 Ok(()) => {
                     constrained.insert(*e);
                 }
@@ -325,19 +303,17 @@ where
         dt
     }
 
-    fn edge_exists(&self, a: usize, b: usize) -> bool
+    fn edge_exists(&self, edge: Edge) -> bool
     where
         T: PartialOrd,
     {
-        let e = Edge::new(a, b);
-
         // edge must be present in some triangle…
         let mut present = false;
         for t in &self.triangles {
             let tri = [t.0, t.1, t.2];
-            if Edge::new(tri[0], tri[1]) == e
-                || Edge::new(tri[1], tri[2]) == e
-                || Edge::new(tri[2], tri[0]) == e
+            if Edge::new(tri[0], tri[1]) == edge
+                || Edge::new(tri[1], tri[2]) == edge
+                || Edge::new(tri[2], tri[0]) == edge
             {
                 present = true;
                 break;
@@ -387,7 +363,7 @@ where
         adj: &mut Adj,
         constrained: &AHashSet<Edge>,
     ) -> Result<(), &'static str> {
-        if self.edge_exists(a, b) {
+        if self.edge_exists(Edge::new(a, b)) {
             return Ok(());
         }
 
@@ -426,7 +402,7 @@ where
         let mut steps = 0usize;
         let max_steps = 4 * self.triangles.len().max(10);
 
-        while !self.edge_exists(a, b) {
+        while !self.edge_exists(Edge::new(a, b)) {
             steps += 1;
             if steps > max_steps {
                 return Err("insert_constraint_walk: too many steps");
@@ -446,7 +422,7 @@ where
             };
 
             // Record apex on the side we are leaving across cross_e
-            if let Some(w) = third_vertex(self.triangles[current_tri], cross_e.0, cross_e.1) {
+            if let Some(w) = third_vertex(self.triangles[current_tri], cross_e.a(), cross_e.b()) {
                 let s = orient2d(&self.points[a], &self.points[b], &self.points[w]);
                 if s.is_positive() {
                     last_pos_apex = Some(w);
@@ -460,7 +436,7 @@ where
             }
 
             // If we already have the target edge, stop walking; we'll add missing side(s) below.
-            if (cross_e.0 == a && cross_e.1 == b) || (cross_e.0 == b && cross_e.1 == a) {
+            if (cross_e.a() == a && cross_e.b() == b) || (cross_e.a() == b && cross_e.b() == a) {
                 break;
             }
 
@@ -477,7 +453,9 @@ where
                             adj,
                         ) {
                             // If this flip created (a,b), stop walking.
-                            if (new_e.0 == a && new_e.1 == b) || (new_e.0 == b && new_e.1 == a) {
+                            if (new_e.a() == a && new_e.b() == b)
+                                || (new_e.a() == b && new_e.b() == a)
+                            {
                                 break;
                             }
                             // Re-evaluate from the same triangle index for stability.
@@ -613,7 +591,7 @@ where
         // We are crossing a boundary edge (u,v) from triangle tri_idx. Replace it with TWO triangles
         // that introduce the constrained edge between the endpoint on the boundary (anchor) and the other endpoint.
         let tri = self.triangles[tri_idx];
-        let (u, v) = (boundary_edge.0, boundary_edge.1);
+        let (u, v) = (boundary_edge.a(), boundary_edge.b());
         let w = third_vertex(tri, u, v).ok_or("invalid boundary edge")?;
 
         // Determine which endpoint of (a,b) lies on this boundary edge; that must be the anchor.
@@ -671,7 +649,7 @@ where
 
         let t0_old = self.triangles[t0_idx];
         let t1_old = self.triangles[t1_idx];
-        let (u, v) = (e.0, e.1);
+        let (u, v) = (e.a(), e.b());
 
         let x = other_across(t0_old, e)?;
         let y = other_across(t1_old, e)?;
@@ -730,7 +708,7 @@ fn third_vertex(t: Triangle, u: usize, v: usize) -> Option<usize> {
 #[inline]
 fn other_across(t: Triangle, e: Edge) -> Option<usize> {
     let vs = [t.0, t.1, t.2];
-    vs.into_iter().find(|&w| w != e.0 && w != e.1)
+    vs.into_iter().find(|&w| w != e.a() && w != e.b())
 }
 
 #[inline]
@@ -1300,11 +1278,8 @@ where
     // canonicalizer for (u,v): returns (Edge(min,max), sign) where sign = +1 if (u,v)==(min,max) else -1
     #[inline]
     fn canon(u: usize, v: usize) -> (Edge, i8) {
-        if u < v {
-            (Edge(u, v), 1)
-        } else {
-            (Edge(v, u), -1)
-        }
+        let edge = Edge::new(u, v);
+        if u < v { (edge, 1) } else { (edge, -1) }
     }
 
     // ---------- 4) flood-fill from ring edges, honoring side convention ----------
