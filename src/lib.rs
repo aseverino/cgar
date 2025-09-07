@@ -20,10 +20,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod boolean;
 pub mod geometry;
 pub mod io;
 pub mod kernel;
 pub mod mesh;
+pub mod mesh_processing;
 pub mod numeric;
 pub mod operations;
