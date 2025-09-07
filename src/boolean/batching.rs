@@ -64,31 +64,20 @@ pub fn rewrite_faces_from_cdt_batch<T: Scalar, const N: usize>(
         + std::ops::Div<&'a T, Output = T>
         + std::ops::Neg<Output = T>,
 {
-    // Remove faces
-    let mut to_remove: AHashSet<usize> = AHashSet::with_capacity(jobs.len());
-    for j in jobs {
-        to_remove.insert(j.face_id);
-    }
+    let total_triangles: usize = cdts.iter().map(|dt| dt.triangles.len()).sum();
+    let mut face_ids = Vec::with_capacity(jobs.len());
+    let mut triangles = Vec::with_capacity(total_triangles);
 
-    let faces_vec: Vec<_> = to_remove.iter().copied().collect();
-    let (_, _) = mesh.remove_triangles_deferred(&faces_vec);
+    for ((job, dt), _) in jobs.iter().zip(cdts.iter()).zip(0..) {
+        face_ids.push(job.face_id);
+        let verts_global = &job.verts_global;
 
-    let mut triangles = Vec::with_capacity(jobs.len() * 4);
-
-    for (job, dt) in jobs.iter().zip(cdts.iter()) {
-        for t in dt.triangles.iter() {
-            let (a, b, c) = (t.0, t.1, t.2);
-            // convert local indices to global
-            let (ga, gb, gc) = (
-                job.verts_global[a],
-                job.verts_global[b],
-                job.verts_global[c],
-            );
-
-            triangles.push((ga, gb, gc));
+        for t in &dt.triangles {
+            triangles.push((verts_global[t.0], verts_global[t.1], verts_global[t.2]));
         }
     }
 
+    mesh.remove_triangles_deferred(&face_ids);
     mesh.add_triangles_deferred(&triangles);
 }
 

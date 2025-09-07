@@ -46,6 +46,7 @@ use crate::{
         },
         vector::{Vector, VectorOps},
     },
+    io::obj::write_obj,
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
@@ -117,8 +118,6 @@ where
         include_on_surface: bool,
     ) -> Vec<bool> {
         // build adjacency & boundary‐map
-        let adj = self.build_face_adjacency_graph();
-
         let tree_b = AabbTree::<T, N, _, _>::build(
             (0..other.faces.len())
                 .map(|i| {
@@ -144,7 +143,7 @@ where
                 if self.faces[f].removed {
                     continue;
                 }
-                let c = self.face_centroid(f).0;
+                let c = self.face_centroid_fast(f);
                 match other.point_in_mesh(&tree_b, &c) {
                     PointInMeshResult::Inside => inside[f] = true,
                     PointInMeshResult::OnSurface if include_on_surface => inside[f] = true,
@@ -153,16 +152,23 @@ where
             }
             return inside;
         } else {
-            let boundary_map = self.build_boundary_map(intersection_segments);
-
             let mut boundary_faces = AHashSet::new();
-            for &(a, b) in &boundary_map {
-                boundary_faces.insert(a);
-                boundary_faces.insert(b);
+            for seg in intersection_segments {
+                let v0 = seg.a.resulting_vertex.unwrap();
+                let v1 = seg.b.resulting_vertex.unwrap();
+
+                if let Some(&he) = self.edge_map.get(&(v0, v1)) {
+                    if let Some(f0) = self.half_edges[he].face {
+                        boundary_faces.insert(f0);
+                    }
+                    if let Some(f1) = self.half_edges[self.half_edges[he].twin].face {
+                        boundary_faces.insert(f1);
+                    }
+                }
             }
 
             // 3) pick a seed face that lies inside B
-            let (_seed_intersection_idx, selected_face) = Self::get_seed_face(
+            let (_seed_intersection_idx, selected_face) = Self::get_seed_face_fast(
                 &self,
                 &other,
                 &tree_b,
@@ -207,29 +213,25 @@ where
             let mut num_visited = 1;
 
             while let Some(curr) = queue.pop_front() {
-                if let Some(neighbors) = adj.get(&curr) {
-                    // grab the list of “paired” faces for this curr
-                    let paired = face_pairs.get(&curr);
+                for nbr in self.adjacent_faces(curr) {
+                    if visited[nbr] {
+                        continue;
+                    }
 
-                    for &nbr in neighbors {
-                        if visited[nbr] {
+                    let paired = face_pairs.get(&curr);
+                    // skip exactly the neighbor that comes from the same segment split
+                    if let Some(pv) = paired {
+                        if pv.iter().any(|&pf| pf == nbr) {
+                            // this nbr is the other half of a segment splitting curr
                             continue;
                         }
-
-                        // skip exactly the neighbor that comes from the same segment split
-                        if let Some(pv) = paired {
-                            if pv.iter().any(|&pf| pf == nbr) {
-                                // this nbr is the other half of a segment splitting curr
-                                continue;
-                            }
-                        }
-
-                        // otherwise, it's a genuine inside‐region adjacency
-                        visited[nbr] = true;
-                        inside[nbr] = true;
-                        num_visited += 1;
-                        queue.push_back(nbr);
                     }
+
+                    // otherwise, it's a genuine inside‐region adjacency
+                    visited[nbr] = true;
+                    inside[nbr] = true;
+                    num_visited += 1;
+                    queue.push_back(nbr);
                 }
             }
 
@@ -391,24 +393,18 @@ where
 
         //
 
+        ENABLE_PANIC_ON_EXACT.store(true, std::sync::atomic::Ordering::Relaxed);
+
         println!("Allocated vertices on A in {:.2?}", start.elapsed());
         let start = Instant::now();
         let jobs_a = build_face_pslgs(a, &intersection_segments_a);
         println!("Built faces PSLGS on A in {:.2?}", start.elapsed());
 
         // Build CDT per compacted job (example)
-        let mut cdts_a: Vec<Delaunay<T>> = Vec::with_capacity(jobs_a.len());
         let start = Instant::now();
 
-        for job in &jobs_a {
-            let dt = Delaunay::build_with_constraints_bowyer_watson(
-                &job.points_uv,
-                &job.segments,
-                a,
-                job,
-            );
-            cdts_a.push(dt);
-        }
+        let cdts_a = Delaunay::build_batch_with_constraints_bowyer_watson(&jobs_a, a);
+
         println!("Built Bowyer-Watson on A in {:.2?}", start.elapsed());
         let start = Instant::now();
         rewrite_faces_from_cdt_batch(a, &jobs_a, &cdts_a);
@@ -425,18 +421,8 @@ where
         println!("Built faces PSLGS on B in {:.2?}", start.elapsed());
 
         // Build CDT per compacted job (example)
-        let mut cdts_b: Vec<Delaunay<T>> = Vec::with_capacity(jobs_b.len());
         let start = Instant::now();
-
-        for job in &jobs_b {
-            let dt = Delaunay::build_with_constraints_bowyer_watson(
-                &job.points_uv,
-                &job.segments,
-                a,
-                job,
-            );
-            cdts_b.push(dt);
-        }
+        let cdts_b = Delaunay::build_batch_with_constraints_bowyer_watson(&jobs_b, b);
         println!("Built Bowyer-Watson on B in {:.2?}", start.elapsed());
         let start = Instant::now();
         rewrite_faces_from_cdt_batch(b, &jobs_b, &cdts_b);
@@ -706,6 +692,42 @@ where
         // panic!("testing");
 
         triangles_per_group
+    }
+
+    fn get_seed_face_fast(
+        a: &Mesh<T, N>,
+        b: &Mesh<T, N>,
+        tree_b: &AabbTree<T, N, Point<T, N>, usize>,
+        intersection_segments: &Vec<IntersectionSegment<T, N>>,
+        boundary_faces: &AHashSet<usize>,
+        include_on_surface: bool,
+    ) -> (usize, usize) {
+        // Use ball approximation for seed selection
+        for (seg_idx, seg) in intersection_segments.iter().enumerate() {
+            let v0 = seg.a.resulting_vertex.unwrap();
+            let v1 = seg.b.resulting_vertex.unwrap();
+
+            if let Some(&he) = a.edge_map.get(&(v0, v1)) {
+                for &face_id in &[
+                    a.half_edges[he].face,
+                    a.half_edges[a.half_edges[he].twin].face,
+                ] {
+                    if let Some(f) = face_id {
+                        if boundary_faces.contains(&f) {
+                            let centroid = a.face_centroid_fast(f);
+                            match b.point_in_mesh(tree_b, &centroid) {
+                                PointInMeshResult::Inside => return (seg_idx, f),
+                                PointInMeshResult::OnSurface if include_on_surface => {
+                                    return (seg_idx, f);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        panic!("No seed face found");
     }
 
     fn get_seed_face(
