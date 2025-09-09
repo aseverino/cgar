@@ -8,7 +8,7 @@ repository = "https://github.com/rustrogue/cgar"
 license = "MIT"
 readme = "README.md"
 categories = ["algorithms", "mathematics", "graphics"]
-keywords = ["computational-geometry", "mesh", "boolean", "delaunay"]
+keywords = ["geometry", "mesh", "boolean", "delaunay"]
 
 [dependencies]
 ahash = "0.8.12"
