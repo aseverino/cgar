@@ -301,6 +301,17 @@ impl_mesh! {
         centroid
     }
 
+    pub fn face_centroid_fast(&self, face_idx: usize) -> Point<T, N> {
+        let vs = self.face_vertices(face_idx);
+        let coords = (0..N).map(|i| {
+            let sum = (self.vertices[vs[0]].position[i].ball_center_f64() +
+                    self.vertices[vs[1]].position[i].ball_center_f64() +
+                    self.vertices[vs[2]].position[i].ball_center_f64()) / 3.0;
+            sum
+        }).collect::<Vec<_>>();
+        Point::<T, N>::from_vals(from_fn(|i| T::from(coords[i])))
+    }
+
     pub fn face_area(&self, f: usize) -> T
     {
         match N {
@@ -365,6 +376,7 @@ impl_mesh! {
             let t = self.half_edges[h].twin;
             // Now that every edge has a twin (real or ghost), we never hit usize::MAX
             h = self.half_edges[t].next;
+            println!("trapped");
             if h == start {
                 break;
             }
@@ -454,6 +466,21 @@ impl_mesh! {
             &self.vertices[source].position,
             &self.vertices[target].position,
         )
+    }
+
+    pub fn adjacent_faces(&self, face_idx: usize) -> impl Iterator<Item = usize> + '_ {
+        self.get_face_half_edges_iterative(face_idx)
+            .into_iter()
+            .flatten()
+            .filter_map(move |he_idx| {
+                let twin_idx = self.half_edges[he_idx].twin;
+                if twin_idx != usize::MAX && twin_idx < self.half_edges.len() {
+                    self.half_edges[twin_idx].face
+                } else {
+                    None
+                }
+            })
+            .filter(move |&twin_face| twin_face != face_idx)
     }
 
     pub fn are_faces_adjacent(&self, f1: usize, f2: usize) -> bool {
@@ -2206,16 +2233,12 @@ impl_mesh! {
         let mut result = Vec::new();
         let mut current_he = start_he;
         let mut iterations = 0;
-        const MAX_ITERATIONS: usize = 50; // Safety limit for triangular faces
+        const MAX_ITERATIONS: usize = 10;
 
         loop {
             iterations += 1;
             if iterations > MAX_ITERATIONS {
-                // println!(
-                //     "WARNING: Face {} half-edge traversal exceeded limit",
-                //     face_idx
-                // );
-                return None;
+                panic!("Exceeded maximum iterations while traversing face half-edges, possible infinite loop.");
             }
 
             if current_he >= self.half_edges.len() {

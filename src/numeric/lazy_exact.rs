@@ -519,7 +519,7 @@ impl LazyExact {
     /// Exact value; computed lazily and cached.
     pub fn exact(&self) -> CgarRational {
         if ENABLE_PANIC_ON_EXACT.load(std::sync::atomic::Ordering::Relaxed) {
-            panic!("test");
+            // panic!("test");
             // println!("materialized");
         }
         if let Some(v) = self.0.exact.get() {

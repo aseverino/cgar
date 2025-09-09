@@ -23,13 +23,13 @@
 use ahash::{AHashMap, AHashSet};
 use smallvec::SmallVec;
 
-use crate::boolean::batching::FaceJobUV;
 use crate::geometry::Point2;
 use crate::geometry::point::Point;
 use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::util::EPS;
 use crate::kernel::predicates::{bbox, bbox_approx, incircle, orient2d};
 use crate::mesh::basic_types::{Edge, Mesh, Triangle};
+use crate::mesh_processing::batching::FaceJobUV;
 use crate::numeric::scalar::Scalar;
 
 pub const SQRT_3: f64 = 1.7320508075688772;
@@ -112,6 +112,125 @@ where
         + std::ops::Div<&'a T, Output = T>
         + std::ops::Neg<Output = T>,
 {
+    pub fn build_batch_with_constraints_bowyer_watson<const N: usize>(
+        jobs: &[FaceJobUV<T>],
+        _mesh: &Mesh<T, N>,
+    ) -> Vec<Self> {
+        if jobs.is_empty() {
+            return Vec::new();
+        }
+
+        // Pre-allocate results
+        let mut results = Vec::with_capacity(jobs.len());
+
+        // Batch super-triangle computation using single bbox pass
+        let mut super_triangles = Vec::with_capacity(jobs.len());
+        for job in jobs {
+            if job.points_uv.len() < 3 {
+                results.push(Self {
+                    points: job.points_uv.clone(),
+                    triangles: Vec::new(),
+                });
+                super_triangles.push(None);
+                continue;
+            }
+
+            let (minx, miny, maxx, maxy) = bbox_approx(&job.points_uv);
+            let dx = maxx - minx;
+            let dy = maxy - miny;
+            let delta = dx.max(dy);
+            let cx = (minx + maxx) * 0.5;
+            let cy = (miny + maxy) * 0.5;
+            let r = 64.0 * delta + 1.0;
+
+            super_triangles.push(Some((cx, cy, r)));
+        }
+
+        // Process each job with pre-computed super-triangle
+        for (job_idx, job) in jobs.iter().enumerate() {
+            if job.points_uv.len() < 3 {
+                continue;
+            }
+
+            let Some((cx, cy, r)) = super_triangles[job_idx] else {
+                continue;
+            };
+
+            let mut points = job.points_uv.clone();
+            let sqrt_3 = SQRT_3;
+            let s0 = points.len();
+            let s1 = s0 + 1;
+            let s2 = s0 + 2;
+
+            points.extend([
+                Point2::<T>::from_vals([T::from(cx), T::from(cy + 2.0 * r)]),
+                Point2::<T>::from_vals([T::from(cx - sqrt_3 * r), T::from(cy - r)]),
+                Point2::<T>::from_vals([T::from(cx + sqrt_3 * r), T::from(cy - r)]),
+            ]);
+
+            let mut triangles = vec![Triangle(s0, s1, s2)];
+
+            // Bowyer-Watson insertion
+            for pid in 0..s0 {
+                Self::bowyer_watson_insert_point(pid, &points, &mut triangles);
+            }
+
+            // Remove super-triangles and finalize
+            triangles.retain(|t| t.0 < s0 && t.1 < s0 && t.2 < s0);
+            points.truncate(s0);
+
+            let mut dt = Self { points, triangles };
+
+            // Batch constraint processing
+            Self::process_constraints_batch(&mut dt, &job.segments);
+
+            results.push(dt);
+        }
+
+        results
+    }
+
+    fn process_constraints_batch(dt: &mut Self, constraints_in: &[[usize; 2]]) {
+        let mut constraints = Vec::new();
+        let mut seen = AHashSet::new();
+
+        // Batch constraint splitting
+        for &[a, b] in constraints_in {
+            if a >= dt.points.len() || b >= dt.points.len() || a == b {
+                continue;
+            }
+            for ab in split_constraint_chain(&dt.points, a, b) {
+                let e = Edge::new(ab[0], ab[1]);
+                if seen.insert(e) {
+                    constraints.push(e);
+                }
+            }
+        }
+
+        let mut constrained = AHashSet::<Edge>::new();
+        let mut adj = Adj::rebuild(dt.points.len(), &dt.triangles);
+
+        // Process constraints in batches of similar length/complexity
+        constraints.sort_by_key(|e| {
+            let dx = dt.points[e.a()][0].ball_center_f64() - dt.points[e.b()][0].ball_center_f64();
+            let dy = dt.points[e.a()][1].ball_center_f64() - dt.points[e.b()][1].ball_center_f64();
+            ((dx * dx + dy * dy) * 1000.0) as i32
+        });
+
+        for e in &constraints {
+            if dt.edge_exists(*e) {
+                constrained.insert(*e);
+                continue;
+            }
+            if dt
+                .insert_constraint_walk(e.a(), e.b(), &mut adj, &constrained)
+                .is_ok()
+            {
+                constrained.insert(*e);
+            }
+        }
+    }
+
     /// Build Delaunay triangulation of `pts`. Duplicates are ignored.
     pub fn build(pts: &[Point2<T>]) -> Self {
         let mut points = pts.to_vec();
@@ -226,7 +345,6 @@ where
     }
 
     fn point_in_circumcircle_fast(p: &Point2<T>, t: Triangle, points: &[Point2<T>]) -> bool {
-        // Fast approximation using ball centers directly
         if let Some((cx, cy, r2)) =
             circumcircle_approx_fast(&points[t.0], &points[t.1], &points[t.2])
         {
@@ -238,15 +356,20 @@ where
                 let dy = py - cy;
                 let dist2 = dx * dx + dy * dy;
 
-                // Conservative bounds: if clearly outside, return false
-                if dist2 > r2 * (1.0 + EPS) {
+                let tolerance = EPS * r2.max(1.0);
+
+                // Clearly outside circumcircle
+                if dist2 > r2 + tolerance {
                     return false;
                 }
-                // If clearly inside, could return true, but being conservative here
+                // Clearly inside circumcircle
+                if dist2 < r2 - tolerance {
+                    return true;
+                }
             }
         }
 
-        // Fallback to exact incircle test
+        // Uncertain cases: fallback to exact
         Self::point_in_circumcircle(p, t, points)
     }
 
@@ -372,8 +495,15 @@ where
         let pick_start = |end: usize, other: usize| -> Option<usize> {
             if let Some(inc) = adj.vert2tris.get(end) {
                 for &ti in inc.iter() {
-                    if exit_edge_of_triangle(&self.points, adj, &self.triangles, ti, end, other)
-                        .is_some()
+                    if exit_edge_of_triangle_fast(
+                        &self.points,
+                        adj,
+                        &self.triangles,
+                        ti,
+                        end,
+                        other,
+                    )
+                    .is_some()
                     {
                         return Some(ti);
                     }
@@ -409,7 +539,7 @@ where
             }
 
             // Decide the edge we must cross from current_tri toward segment (a,b)
-            let (cross_e, nei) = match exit_edge_of_triangle(
+            let (cross_e, nei) = match exit_edge_of_triangle_fast(
                 &self.points,
                 adj,
                 &self.triangles,
@@ -724,6 +854,78 @@ fn tri_as_array(t: Triangle) -> [usize; 3] {
 #[inline]
 fn has_vertex(t: Triangle, v: usize) -> bool {
     t.0 == v || t.1 == v || t.2 == v
+}
+
+fn exit_edge_of_triangle_fast<T: Scalar>(
+    points: &[Point2<T>],
+    adj: &Adj,
+    tris: &[Triangle],
+    ti: usize,
+    a: usize,
+    b: usize,
+) -> Option<(Edge, Option<usize>)>
+where
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    // Fast path using ball centers
+    if let (Some(ax), Some(ay), Some(bx), Some(by)) = (
+        points[a][0].as_f64_fast(),
+        points[a][1].as_f64_fast(),
+        points[b][0].as_f64_fast(),
+        points[b][1].as_f64_fast(),
+    ) {
+        // Use fast f64 computation for edge selection
+        return exit_edge_fast_f64(points, adj, tris, ti, a, b, ax, ay, bx, by);
+    }
+
+    // Fallback to exact
+    exit_edge_of_triangle(points, adj, tris, ti, a, b)
+}
+
+fn exit_edge_fast_f64<T: Scalar>(
+    points: &[Point2<T>],
+    adj: &Adj,
+    tris: &[Triangle],
+    ti: usize,
+    a: usize,
+    b: usize,
+    ax: f64,
+    ay: f64,
+    bx: f64,
+    by: f64,
+) -> Option<(Edge, Option<usize>)> {
+    let t = tris[ti];
+    let vs = [t.0, t.1, t.2];
+
+    // Fast f64 orientation tests
+    for (u, v) in [(t.0, t.1), (t.1, t.2), (t.2, t.0)] {
+        let ux = points[u][0].ball_center_f64();
+        let uy = points[u][1].ball_center_f64();
+        let vx = points[v][0].ball_center_f64();
+        let vy = points[v][1].ball_center_f64();
+
+        // Fast crossing test
+        let o1 = (bx - ax) * (uy - ay) - (by - ay) * (ux - ax);
+        let o2 = (bx - ax) * (vy - ay) - (by - ay) * (vx - ax);
+        let o3 = (vx - ux) * (ay - uy) - (vy - uy) * (ax - ux);
+        let o4 = (vx - ux) * (by - uy) - (vy - uy) * (bx - ux);
+
+        let eps = EPS * ((bx - ax).abs() + (by - ay).abs()).max(1.0);
+
+        if (o1 * o2 < -eps * eps) && (o3 * o4 < -eps * eps) {
+            let e = Edge::new(u, v);
+            let nei = adj
+                .edge2tris
+                .get(&e)
+                .and_then(|vv| vv.iter().copied().find(|&x| x != ti));
+            return Some((e, nei));
+        }
+    }
+    None
 }
 
 /// Given current triangle index `ti`, decide the **one** edge we exit across,

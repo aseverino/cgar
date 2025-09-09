@@ -28,7 +28,7 @@ use std::{
 };
 
 /// An axis‐aligned bounding box in N dimensions.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Aabb<T: Scalar, const N: usize, P: SpatialElement<T, N>> {
     pub min: P,
     pub max: P,

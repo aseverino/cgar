@@ -31,9 +31,6 @@ use std::{
 use ahash::{AHashMap, AHashSet};
 
 use crate::{
-    boolean::batching::{
-        allocate_vertices_for_splits_no_topology, build_face_pslgs, rewrite_faces_from_cdt_batch,
-    },
     geometry::{
         Aabb, AabbTree,
         plane::Plane,
@@ -50,6 +47,9 @@ use crate::{
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
+    },
+    mesh_processing::batching::{
+        allocate_vertices_for_splits_no_topology, build_face_pslgs, rewrite_faces_from_cdt_batch,
     },
     numeric::{cgar_f64::CgarF64, lazy_exact::ENABLE_PANIC_ON_EXACT, scalar::Scalar},
     operations::triangulation::delaunay::Delaunay,

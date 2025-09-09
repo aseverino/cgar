@@ -83,6 +83,19 @@ where
         Self::build_median(&mut items)
     }
 
+    pub fn build_with_lookup(items: Vec<(Aabb<T, N, P>, D)>) -> (Self, Vec<Aabb<T, N, P>>)
+    where
+        D: Copy,
+        T: From<CgarRational>,
+    {
+        let mut aabb_lookup = vec![Aabb::default(); items.len()];
+        for (i, (aabb, _)) in items.iter().enumerate() {
+            aabb_lookup[i] = aabb.clone();
+        }
+        let tree = Self::build(items);
+        (tree, aabb_lookup)
+    }
+
     fn build_median(items: &mut Vec<(Aabb<T, N, P>, D)>) -> Self
     where
         T: Scalar,
@@ -455,6 +468,31 @@ where
                 left.collect_valid(out);
                 right.collect_valid(out);
             }
+        }
+    }
+
+    pub fn get_aabb(&self, data_index: usize) -> Option<&Aabb<T, N, P>>
+    where
+        D: PartialEq<usize>,
+    {
+        self.find_aabb_by_data(data_index)
+    }
+
+    fn find_aabb_by_data(&self, target: usize) -> Option<&Aabb<T, N, P>>
+    where
+        D: PartialEq<usize>,
+    {
+        match self {
+            AabbTree::Leaf { aabb, data, .. } => {
+                if data.as_ref() == &target {
+                    Some(aabb)
+                } else {
+                    None
+                }
+            }
+            AabbTree::Node { left, right, .. } => left
+                .find_aabb_by_data(target)
+                .or_else(|| right.find_aabb_by_data(target)),
         }
     }
 }

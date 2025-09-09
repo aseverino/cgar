@@ -23,7 +23,6 @@
 use ahash::{AHashMap, AHashSet};
 
 use crate::{
-    boolean::boolean::{ApproxPointKey, point_key},
     geometry::{
         Point2,
         point::{Point, PointOps},
@@ -33,6 +32,7 @@ use crate::{
     },
     kernel::predicates::orient2d,
     mesh::{basic_types::Mesh, intersection_segment::IntersectionSegment},
+    mesh_processing::boolean::{ApproxPointKey, point_key},
     numeric::{
         cgar_f64::CgarF64,
         lazy_exact::LazyExact,
