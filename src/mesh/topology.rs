@@ -531,7 +531,7 @@ impl_mesh! {
                     inside_count += 1;
                     total_rays += 1;
                 }
-                IntersectionResult::HalfEdge(_) | IntersectionResult::Vertex(_) => {
+                IntersectionResult::Edge(..) | IntersectionResult::Vertex(_) => {
                     on_surface = true;
                     total_rays += 1;
                 }
@@ -554,7 +554,7 @@ impl_mesh! {
         dir: &Vector<T, N>,
         tree: &AabbTree<T, N, Point<T, N>, usize>,
         tolerance: T,
-    ) -> IntersectionResult
+    ) -> IntersectionResult<T>
     where
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
         for<'a> &'a T: Add<&'a T, Output = T>
@@ -633,14 +633,8 @@ impl_mesh! {
                         } else {
                             (vs_idxs[0], vs_idxs[1])
                         };
-                        // Find half-edge index
-                        if let Some(he) = self.half_edge_between(edge.0, edge.1) {
-                            if best_t.is_none() || t < best_t.clone().unwrap() {
-                                best_t = Some(t);
-                                best_result = IntersectionResult::HalfEdge(he);
-                            }
-                            continue;
-                        }
+                        best_t = Some(t.clone());
+                        best_result = IntersectionResult::Edge(edge.0, edge.1, best_t.clone().unwrap());
                     }
 
                     // Otherwise, it's a face hit
