@@ -86,10 +86,11 @@ pub enum PointInMeshResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RayCastResult {
-    Outside,
-    OnSurface,
-    Inside,
+pub enum IntersectionResult {
+    None,
+    Face(usize),
+    HalfEdge(usize),
+    Vertex(usize),
 }
 
 #[derive(Debug, Clone)]

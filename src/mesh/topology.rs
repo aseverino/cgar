@@ -41,7 +41,9 @@ use crate::{
     },
     impl_mesh,
     kernel::{self, predicates::TrianglePoint},
-    mesh::basic_types::{FaceInfo, Mesh, PairRing, PointInMeshResult, RayCastResult, VertexRing},
+    mesh::basic_types::{
+        FaceInfo, IntersectionResult, Mesh, PairRing, PointInMeshResult, VertexRing,
+    },
     numeric::{
         cgar_f64::CgarF64,
         scalar::{RefInto, Scalar},
@@ -524,19 +526,16 @@ impl_mesh! {
         ];
 
         for r in rays {
-            match self.cast_ray(p, &r, tree) {
-                Some(RayCastResult::Inside) => {
+            match self.cast_ray(p, &r, tree, T::zero()) {
+                IntersectionResult::Face(_) => {
                     inside_count += 1;
                     total_rays += 1;
                 }
-                Some(RayCastResult::OnSurface) => {
+                IntersectionResult::HalfEdge(_) | IntersectionResult::Vertex(_) => {
                     on_surface = true;
                     total_rays += 1;
                 }
-                Some(RayCastResult::Outside) => {
-                    total_rays += 1;
-                }
-                None => {}
+                IntersectionResult::None => {}
             }
         }
 
@@ -554,7 +553,8 @@ impl_mesh! {
         p: &Point<T, N>,
         dir: &Vector<T, N>,
         tree: &AabbTree<T, N, Point<T, N>, usize>,
-    ) -> Option<RayCastResult>
+        tolerance: T,
+    ) -> IntersectionResult
     where
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
         for<'a> &'a T: Add<&'a T, Output = T>
@@ -562,12 +562,9 @@ impl_mesh! {
             + Mul<&'a T, Output = T>
             + Div<&'a T, Output = T>,
     {
-        use std::cmp::Ordering;
+        let mut best_t: Option<T> = None;
+        let mut best_result = IntersectionResult::None;
 
-        let mut hits: Vec<T> = Vec::new();
-        let mut touches_surface = false;
-
-        // Create ray AABB for tree query using approximate conversion (no exact)
         let far_multiplier = T::from(1000.0);
         let far_point = Point::<T, N>::from_vals(std::array::from_fn(|i| {
             let tmp = &p[i] + &(&dir[i] * &far_multiplier);
@@ -578,13 +575,11 @@ impl_mesh! {
         }));
         let ray_aabb = Aabb::<T, N, Point<T, N>>::from_points(&p_f, &far_point);
 
-        // Query tree for faces that intersect ray
         let mut candidate_faces = Vec::new();
         tree.query_valid(&ray_aabb, &mut candidate_faces);
 
-        let tol = T::tolerance();
+        let tol = tolerance;
 
-        // Test only candidate faces
         for &fi in &candidate_faces {
             let vs_idxs = self.face_vertices(*fi);
             let vs = [
@@ -595,58 +590,69 @@ impl_mesh! {
 
             if N == 3 {
                 if let Some(t) = ray_triangle_intersection(p, dir, std::array::from_fn(|i| vs[i])) {
-                    let at = t.abs();
-                    if (&at - &tol).is_negative_or_zero() {
-                        touches_surface = true;
-                    } else if (&t - &tol).is_positive() {
-                        hits.push(t);
+                    if t.is_negative() {
+                        continue;
+                    }
+                    // Compute intersection point
+                    let hit = &p.as_vector() + &dir.scale(&t);
+                    let hit_point = hit.0;
+
+                    // Compute barycentric coordinates
+                    let (l0, l1, l2) = barycentric_coords(
+                        &hit_point,
+                        vs[0],
+                        vs[1],
+                        vs[2],
+                    ).unwrap();
+
+                    // Check for vertex hit
+                    let bary = [l0.clone(), l1.clone(), l2.clone()];
+                    let mut vertex_idx = None;
+                    let mut zero_count = 0;
+                    for (i, l) in bary.iter().enumerate() {
+                        if l.abs() <= tol {
+                            zero_count += 1;
+                            vertex_idx = Some(vs_idxs[i]);
+                        }
+                    }
+                    if zero_count >= 2 {
+                        // On a vertex
+                        if best_t.is_none() || t < best_t.clone().unwrap() {
+                            best_t = Some(t);
+                            best_result = IntersectionResult::Vertex(vertex_idx.unwrap());
+                        }
+                        continue;
+                    }
+
+                    // Check for edge hit
+                    if zero_count == 1 {
+                        let edge = if l0.abs() <= tol {
+                            (vs_idxs[1], vs_idxs[2])
+                        } else if l1.abs() <= tol {
+                            (vs_idxs[2], vs_idxs[0])
+                        } else {
+                            (vs_idxs[0], vs_idxs[1])
+                        };
+                        // Find half-edge index
+                        if let Some(he) = self.half_edge_between(edge.0, edge.1) {
+                            if best_t.is_none() || t < best_t.clone().unwrap() {
+                                best_t = Some(t);
+                                best_result = IntersectionResult::HalfEdge(he);
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Otherwise, it's a face hit
+                    if best_t.is_none() || t < best_t.clone().unwrap() {
+                        best_t = Some(t);
+                        best_result = IntersectionResult::Face(*fi);
                     }
                 }
             }
         }
 
-        if hits.is_empty() {
-            return None;
-        }
-
-        // Sort using sign-based comparator to avoid PartialOrd exact
-        hits.sort_by(|a, b| {
-            let d = a - b;
-            if d.is_negative() {
-                Ordering::Less
-            } else if d.is_positive() {
-                Ordering::Greater
-            } else {
-                Ordering::Equal
-            }
-        });
-
-        if touches_surface {
-            Some(RayCastResult::OnSurface)
-        } else {
-            // Deduplicate by tolerance using sign checks
-            let mut filtered_hits = 0usize;
-            let mut last_t: Option<T> = None;
-
-            for t in hits.into_iter() {
-                if let Some(ref lt) = last_t {
-                    let diff = (&t - lt).abs();
-                    if (&diff - &tol).is_positive() {
-                        filtered_hits += 1;
-                        last_t = Some(t);
-                    }
-                } else {
-                    filtered_hits += 1;
-                    last_t = Some(t);
-                }
-            }
-
-            Some(if filtered_hits % 2 == 1 {
-                RayCastResult::Inside
-            } else {
-                RayCastResult::Outside
-            })
-        }
+        best_result
     }
 
     pub fn faces_around_face(&self, face: usize) -> [usize; 3] {
