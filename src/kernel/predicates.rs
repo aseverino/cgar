@@ -199,6 +199,86 @@ where
     }
 }
 
+pub fn point_u_on_segment_with_tolerance<T: Scalar + PartialOrd, const N: usize>(
+    a: &Point<T, N>,
+    b: &Point<T, N>,
+    p: &Point<T, N>,
+    tolerance: &T,
+) -> Option<T>
+where
+    Point<T, N>: PointOps<T, N, Vector = crate::geometry::vector::Vector<T, N>>,
+    crate::geometry::vector::Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn are_approx<TT: Scalar, const NN: usize>(
+        p1: &Point<TT, NN>,
+        p2: &Point<TT, NN>,
+        tolerance: &TT,
+    ) -> bool
+    where
+        for<'a> &'a TT:
+            Add<&'a TT, Output = TT> + Sub<&'a TT, Output = TT> + Mul<&'a TT, Output = TT>,
+    {
+        let tolerance_sq = tolerance * tolerance;
+        let mut distance_sq = TT::zero();
+
+        for i in 0..NN {
+            let diff = &p1.coords[i] - &p2.coords[i];
+            distance_sq = &distance_sq + &(&diff * &diff);
+        }
+
+        (distance_sq - tolerance_sq).is_negative_or_zero()
+    }
+
+    // Direction and offset
+    let ab = (b - a).as_vector();
+    let ap = (p - a).as_vector();
+
+    // Degenerate segment?
+    let ab2 = ab.dot(&ab);
+    if ab2.is_zero() {
+        return if are_approx(a, p, tolerance) {
+            Some(T::zero())
+        } else if are_approx(b, p, tolerance) {
+            Some(T::one())
+        } else {
+            None
+        };
+    }
+
+    // Parametric coordinate along AB
+    let u = ap.dot(&ab) / ab2;
+
+    // Clamp u to [0, 1] range for distance calculation
+    let u_clamped = if u < T::zero() {
+        T::zero()
+    } else if u > T::one() {
+        T::one()
+    } else {
+        u.clone()
+    };
+
+    // Calculate closest point on segment
+    let closest_point_vector = ab.scale(&u_clamped);
+    let closest_point = a + &closest_point_vector.0;
+
+    // Calculate distance from p to closest point on segment
+    let distance_vector = (p - &closest_point).as_vector();
+    let distance_sq = distance_vector.dot(&distance_vector);
+    let tolerance_sq = tolerance * tolerance;
+
+    // Check if point is within tolerance of the segment
+    if distance_sq <= tolerance_sq {
+        // Return the original u parameter (not clamped) if within tolerance
+        Some(u)
+    } else {
+        None
+    }
+}
+
 pub fn point_in_or_on_triangle_old<T: Scalar, const N: usize>(
     p: &Point<T, N>,
     a: &Point<T, N>,

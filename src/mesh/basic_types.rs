@@ -86,11 +86,16 @@ pub enum PointInMeshResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntersectionResult<T: Scalar> {
-    None,
-    Face(usize),
-    Edge(usize, usize, T), // (v0,v1,u)
+pub enum IntersectionHit<T: Scalar> {
+    Face(usize, (T, T, T)), // (face_idx, (u,v,w))
+    Edge(usize, usize, T),  // (v0,v1,u)
     Vertex(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntersectionResult<T: Scalar> {
+    Miss,
+    Hit(IntersectionHit<T>, T), // (hit, t)
 }
 
 #[derive(Debug, Clone)]

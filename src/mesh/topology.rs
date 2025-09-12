@@ -42,7 +42,8 @@ use crate::{
     impl_mesh,
     kernel::{self, predicates::TrianglePoint},
     mesh::basic_types::{
-        FaceInfo, IntersectionResult, Mesh, PairRing, PointInMeshResult, VertexRing,
+        FaceInfo, IntersectionHit, IntersectionResult, Mesh, PairRing, PointInMeshResult,
+        VertexRing,
     },
     numeric::{
         cgar_f64::CgarF64,
@@ -461,6 +462,14 @@ impl_mesh! {
         kernel::point_u_on_segment(start, end, p)
     }
 
+    pub fn point_on_half_edge_with_tolerance(&self, he: usize, p: &Point<T, N>, tolerance: &T) -> Option<T>
+    {
+        let start = &self.vertices[self.half_edges[self.half_edges[he].prev].vertex].position;
+        let end = &self.vertices[self.half_edges[he].vertex].position;
+
+        kernel::point_u_on_segment_with_tolerance(start, end, p, tolerance)
+    }
+
     pub fn segment_from_half_edge(&self, he: usize) -> Segment<T, N> {
         let target = self.half_edges[he].vertex;
         let source = self.half_edges[self.half_edges[he].prev].vertex;
@@ -526,17 +535,26 @@ impl_mesh! {
         ];
 
         for r in rays {
-            match self.cast_ray(p, &r, tree, T::zero()) {
-                IntersectionResult::Face(_) => {
-                    inside_count += 1;
-                    total_rays += 1;
+            if let IntersectionResult::Hit(hit, t) = self.cast_ray(p, &r, tree, &None) {
+                match hit {
+                    IntersectionHit::Face(..) => {
+                        if t.is_zero() { on_surface = true; }
+                        inside_count += 1;
+                        total_rays += 1;
+                    }
+                    IntersectionHit::Edge(..) => {
+                        if t.is_zero() { on_surface = true; }
+                        inside_count += 1;
+                        total_rays += 1;
+                    }
+                    IntersectionHit::Vertex(_) => {
+                        if t.is_zero() { on_surface = true; }
+                        inside_count += 1;
+                        total_rays += 1;
+                    }
                 }
-                IntersectionResult::Edge(..) | IntersectionResult::Vertex(_) => {
-                    on_surface = true;
-                    total_rays += 1;
-                }
-                IntersectionResult::None => {}
             }
+
         }
 
         if on_surface {
@@ -548,12 +566,12 @@ impl_mesh! {
         }
     }
 
-    fn cast_ray(
+    pub fn cast_ray(
         &self,
         p: &Point<T, N>,
         dir: &Vector<T, N>,
         tree: &AabbTree<T, N, Point<T, N>, usize>,
-        tolerance: T,
+        tolerance: &Option<T>,
     ) -> IntersectionResult<T>
     where
         Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
@@ -563,9 +581,9 @@ impl_mesh! {
             + Div<&'a T, Output = T>,
     {
         let mut best_t: Option<T> = None;
-        let mut best_result = IntersectionResult::None;
+        let mut best_result = IntersectionResult::Miss;
 
-        let far_multiplier = T::from(1000.0);
+        let far_multiplier = T::from(10e6); // 10 km in mm units
         let far_point = Point::<T, N>::from_vals(std::array::from_fn(|i| {
             let tmp = &p[i] + &(&dir[i] * &far_multiplier);
             tmp.into()
@@ -578,7 +596,7 @@ impl_mesh! {
         let mut candidate_faces = Vec::new();
         tree.query_valid(&ray_aabb, &mut candidate_faces);
 
-        let tol = tolerance;
+        println!("candidates: {}", candidate_faces.len());
 
         for &fi in &candidate_faces {
             let vs_idxs = self.face_vertices(*fi);
@@ -590,6 +608,7 @@ impl_mesh! {
 
             if N == 3 {
                 if let Some(t) = ray_triangle_intersection(p, dir, std::array::from_fn(|i| vs[i])) {
+                    println!("Hit face {} at t={:?}", fi, t);
                     if t.is_negative() {
                         continue;
                     }
@@ -610,7 +629,7 @@ impl_mesh! {
                     let mut vertex_idx = None;
                     let mut zero_count = 0;
                     for (i, l) in bary.iter().enumerate() {
-                        if l.abs() <= tol {
+                        if tolerance.is_none() || l.abs() <= tolerance.clone().unwrap() {
                             zero_count += 1;
                             vertex_idx = Some(vs_idxs[i]);
                         }
@@ -618,29 +637,57 @@ impl_mesh! {
                     if zero_count >= 2 {
                         // On a vertex
                         if best_t.is_none() || t < best_t.clone().unwrap() {
-                            best_t = Some(t);
-                            best_result = IntersectionResult::Vertex(vertex_idx.unwrap());
+                            best_t = Some(t.clone());
+                            best_result = IntersectionResult::Hit(IntersectionHit::Vertex(vertex_idx.unwrap()), t.clone());
                         }
                         continue;
                     }
 
                     // Check for edge hit
                     if zero_count == 1 {
-                        let edge = if l0.abs() <= tol {
-                            (vs_idxs[1], vs_idxs[2])
-                        } else if l1.abs() <= tol {
-                            (vs_idxs[2], vs_idxs[0])
-                        } else {
-                            (vs_idxs[0], vs_idxs[1])
+                        let edge = {
+                            if let Some(tol) = &tolerance {
+                                if (&l0 - &tol).is_negative_or_zero() {
+                                    (vs_idxs[1], vs_idxs[2])
+                                } else if (&l1 - &tol).is_negative_or_zero() {
+                                    (vs_idxs[2], vs_idxs[0])
+                                } else {
+                                    (vs_idxs[0], vs_idxs[1])
+                                }
+                            } else {
+                                // exact zero test
+                                if l0.is_zero() {
+                                    (vs_idxs[1], vs_idxs[2])
+                                } else if l1.is_zero() {
+                                    (vs_idxs[2], vs_idxs[0])
+                                } else {
+                                    (vs_idxs[0], vs_idxs[1])
+                                }
+                            }
                         };
-                        best_t = Some(t.clone());
-                        best_result = IntersectionResult::Edge(edge.0, edge.1, best_t.clone().unwrap());
+
+                        let half_edge = self.half_edge_between(edge.0, edge.1).unwrap();
+                        if let Some(u) = {
+                            if let Some(tol) = &tolerance {
+                                self.point_on_half_edge_with_tolerance(half_edge, &Point::from(hit_point.clone()), tol)
+                            }
+                            else {
+                                self.point_on_half_edge(half_edge, &Point::from(hit_point.clone()))
+                            }
+                        } {
+                            best_t = Some(t.clone());
+                            best_result = IntersectionResult::Hit(IntersectionHit::Edge(edge.0, edge.1, u), t.clone());
+                        }
+                        else {
+                            println!("there was an attempt... edges: {:?} {:?}, hitpoint: {:?}", self.vertices[edge.0].position, self.vertices[edge.1].position, hit_point);
+                        }
+                        continue;
                     }
 
                     // Otherwise, it's a face hit
                     if best_t.is_none() || t < best_t.clone().unwrap() {
-                        best_t = Some(t);
-                        best_result = IntersectionResult::Face(*fi);
+                        best_t = Some(t.clone());
+                        best_result = IntersectionResult::Hit(IntersectionHit::Face(*fi, (l0, l1, l2)), t);
                     }
                 }
             }
@@ -1199,6 +1246,13 @@ impl_mesh! {
 
     pub fn half_edge_between(&self, vi0: usize, vi1: usize) -> Option<usize> {
         self.edge_map.get(&(vi0, vi1)).copied()
+    }
+
+    pub fn edge_half_edges(&self, v0: usize, v1: usize) -> Option<(usize, usize)> {
+        if let Some(&he0) = self.edge_map.get(&(v0, v1)) {
+            return Some((he0, self.half_edges[he0].twin));
+        }
+        None
     }
 
     pub fn point_is_on_some_half_edge(&self, face: usize, point: &Point<T, N>) -> Option<(usize, T)>
@@ -2539,7 +2593,6 @@ enum RayTriCore<T> {
 }
 
 /// Robust ray-triangle intersection using Möller-Trumbore algorithm
-// ...existing code...
 fn ray_triangle_intersection<T: Scalar, const N: usize>(
     ray_origin: &Point<T, N>,
     ray_dir: &Vector<T, N>,
