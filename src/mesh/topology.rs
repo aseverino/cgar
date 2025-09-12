@@ -596,8 +596,6 @@ impl_mesh! {
         let mut candidate_faces = Vec::new();
         tree.query_valid(&ray_aabb, &mut candidate_faces);
 
-        println!("candidates: {}", candidate_faces.len());
-
         for &fi in &candidate_faces {
             let vs_idxs = self.face_vertices(*fi);
             let vs = [
@@ -607,84 +605,63 @@ impl_mesh! {
             ];
 
             if N == 3 {
-                if let Some(t) = ray_triangle_intersection(p, dir, std::array::from_fn(|i| vs[i])) {
-                    println!("Hit face {} at t={:?}", fi, t);
+                if let Some((t, u, v)) = ray_triangle_intersection(p, dir, std::array::from_fn(|i| vs[i]), tolerance) {
                     if t.is_negative() {
                         continue;
                     }
-                    // Compute intersection point
-                    let hit = &p.as_vector() + &dir.scale(&t);
-                    let hit_point = hit.0;
+                    let one = T::one();
+                    // Barycentrics from MT: l0 = 1 - u - v, l1 = u, l2 = v
+                    let l1 = u;
+                    let l2 = v;
+                    let l0 = &one - &(&l1 + &l2);
 
-                    // Compute barycentric coordinates
-                    let (l0, l1, l2) = barycentric_coords(
-                        &hit_point,
-                        vs[0],
-                        vs[1],
-                        vs[2],
-                    ).unwrap();
+                    let tol = tolerance.clone().unwrap_or_else(T::query_tolerance);
 
-                    // Check for vertex hit
-                    let bary = [l0.clone(), l1.clone(), l2.clone()];
-                    let mut vertex_idx = None;
-                    let mut zero_count = 0;
-                    for (i, l) in bary.iter().enumerate() {
-                        if tolerance.is_none() || l.abs() <= tolerance.clone().unwrap() {
-                            zero_count += 1;
-                            vertex_idx = Some(vs_idxs[i]);
-                        }
-                    }
+                    // Zero tests with tolerance (consistent with acceptance)
+                    let z0 = !(&l0 - &tol).is_positive() && !(&l0 + &tol).is_negative();
+                    let z1 = !(&l1 - &tol).is_positive() && !(&l1 + &tol).is_negative();
+                    let z2 = !(&l2 - &tol).is_positive() && !(&l2 + &tol).is_negative();
+                    let zero_count = (z0 as u8) + (z1 as u8) + (z2 as u8);
+
+                    // Vertex hit: two zeros
                     if zero_count >= 2 {
-                        // On a vertex
+                        let v_id = if z1 && z2 { vs_idxs[0] }
+                                   else if z2 && z0 { vs_idxs[1] }
+                                   else { vs_idxs[2] };
                         if best_t.is_none() || t < best_t.clone().unwrap() {
                             best_t = Some(t.clone());
-                            best_result = IntersectionResult::Hit(IntersectionHit::Vertex(vertex_idx.unwrap()), t.clone());
+                            best_result = IntersectionResult::Hit(IntersectionHit::Vertex(v_id), t.clone());
                         }
                         continue;
                     }
 
-                    // Check for edge hit
+                    // Edge hit: exactly one zero
                     if zero_count == 1 {
-                        let edge = {
-                            if let Some(tol) = &tolerance {
-                                if (&l0 - &tol).is_negative_or_zero() {
-                                    (vs_idxs[1], vs_idxs[2])
-                                } else if (&l1 - &tol).is_negative_or_zero() {
-                                    (vs_idxs[2], vs_idxs[0])
-                                } else {
-                                    (vs_idxs[0], vs_idxs[1])
-                                }
-                            } else {
-                                // exact zero test
-                                if l0.is_zero() {
-                                    (vs_idxs[1], vs_idxs[2])
-                                } else if l1.is_zero() {
-                                    (vs_idxs[2], vs_idxs[0])
-                                } else {
-                                    (vs_idxs[0], vs_idxs[1])
-                                }
-                            }
-                        };
+                        // Snap near-zero to exact zero for stable mapping
+                        let mut l0z = l0.clone();
+                        let mut l1z = l1.clone();
+                        let mut l2z = l2.clone();
+                        if z0 { l0z = T::zero(); }
+                        if z1 { l1z = T::zero(); }
+                        if z2 { l2z = T::zero(); }
 
-                        let half_edge = self.half_edge_between(edge.0, edge.1).unwrap();
-                        if let Some(u) = {
-                            if let Some(tol) = &tolerance {
-                                self.point_on_half_edge_with_tolerance(half_edge, &Point::from(hit_point.clone()), tol)
+                        if let Some((he, mut u_edge)) = self.edge_and_u_from_bary_zero(*fi, &l0z, &l1z, &l2z) {
+                            // Clamp u into [0,1] defensively
+                            if u_edge.is_negative() { u_edge = T::zero(); }
+                            if (&u_edge - &one).is_positive() { u_edge = one.clone(); }
+
+                            let src = self.half_edges[self.half_edges[he].prev].vertex;
+                            let dst = self.half_edges[he].vertex;
+
+                            if best_t.is_none() || t < best_t.clone().unwrap() {
+                                best_t = Some(t.clone());
+                                best_result = IntersectionResult::Hit(IntersectionHit::Edge(src, dst, u_edge), t.clone());
                             }
-                            else {
-                                self.point_on_half_edge(half_edge, &Point::from(hit_point.clone()))
-                            }
-                        } {
-                            best_t = Some(t.clone());
-                            best_result = IntersectionResult::Hit(IntersectionHit::Edge(edge.0, edge.1, u), t.clone());
+                            continue;
                         }
-                        else {
-                            println!("there was an attempt... edges: {:?} {:?}, hitpoint: {:?}", self.vertices[edge.0].position, self.vertices[edge.1].position, hit_point);
-                        }
-                        continue;
                     }
 
-                    // Otherwise, it's a face hit
+                    // Face hit
                     if best_t.is_none() || t < best_t.clone().unwrap() {
                         best_t = Some(t.clone());
                         best_result = IntersectionResult::Hit(IntersectionHit::Face(*fi, (l0, l1, l2)), t);
@@ -2597,7 +2574,8 @@ fn ray_triangle_intersection<T: Scalar, const N: usize>(
     ray_origin: &Point<T, N>,
     ray_dir: &Vector<T, N>,
     triangle: [&Point<T, N>; N],
-) -> Option<T>
+    tolerance: &Option<T>,
+) -> Option<(T, T, T)>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
@@ -2610,6 +2588,8 @@ where
         panic!("Currently, only 3 dimensions are supported.");
     }
 
+    let eps = tolerance.as_ref().cloned().unwrap_or_else(T::tolerance);
+    let zero = T::zero();
     let one = T::one();
 
     // Triangle vertices
@@ -2621,54 +2601,63 @@ where
     let edge1 = Vector::<T, 3>::from_vals([&v1[0] - &v0[0], &v1[1] - &v0[1], &v1[2] - &v0[2]]);
     let edge2 = Vector::<T, 3>::from_vals([&v2[0] - &v0[0], &v2[1] - &v0[1], &v2[2] - &v0[2]]);
 
-    // Cross product: ray_dir x edge2
-    let h = Vector::<T, 3>::from_vals([
+    // pvec = ray_dir x edge2
+    let pvec = Vector::<T, 3>::from_vals([
         &ray_dir[1] * &edge2[2] - &ray_dir[2] * &edge2[1],
         &ray_dir[2] * &edge2[0] - &ray_dir[0] * &edge2[2],
         &ray_dir[0] * &edge2[1] - &ray_dir[1] * &edge2[0],
     ]);
 
     // Determinant
-    let a = edge1.dot(&h);
-    if a.abs().is_zero() {
-        return None; // Ray is parallel to triangle
+    let det = edge1.dot(&pvec);
+
+    // Parallel or near-parallel: reject
+    if det.abs() <= eps {
+        return None;
     }
 
-    let f = T::one() / a;
+    let inv_det = T::one() / det;
 
-    // Vector from v0 to ray origin
+    // s = ray_origin - v0
     let s = Vector::<T, 3>::from_vals([
         &ray_origin[0] - &v0[0],
         &ray_origin[1] - &v0[1],
         &ray_origin[2] - &v0[2],
     ]);
 
-    // Calculate u parameter
-    let u = &f * &s.dot(&h);
-
-    // Use sign-based checks to preserve laziness
-    if u.is_negative() || (&u - &one).is_positive() {
-        return None; // Intersection outside triangle
+    // u = (s . pvec) / det
+    let u = &s.dot(&pvec) * &inv_det;
+    // Tolerant range check for u
+    if (&u + &eps).is_negative() || (&u - &(&one + &eps)).is_positive() {
+        return None;
     }
 
-    // Cross product: s x edge1
-    let q = Vector::<T, 3>::from_vals([
+    // qvec = s x edge1
+    let qvec = Vector::<T, 3>::from_vals([
         &s[1] * &edge1[2] - &s[2] * &edge1[1],
         &s[2] * &edge1[0] - &s[0] * &edge1[2],
         &s[0] * &edge1[1] - &s[1] * &edge1[0],
     ]);
 
-    // Calculate v parameter
-    let v = &f * &ray_dir.0.as_vector_3().dot(&q);
+    // v = (ray_dir . qvec) / det
+    let v = &ray_dir.0.as_vector_3().dot(&qvec) * &inv_det;
 
+    // Tolerant range check for v and u+v
     let sum_uv = &u + &v;
-    if v.is_negative() || (&sum_uv - &one).is_positive() {
-        return None; // Intersection outside triangle
+    if (&v + &eps).is_negative() || (&sum_uv - &(&one + &eps)).is_positive() {
+        return None;
     }
 
-    // Distance along ray
-    let t = &f * &edge2.dot(&q);
-    Some(t)
+    // t = (edge2 . qvec) / det
+    let t_raw = &edge2.dot(&qvec) * &inv_det;
+
+    // Tolerant forward-only ray
+    if (&t_raw + &eps).is_negative() {
+        return None;
+    }
+    let t = if t_raw.is_negative() { zero } else { t_raw };
+
+    Some((t, u, v))
 }
 
 /// Robust 2D ray–segment intersection:
