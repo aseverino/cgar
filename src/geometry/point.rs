@@ -302,7 +302,7 @@ where
         Vector(Point::<T, 3>::from_vals([
             self[0].clone(),
             self[1].clone(),
-            T::zero(),
+            self[2].clone(),
         ]))
     }
 
