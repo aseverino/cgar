@@ -78,7 +78,6 @@ where
     }
 }
 
-// ===== Placement policy (keep it simple; you can swap in QEM later) =====
 pub trait Placement<T: Scalar, const N: usize> {
     fn place(&self, mesh: &Mesh<T, N>, v0: usize, v1: usize) -> Point<T, N>;
 }
@@ -357,8 +356,26 @@ impl_mesh! {
         }
     }
 
-    /// Commit the actual contraction of `v_gone` into `v_keep`.
-    /// PRE: your "begin" step succeeded and supplied a valid plan (p_star, etc.).
+    /// Helper: make two half-edges twins of each other (and only each other).
+    #[inline]
+    fn retwin_pair(&mut self, h0: usize, h1: usize) {
+        self.half_edges[h0].twin = h1;
+        self.half_edges[h1].twin = h0;
+    }
+
+    /// Helper: splice a half-edge out of its face cycle and mark removed.
+    #[inline]
+    fn splice_out_half_edge(&mut self, h: usize) {
+        let hp = self.half_edges[h].prev;
+        let hn = self.half_edges[h].next;
+        self.half_edges[hp].next = hn;
+        self.half_edges[hn].prev = hp;
+        self.half_edges[h].removed = true;
+        // Do NOT touch its twin here; caller must rewire twins first.
+    }
+
+    // ...existing code...
+
     pub fn collapse_edge_commit(
         &mut self,
         plan: CollapsePlan<T, N>,
@@ -366,38 +383,37 @@ impl_mesh! {
         let v_keep = plan.v_keep;
         let v_gone = plan.v_gone;
 
-        // 0) Place the merged vertex
+        // 0) Place merged vertex
         self.vertices[v_keep].position = plan.p_star;
 
-        // 1) Find the two directed half-edges of the edge (v_keep <-> v_gone)
+        // 1) Find the two directed half-edges of (v_keep <-> v_gone)
         let pr = self
             .ring_pair(v_keep, v_gone)
             .ok_or("collapse_commit: endpoints not adjacent anymore")?;
-
-        let i0 = pr
-            .idx_v1_in_ring0
-            .ok_or("collapse_commit: missing k->g half-edge")?;
-        let i1 = pr
-            .idx_v0_in_ring1
-            .ok_or("collapse_commit: missing g->k half-edge")?;
-
+        let i0 = pr.idx_v1_in_ring0.ok_or("collapse_commit: missing k->g half-edge")?;
+        let i1 = pr.idx_v0_in_ring1.ok_or("collapse_commit: missing g->k half-edge")?;
         let h_k_g = pr.ring0.halfedges_ccw[i0]; // k -> g
-        let h_g_k = pr.ring1.halfedges_ccw[i1]; // g -> k (twin)
+        let h_g_k = pr.ring1.halfedges_ccw[i1]; // g -> k
 
-        // Faces incident to the collapsing edge (might be None on border)
         let f_k_g = self.half_edges[h_k_g].face;
         let f_g_k = self.half_edges[h_g_k].face;
 
-        // The three half-edges around each triangle (if present)
         let (hkg_next, hkg_prev) = (self.half_edges[h_k_g].next, self.half_edges[h_k_g].prev);
         let (hgk_next, hgk_prev) = (self.half_edges[h_g_k].next, self.half_edges[h_g_k].prev);
 
-        // Sanity: twins should be each other
         debug_assert_eq!(self.half_edges[h_k_g].twin, h_g_k);
         debug_assert_eq!(self.half_edges[h_g_k].twin, h_k_g);
 
-        // 2) Convert incident faces to boundary (clear their face index).
-        //    We do NOT delete those half-edges; they will become border cycles.
+        // CAPTURE TWIN RELATIONSHIPS BEFORE STEP 3 CORRUPTS THEM
+        let left_a_k  = hkg_prev;   // a -> k
+        let left_k_b  = hgk_next;   // k -> b
+        let right_b_k = hgk_prev;   // b -> g  (will become b -> k after step 3)
+        let right_k_a = hkg_next;   // g -> a  (will become k -> a after step 3)
+
+        let twin_of_right_b_k = self.half_edges[right_b_k].twin; // CAPTURE BEFORE STEP 3
+        let twin_of_right_k_a = self.half_edges[right_k_a].twin; // CAPTURE BEFORE STEP 3
+
+        // 2) Convert the two incident faces to boundary
         if let Some(f0) = f_k_g {
             if !self.faces[f0].removed {
                 self.for_each_he_in_face(f0, |h| h.face = None);
@@ -411,15 +427,12 @@ impl_mesh! {
             }
         }
 
-        // 3) Retarget *all* half-edges that end at v_gone so they end at v_keep.
-        //    This is the key trick: it implicitly changes the "from" of their `next`
-        //    half-edges so outgoing spokes from v_gone now emanate from v_keep.
+        // 3) Retarget all half-edges ending at v_gone to end at v_keep
         {
             for (hid, he) in self.half_edges.iter_mut().enumerate() {
                 if he.removed { continue; }
                 if he.vertex == v_gone {
                     he.vertex = v_keep;
-                    // Optional: remember one as a future seed for v_keep
                     if self.vertices[v_keep].half_edge.is_none() {
                         self.vertices[v_keep].half_edge = Some(hid);
                     }
@@ -427,78 +440,60 @@ impl_mesh! {
             }
         }
 
-        // 4) Remove the collapsing directed edge pair itself.
+        // 4) Remove the collapsing directed edge pair
         self.half_edges[h_k_g].removed = true;
         self.half_edges[h_g_k].removed = true;
 
-        // 5) Stitch the two gaps around v_keep so next/prev cycles remain valid.
-        //
-        //    For triangle (k->g, g->a, a->k) and (g->k, k->b, b->g):
-        //    After removing k->g and g->k, we want the ring to go:
-        //      ... a->k  ->  k->b ...
-        //    and the (formerly) g-ring wedge to go:
-        //      ... b->k  ->  k->a ...
-        //
-        //    The four "stitch" half-edges are:
-        //      left  side around k:  a->k  (h_k_g.prev)   and  k->b (h_g_k.next)
-        //      right side around k:  b->g  (h_g_k.prev)   and  g->a (h_k_g.next)
-        //    After step (3), the ones that touched `g` now point to `k`.
-        //
-        let left_a_k = hkg_prev;   // a -> k
-        let left_k_b = hgk_next;   // k -> b
-
-        let right_b_k = hgk_prev;  // b -> g  (now b -> k after step 3)
-        let right_k_a = hkg_next;  // g -> a  (now k -> a after step 3)
-
-        // Patch left seam: a->k -> k->b
+        // 5) Stitch next/prev gaps around v_keep for the two deleted faces
         self.half_edges[left_a_k].next = left_k_b;
         self.half_edges[left_k_b].prev = left_a_k;
 
-        // Patch right seam: b->k -> k->a
-        self.half_edges[right_b_k].next = right_k_a;
-        self.half_edges[right_k_a].prev = right_b_k;
+        // 5b) RETWIN using the captured twins (before step 3 corruption)
+        self.retwin_pair(left_k_b, twin_of_right_b_k);
+        self.retwin_pair(left_a_k, twin_of_right_k_a);
 
-        // 6) Re-seed v_keep.half_edge if needed (choose any outgoing from k).
+        // 5c) Splice out the redundant half-edges from the removed faces' boundary rings.
+        self.splice_out_half_edge(right_b_k);
+        self.splice_out_half_edge(right_k_a);
+
+        // 6) Re-seed v_keep.half_edge if needed
         if self.vertices[v_keep].half_edge.is_none() || {
             let he = self.vertices[v_keep].half_edge.unwrap();
             self.half_edges[he].removed || self.he_from(he) != v_keep
         } {
-            // Find an outgoing from k by rotating CCW once.
-            if let Some(mut he0) = pr.ring0.halfedges_ccw.into_iter().find(|&h| {
-                !self.half_edges[h].removed && self.he_from(h) == v_keep
-            }) {
-                // If that was the deleted one, step to the stitched neighbor.
-                if self.half_edges[he0].removed {
-                    let tw = self.half_edges[he0].twin;
-                    he0 = self.half_edges[tw].next;
-                }
-                self.vertices[v_keep].half_edge = Some(he0);
-            } else {
-                // Fallback scan (rare)
-                for (hid, he) in self.half_edges.iter().enumerate() {
-                    if !he.removed && self.he_from(hid) == v_keep {
-                        self.vertices[v_keep].half_edge = Some(hid);
-                        break;
-                    }
+            for (hid, he) in self.half_edges.iter().enumerate() {
+                if !he.removed && self.he_from(hid) == v_keep {
+                    self.vertices[v_keep].half_edge = Some(hid);
+                    break;
                 }
             }
         }
 
-        // 7) Kill v_gone (no outgoing half-edge anymore).
+        // 7) Retire v_gone
         self.vertices[v_gone].half_edge = None;
-        // If you track a "removed" flag on vertices, set it here.
-        // self.vertices[v_gone].removed = true;
+        self.vertices[v_gone].removed = true;
 
-        // 8) Optional: make twins along the two seams consistent.
-        //    If your mesh always maintains a twin for every half-edge, you may need to
-        //    re-pair boundary half-edges that just became opposites. A simple local
-        //    re-twinning at the two seams (left_a_k <-> right_k_a, right_b_k <-> left_k_b)
-        //    *may* be correct depending on your global invariant. If you already have
-        //    a "fix_twin_locally(from,to)" utility, call it here.
-
-        // 9) (Recommended) Local connectivity validation (debug builds)
         // self.validate_connectivity();
 
         Ok(())
+    }
+
+    pub fn collapse_edge(
+        &mut self,
+        vertex_to_keep: usize,
+        vertex_to_remove: usize,
+    ) -> Result<(), CollapseReject>
+    where
+        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    {
+        let opts = CollapseOpts::default();
+        let placement = Midpoint;
+        let plan = self.collapse_edge_begin_vertices(vertex_to_keep, vertex_to_remove, &placement, &opts);
+
+        if let Ok(plan) = plan {
+            return self.collapse_edge_commit(plan).map_err(|_| CollapseReject::NotAdjacent);
+        } else {
+            panic!("Edge collapse failed to begin, {:?}", plan.err());
+        }
     }
 }
