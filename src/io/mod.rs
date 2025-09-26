@@ -22,3 +22,4 @@
 
 pub mod obj;
 pub mod off;
+pub mod stl;
