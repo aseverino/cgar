@@ -409,7 +409,6 @@ where
         let start = Instant::now();
         rewrite_faces_from_cdt_batch(a, &jobs_a, &cdts_a);
         println!("Rewrite on A faces done in {:.2?}", start.elapsed());
-        // let _ = write_obj(&a, "/mnt/v/cgar_meshes/a.obj");
 
         println!("Splits on B: {}", intersection_segments_b.len());
         let start = Instant::now();

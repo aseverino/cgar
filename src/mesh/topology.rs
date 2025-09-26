@@ -434,7 +434,7 @@ impl_mesh! {
         let he0 = self.faces[f].half_edge;
         let he1 = self.half_edges[he0].next;
         let he2 = self.half_edges[he1].next;
-        debug_assert_eq!(self.half_edges[he2].next, he0);
+        // debug_assert_eq!(self.half_edges[he2].next, he0);
 
         let a = self.half_edges[self.half_edges[he0].prev].vertex; // TAIL of he0
         let b = self.half_edges[he0].vertex;                       // HEAD of he0

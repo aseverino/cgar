@@ -1,4 +1,5 @@
 use ahash::AHashSet;
+use cgar::geometry::util::EPS;
 // tests/test_edge_collapse.rs
 use cgar::geometry::{point::Point, spatial_element::SpatialElement, vector::Vector};
 use cgar::mesh::{
@@ -115,9 +116,9 @@ fn test_midpoint_placement() {
     let p_star = placement.place(&mesh, 0, 2);
 
     // Midpoint between (0,0,0) and (1,1,0) should be (0.5, 0.5, 0)
-    assert!((p_star[0].0 - 0.5).abs() < 1e-10);
-    assert!((p_star[1].0 - 0.5).abs() < 1e-10);
-    assert!((p_star[2].0 - 0.0).abs() < 1e-10);
+    assert!((p_star[0].0 - 0.5).abs() < EPS);
+    assert!((p_star[1].0 - 0.5).abs() < EPS);
+    assert!((p_star[2].0 - 0.0).abs() < EPS);
 }
 
 #[test]

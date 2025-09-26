@@ -667,7 +667,6 @@ impl_mesh! {
 
         let (w, reuse) = self.get_or_insert_vertex(pos);
         if reuse {
-            println!("re-using");
             return Ok(SplitResult {
                 kind: SplitResultKind::NoSplit,
                 vertex: w,
