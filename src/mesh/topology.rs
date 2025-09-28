@@ -418,12 +418,20 @@ impl_mesh! {
         let mut result = SmallVec::new();
         let start = self.faces[f].half_edge;
         let mut h = start;
+        let mut iter_guard = 0;
         loop {
             result.push(h);
             h = self.half_edges[h].next;
 
             if h == start {
                 break;
+            }
+
+            iter_guard += 1;
+
+            if iter_guard > 3 {
+                // panic!("face_half_edges: possible infinite loop detected");
+                return result;
             }
         }
         result
