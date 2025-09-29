@@ -630,7 +630,12 @@ impl_mesh! {
             to: usize,
         ) -> (usize, usize, bool, Option<(usize, usize)>) {
             if let Some(&he) = this.edge_map.get(&(from, to)) {
-                // existed on border; capture neighbors BEFORE unlink
+                // Check if this edge is already interior (manifold violation)
+                if this.half_edges[he].face.is_some() {
+                    panic!("Non-manifold mesh: edge ({},{}) already has a face", from, to);
+                }
+
+                // Edge exists as border; capture neighbors BEFORE unlink
                 debug_assert!(this.half_edges[he].face.is_none());
                 let p = this.half_edges[he].prev;
                 let n = this.half_edges[he].next;
