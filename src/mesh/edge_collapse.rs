@@ -370,6 +370,7 @@ impl_mesh! {
     }
 
     pub fn collapse_edge_commit(&mut self, plan: CollapsePlan<T, N>) -> Result<(), CollapseReject> {
+        self.validate_connectivity();
         let u = plan.v_keep;
         let v = plan.v_gone;
         if u == v { return Err(CollapseReject::InternalError); }
@@ -423,12 +424,45 @@ impl_mesh! {
         self.clear_edge_map_incident(v);
 
         // ---------- 5. Retarget all surviving half-edges whose target is v -> u (excluding removals) ----------
+        println!("Before retargeting - checking for duplicates:");
+        let mut edge_counts = std::collections::HashMap::new();
+        for hid in 0..self.half_edges.len() {
+            let he = &self.half_edges[hid];
+            if he.removed { continue; }
+            if self.in_remove_set(hid, &remove_set) { continue; }
+            let src = self.he_from(hid);
+            let dst = he.vertex;
+            *edge_counts.entry((src, dst)).or_insert(0) += 1;
+        }
+        for ((src, dst), count) in &edge_counts {
+            if *count > 1 {
+                println!("Before retargeting: {} half-edges from {} to {}", count, src, dst);
+            }
+        }
+
         for hid in 0..self.half_edges.len() {
             let he = &self.half_edges[hid];
             if he.removed { continue; }
             if self.in_remove_set(hid, &remove_set) { continue; }
             if he.vertex == v {
+                // println!("Retargeting half-edge {} from vertex {} to vertex {}", hid, v, u);
                 self.half_edges[hid].vertex = u;
+            }
+        }
+
+        println!("After retargeting - checking for duplicates:");
+        let mut edge_counts = std::collections::HashMap::new();
+        for hid in 0..self.half_edges.len() {
+            let he = &self.half_edges[hid];
+            if he.removed { continue; }
+            if self.in_remove_set(hid, &remove_set) { continue; }
+            let src = self.he_from(hid);
+            let dst = he.vertex;
+            *edge_counts.entry((src, dst)).or_insert(0) += 1;
+        }
+        for ((src, dst), count) in &edge_counts {
+            if *count > 1 {
+                println!("After retargeting: {} half-edges from {} to {}", count, src, dst);
             }
         }
 
@@ -468,8 +502,28 @@ impl_mesh! {
         // ---------- 10. Rebuild twin pairs ONLY for edges (u,w) with w in neighbor_flag ----------
         // Build temporary buckets keyed by unordered pair (min,max)
         use ahash::AHashMap;
-        struct PairDir { d0: Option<usize>, d1: Option<usize> } // two opposite directions
+        struct PairDir { d0: Vec<usize>, d1: Vec<usize> } // Allow multiple half-edges per direction
         let mut buckets: AHashMap<(usize,usize), PairDir> = AHashMap::new();
+
+        // Collect all orphaned half-edges that lost their twins in step 8
+        // for hid in 0..self.half_edges.len() {
+        //     let he = &self.half_edges[hid];
+        //     if he.removed || he.twin != usize::MAX {
+        //         continue;
+        //     }
+
+        //     let src = self.he_from(hid);
+        //     let tgt = he.vertex;
+        //     let key = if src < tgt { (src, tgt) } else { (tgt, src) };
+
+        //     buckets.entry(key).or_insert_with(|| PairDir { d0: Vec::new(), d1: Vec::new() });
+
+        //     if src < tgt {
+        //         buckets.get_mut(&key).unwrap().d0.push(hid);
+        //     } else {
+        //         buckets.get_mut(&key).unwrap().d1.push(hid);
+        //     }
+        // }
 
         // Collect candidate half-edges where one endpoint is u and the other is in neighbor_flag
         // We also include half-edges whose source is neighbor and target u (post-retarget).
@@ -484,29 +538,42 @@ impl_mesh! {
             if !involved { continue; }
 
             let (a,b) = if src < dst {(src,dst)} else {(dst,src)};
-            let entry = buckets.entry((a,b)).or_insert(PairDir { d0: None, d1: None });
+            let entry = buckets.entry((a,b)).or_insert(PairDir { d0: Vec::new(), d1: Vec::new() });
 
             // Assign directional slots: first direction stored in d0, opposite in d1.
             if src == a && dst == b {
-                if entry.d0.is_none() { entry.d0 = Some(hid); } else { /* duplicate dir (should not happen) */ }
+                entry.d0.push(hid);
             } else {
-                if entry.d1.is_none() { entry.d1 = Some(hid); } else { /* duplicate dir */ }
+                entry.d1.push(hid);
+            }
+        }
+
+        // Debug: Report any duplicates
+        for ((a,b), pd) in &buckets {
+            if pd.d0.len() > 1 {
+                println!("Multiple half-edges {} -> {}: {:?}", a, b, pd.d0);
+            }
+            if pd.d1.len() > 1 {
+                println!("Multiple half-edges {} -> {}: {:?}", b, a, pd.d1);
             }
         }
 
         // Clear any stale twins among candidates before setting new ones
         for (_, pd) in buckets.iter() {
-            if let Some(h) = pd.d0 {
+            for &h in &pd.d0 {
                 self.half_edges[h].twin = usize::MAX;
             }
-            if let Some(h) = pd.d1 {
+            for &h in &pd.d1 {
                 self.half_edges[h].twin = usize::MAX;
             }
         }
 
-        // Assign twins & rebuild edge_map
+        // Assign twins & rebuild edge_map - only use first half-edge of each direction
         for ((a,b), pd) in buckets {
-            match (pd.d0, pd.d1) {
+            let h_ab = pd.d0.first().copied();
+            let h_ba = pd.d1.first().copied();
+
+            match (h_ab, h_ba) {
                 (Some(h_ab), Some(h_ba)) => {
                     self.half_edges[h_ab].twin = h_ba;
                     self.half_edges[h_ba].twin = h_ab;
@@ -524,6 +591,14 @@ impl_mesh! {
                 }
                 _ => {}
             }
+
+            // Remove any extra half-edges
+            for &h in pd.d0.iter().skip(1) {
+                self.half_edges[h].removed = true;
+            }
+            for &h in pd.d1.iter().skip(1) {
+                self.half_edges[h].removed = true;
+            }
         }
 
         if self.vertices[u].half_edge.map(|h| self.half_edges[h].removed || self.he_from(h) != u).unwrap_or(true) {
@@ -534,6 +609,11 @@ impl_mesh! {
                     break;
                 }
             }
+        }
+
+        for he in &self.half_edges {
+            if he.removed { continue; }
+            assert_ne!(he.twin, usize::MAX, "half-edge with invalid twin");
         }
 
         #[cfg(debug_assertions)]
@@ -551,7 +631,82 @@ impl_mesh! {
             }
         }
 
+        // ---------- 11. Fix ALL vertex half_edge pointers, not just u ----------
+        for vid in 0..self.vertices.len() {
+            if self.vertices[vid].removed { continue; }
+
+            // Check if current half_edge pointer is valid
+            let mut needs_update = false;
+            if let Some(h) = self.vertices[vid].half_edge {
+                if h >= self.half_edges.len() ||
+                   self.half_edges[h].removed ||
+                   self.he_from(h) != vid {
+                    needs_update = true;
+                }
+            } else {
+                needs_update = true;
+            }
+
+            if needs_update {
+                self.vertices[vid].half_edge = None;
+
+                // Find a valid half_edge
+                for (hid, he) in self.half_edges.iter().enumerate() {
+                    if !he.removed && self.he_from(hid) == vid {
+                        self.vertices[vid].half_edge = Some(hid);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // ---------- 12. Comprehensive edge_map rebuild ----------
+        // The current approach might miss some edges. Let's rebuild everything.
+        self.edge_map.clear();
+        for (hid, he) in self.half_edges.iter().enumerate() {
+            if he.removed { continue; }
+            let src = self.he_from(hid);
+            let dst = he.vertex;
+
+            // Only insert if this direction isn't already in the map
+            if !self.edge_map.contains_key(&(src, dst)) {
+                self.edge_map.insert((src, dst), hid);
+            }
+        }
+
+        // ---------- 13. Additional validation ----------
+        println!("Post-collapse validation:");
+
+        // Check for orphaned half-edges
+        let mut orphan_count = 0;
+        for (hid, he) in self.half_edges.iter().enumerate() {
+            if he.removed { continue; }
+            let src = self.he_from(hid);
+            let dst = he.vertex;
+
+            if self.vertices[src].removed || self.vertices[dst].removed {
+                println!("Orphaned half-edge {}: {} -> {} (vertices removed)", hid, src, dst);
+                orphan_count += 1;
+            }
+        }
+
+        if orphan_count > 0 {
+            return Err(CollapseReject::InternalError);
+        }
+
+        // Check for duplicate edges in edge_map
+        let mut reverse_map = std::collections::HashMap::new();
+        for (&(src, dst), &hid) in &self.edge_map {
+            if let Some(&existing) = reverse_map.get(&hid) {
+                println!("Half-edge {} maps to multiple directions: {:?} and ({}, {})",
+                         hid, existing, src, dst);
+                return Err(CollapseReject::InternalError);
+            }
+            reverse_map.insert(hid, (src, dst));
+        }
+
         self.validate_connectivity();
+        println!("valid!");
 
         Ok(())
     }
@@ -611,6 +766,7 @@ impl_mesh! {
     {
         let opts = CollapseOpts::default();
         let placement = Midpoint;
+        println!("vertex to keep: {}, vertex to remove: {}", vertex_to_keep, vertex_to_remove);
         let plan = self.collapse_edge_begin_vertices(vertex_to_keep, vertex_to_remove, &placement, &opts);
 
         if let Ok(plan) = plan {
