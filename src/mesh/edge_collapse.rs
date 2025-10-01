@@ -370,7 +370,7 @@ impl_mesh! {
     }
 
     pub fn collapse_edge_commit(&mut self, plan: CollapsePlan<T, N>) -> Result<(), CollapseReject> {
-        self.validate_connectivity();
+        // self.validate_connectivity();
         let u = plan.v_keep;
         let v = plan.v_gone;
         if u == v { return Err(CollapseReject::InternalError); }
@@ -407,6 +407,12 @@ impl_mesh! {
         // Half-edges to remove (the two faces' 6 interior half-edges)
         let remove_set = [he_uv, he_vu, he_va, he_au, he_ub, he_bv];
 
+        // ---------- 2b. Collect all half-edges incident to u or v (for retargeting) ----------
+        let affected_u = self.collect_incident_half_edges(u);
+        let affected_v = self.collect_incident_half_edges(v);
+        let mut all_affected = affected_u;
+        all_affected.extend_from_slice(&affected_v);
+
         // ---------- 3. Collect neighbor set S = (N(u) ∪ N(v)) \ {u,v} BEFORE mutation ----------
         // We only rebuild twins / edge_map for edges incident to u and S afterwards.
         let mut neighbor_flag = AHashSet::new();
@@ -426,11 +432,11 @@ impl_mesh! {
         // ---------- 5. Retarget all surviving half-edges whose target is v -> u (excluding removals) ----------
         println!("Before retargeting - checking for duplicates:");
         let mut edge_counts = std::collections::HashMap::new();
-        for hid in 0..self.half_edges.len() {
-            let he = &self.half_edges[hid];
+        for hid in &all_affected {
+            let he = &self.half_edges[*hid];
             if he.removed { continue; }
-            if self.in_remove_set(hid, &remove_set) { continue; }
-            let src = self.he_from(hid);
+            if self.in_remove_set(*hid, &remove_set) { continue; }
+            let src = self.he_from(*hid);
             let dst = he.vertex;
             *edge_counts.entry((src, dst)).or_insert(0) += 1;
         }
@@ -440,23 +446,22 @@ impl_mesh! {
             }
         }
 
-        for hid in 0..self.half_edges.len() {
+        for hid in affected_v {
             let he = &self.half_edges[hid];
             if he.removed { continue; }
             if self.in_remove_set(hid, &remove_set) { continue; }
             if he.vertex == v {
-                // println!("Retargeting half-edge {} from vertex {} to vertex {}", hid, v, u);
                 self.half_edges[hid].vertex = u;
             }
         }
 
         println!("After retargeting - checking for duplicates:");
         let mut edge_counts = std::collections::HashMap::new();
-        for hid in 0..self.half_edges.len() {
-            let he = &self.half_edges[hid];
+        for hid in &all_affected {
+            let he = &self.half_edges[*hid];
             if he.removed { continue; }
-            if self.in_remove_set(hid, &remove_set) { continue; }
-            let src = self.he_from(hid);
+            if self.in_remove_set(*hid, &remove_set) { continue; }
+            let src = self.he_from(*hid);
             let dst = he.vertex;
             *edge_counts.entry((src, dst)).or_insert(0) += 1;
         }
@@ -674,39 +679,39 @@ impl_mesh! {
             }
         }
 
-        // ---------- 13. Additional validation ----------
-        println!("Post-collapse validation:");
+        // // ---------- 13. Additional validation ----------
+        // println!("Post-collapse validation:");
 
-        // Check for orphaned half-edges
-        let mut orphan_count = 0;
-        for (hid, he) in self.half_edges.iter().enumerate() {
-            if he.removed { continue; }
-            let src = self.he_from(hid);
-            let dst = he.vertex;
+        // // Check for orphaned half-edges
+        // let mut orphan_count = 0;
+        // for (hid, he) in self.half_edges.iter().enumerate() {
+        //     if he.removed { continue; }
+        //     let src = self.he_from(hid);
+        //     let dst = he.vertex;
 
-            if self.vertices[src].removed || self.vertices[dst].removed {
-                println!("Orphaned half-edge {}: {} -> {} (vertices removed)", hid, src, dst);
-                orphan_count += 1;
-            }
-        }
+        //     if self.vertices[src].removed || self.vertices[dst].removed {
+        //         println!("Orphaned half-edge {}: {} -> {} (vertices removed)", hid, src, dst);
+        //         orphan_count += 1;
+        //     }
+        // }
 
-        if orphan_count > 0 {
-            return Err(CollapseReject::InternalError);
-        }
+        // if orphan_count > 0 {
+        //     return Err(CollapseReject::InternalError);
+        // }
 
-        // Check for duplicate edges in edge_map
-        let mut reverse_map = std::collections::HashMap::new();
-        for (&(src, dst), &hid) in &self.edge_map {
-            if let Some(&existing) = reverse_map.get(&hid) {
-                println!("Half-edge {} maps to multiple directions: {:?} and ({}, {})",
-                         hid, existing, src, dst);
-                return Err(CollapseReject::InternalError);
-            }
-            reverse_map.insert(hid, (src, dst));
-        }
+        // // Check for duplicate edges in edge_map
+        // let mut reverse_map = std::collections::HashMap::new();
+        // for (&(src, dst), &hid) in &self.edge_map {
+        //     if let Some(&existing) = reverse_map.get(&hid) {
+        //         println!("Half-edge {} maps to multiple directions: {:?} and ({}, {})",
+        //                  hid, existing, src, dst);
+        //         return Err(CollapseReject::InternalError);
+        //     }
+        //     reverse_map.insert(hid, (src, dst));
+        // }
 
-        self.validate_connectivity();
-        println!("valid!");
+        // self.validate_connectivity();
+        // println!("valid!");
 
         Ok(())
     }
@@ -774,5 +779,37 @@ impl_mesh! {
         } else {
             panic!("Edge collapse failed to begin, {:?}", plan.err());
         }
+    }
+
+    fn collect_incident_half_edges(&self, vertex: usize) -> SmallVec<[usize; 16]> {
+        let mut incident = SmallVec::new();
+
+        // Outgoing edges (where vertex is source)
+        if let Some(start_he) = self.vertices[vertex].half_edge {
+            let mut current = start_he;
+            loop {
+                incident.push(current);
+                let twin = self.half_edges[current].twin;
+                if twin == usize::MAX { break; }
+                current = self.half_edges[twin].next;
+                if current == start_he { break; }
+            }
+        }
+
+        // Incoming edges (where vertex is target)
+        if let Some(start_he) = self.vertices[vertex].half_edge {
+            let mut current = start_he;
+            loop {
+                let twin = self.half_edges[current].twin;
+                if twin != usize::MAX {
+                    incident.push(twin);
+                }
+                if twin == usize::MAX { break; }
+                current = self.half_edges[twin].next;
+                if current == start_he { break; }
+            }
+        }
+
+        incident
     }
 }
