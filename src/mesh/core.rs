@@ -595,55 +595,148 @@ impl_mesh! {
     /// Flip an interior edge given one of its half‐edges `he`.
     /// Returns Err if `he` is on the boundary (i.e. twin or face is None).
     pub fn flip_edge(&mut self, he_a: usize) -> Result<(), &'static str> {
-        // --- 1) validity checks ---
-        let he_d = self.half_edges[he_a].twin;
-        if he_d == usize::MAX {
-            return Err("cannot flip a boundary edge");
+        // Basic validity
+        if he_a >= self.half_edges.len() {
+            return Err("flip_edge: half-edge out of range");
         }
-        let f0 = self.half_edges[he_a].face.ok_or("no face on he")?;
-        let f1 = self.half_edges[he_d].face.ok_or("no face on twin")?;
+        if self.half_edges[he_a].removed {
+            return Err("flip_edge: removed");
+        }
+        let he_b = self.half_edges[he_a].twin;
+        if he_b == usize::MAX || he_b >= self.half_edges.len() || self.half_edges[he_b].removed {
+            return Err("flip_edge: invalid twin");
+        }
+        let f0 = match self.half_edges[he_a].face {
+            Some(f) => f,
+            None => return Err("flip_edge: boundary"),
+        };
+        let f1 = match self.half_edges[he_b].face {
+            Some(f) => f,
+            None => return Err("flip_edge: boundary"),
+        };
 
-        // --- 2) collect the six half‐edges around that edge ---
-        let he_b = self.half_edges[he_a].next;
-        let he_c = self.half_edges[he_a].prev;
-        let he_e = self.half_edges[he_d].next;
-        let he_f = self.half_edges[he_d].prev;
+        // Gather local configuration
+        let he_ab  = he_a;                 // a->b (to be flipped)
+        let he_bc  = self.half_edges[he_ab].next;
+        let he_ca  = self.half_edges[he_bc].next;
 
-        // --- 3) pull off the four corner vertices ---
-        let _u = self.half_edges[he_c].vertex; // c->u
-        let _v = self.half_edges[he_a].vertex; // u->v
-        let c = self.half_edges[he_b].vertex; // v->c
-        let d = self.half_edges[he_e].vertex; // u->d
+        let he_ba  = he_b;                 // b->a (twin side)
+        let he_ad  = self.half_edges[he_ba].next;
+        let he_db  = self.half_edges[he_ad].next;
 
-        // --- 4) reassign the two halves of the diagonal to c->d and d->c ---
-        self.half_edges[he_a].vertex = d; // now u->d
-        self.half_edges[he_d].vertex = c; // now v->c
+        // Safety
+        for &he in &[he_bc, he_ca, he_ad, he_db] {
+            if he >= self.half_edges.len() || self.half_edges[he].removed {
+                return Err("flip_edge: corrupted cycle");
+            }
+        }
 
-        // --- 5) stitch up face f0 to be the triangle (c, d, u) ---
-        // We pick the cycle [he_c, he_a, he_b] so that dests are [u, d, c]:
-        self.half_edges[he_c].next = he_a;
-        self.half_edges[he_a].next = he_b;
-        self.half_edges[he_b].next = he_c;
+        // Vertices (dest/head of each half-edge)
+        let b = self.half_edges[he_ab].vertex;
+        let c = self.half_edges[he_bc].vertex;
+        let a = self.half_edges[he_ca].vertex;
+        let a_chk = self.half_edges[he_ad].vertex; // should be d, but he_ad is a->d; dest is d
+        let d = self.half_edges[he_ad].vertex;
+        let d2 = self.half_edges[he_db].vertex; // should be b
+        debug_assert_eq!(a, self.half_edges[he_ba].vertex); // he_ba dest a
+        debug_assert_eq!(b, self.half_edges[he_db].vertex);
 
-        self.half_edges[he_a].prev = he_c;
-        self.half_edges[he_b].prev = he_a;
-        self.half_edges[he_c].prev = he_b;
+        if c == d {
+            return Err("flip_edge: degenerate (c==d)");
+        }
 
-        self.faces[f1].half_edge = he_c; // start anywhere in that cycle
-        // println!("setting face {} half-edge {}", f1, he_c);
+        // Prevent creating duplicate edge (c,d) if already exists
+        if let Some(&eidx) = self.edge_map.get(&(c, d)) {
+            if eidx != he_ab && eidx != he_ba {
+                return Err("flip_edge: duplicate edge (c,d)");
+            }
+        }
+        if let Some(&eidx) = self.edge_map.get(&(d, c)) {
+            if eidx != he_ab && eidx != he_ba {
+                return Err("flip_edge: duplicate edge (d,c)");
+            }
+        }
 
-        // --- 6) stitch up face f1 to be the triangle (d, c, v) ---
-        // We pick the cycle [he_e, he_d, he_f] so that dests are [d, c, v]:
-        self.half_edges[he_e].next = he_d;
-        self.half_edges[he_d].next = he_f;
-        self.half_edges[he_f].next = he_e;
+        // Degeneracy / area check (only for 3D)
+        #[allow(unused)]
+        if N == 3 {
+            // Access positions
+            let pa = &self.vertices[a].position;
+            let pb = &self.vertices[b].position;
+            let pc = &self.vertices[c].position;
+            let pd = &self.vertices[d].position;
 
-        self.half_edges[he_d].prev = he_e;
-        self.half_edges[he_f].prev = he_d;
-        self.half_edges[he_e].prev = he_f;
+            // (d - a) x (c - a)
+            let da0 = &pd[0] - &pa[0]; let da1 = &pd[1] - &pa[1]; let da2 = &pd[2] - &pa[2];
+            let ca0 = &pc[0] - &pa[0]; let ca1 = &pc[1] - &pa[1]; let ca2 = &pc[2] - &pa[2];
+            let n1x = &da1 * &ca2 - &da2 * &ca1;
+            let n1y = &da2 * &ca0 - &da0 * &ca2;
+            let n1z = &da0 * &ca1 - &da1 * &ca0;
 
-        self.faces[f0].half_edge = he_e;
-        // println!("setting face {} half-edge {}", f0, he_e);
+            // (c - b) x (d - b)
+            let cb0 = &pc[0] - &pb[0]; let cb1 = &pc[1] - &pb[1]; let cb2 = &pc[2] - &pb[2];
+            let db0 = &pd[0] - &pb[0]; let db1 = &pd[1] - &pb[1]; let db2 = &pd[2] - &pb[2];
+            let n2x = &cb1 * &db2 - &cb2 * &db1;
+            let n2y = &cb2 * &db0 - &cb0 * &db2;
+            let n2z = &cb0 * &db1 - &cb1 * &db0;
+
+            let zero = n1x.clone() - n1x.clone(); // cheap zero
+            let tri1_degenerate = n1x == zero && n1y == zero && n1z == zero;
+            let tri2_degenerate = n2x == zero && n2y == zero && n2z == zero;
+            if tri1_degenerate || tri2_degenerate {
+                return Err("flip_edge: degenerate area");
+            }
+        }
+
+        // Reassign central edge vertices to new diagonal c<->d
+        self.half_edges[he_ab].vertex = d; // c->d after rewiring (origin will become c)
+        self.half_edges[he_ba].vertex = c; // d->c
+
+        // Face reassignment:
+        // New Face f0 (a,d,c): he_ad (a->d), he_ba (d->c), he_ca (c->a)
+        // New Face f1 (b,c,d): he_bc (b->c), he_ab (c->d), he_db (d->b)
+        self.half_edges[he_ad].face = Some(f0);
+        self.half_edges[he_ba].face = Some(f0);
+        self.half_edges[he_ca].face = Some(f0);
+
+        self.half_edges[he_bc].face = Some(f1);
+        self.half_edges[he_ab].face = Some(f1);
+        self.half_edges[he_db].face = Some(f1);
+
+        // Rewire cycles for f0
+        self.half_edges[he_ad].next = he_ba;
+        self.half_edges[he_ba].next = he_ca;
+        self.half_edges[he_ca].next = he_ad;
+
+        self.half_edges[he_ba].prev = he_ad;
+        self.half_edges[he_ca].prev = he_ba;
+        self.half_edges[he_ad].prev = he_ca;
+
+        // Rewire cycles for f1
+        self.half_edges[he_bc].next = he_ab;
+        self.half_edges[he_ab].next = he_db;
+        self.half_edges[he_db].next = he_bc;
+
+        self.half_edges[he_ab].prev = he_bc;
+        self.half_edges[he_db].prev = he_ab;
+        self.half_edges[he_bc].prev = he_db;
+
+        // Update representative half-edges for faces
+        self.faces[f0].half_edge = he_ad;
+        self.faces[f1].half_edge = he_bc;
+
+        // Update edge map
+        self.edge_map.remove(&(a, b));
+        self.edge_map.remove(&(b, a));
+        self.edge_map.insert((c, d), he_ab);
+        self.edge_map.insert((d, c), he_ba);
+
+        // Update vertex half_edge pointers if they pointed to obsolete direction
+        if self.vertices[a].half_edge == Some(he_ab) { self.vertices[a].half_edge = Some(he_ad); }
+        if self.vertices[b].half_edge == Some(he_ba) { self.vertices[b].half_edge = Some(he_bc); }
+        // For completeness ensure c,d have some outgoing
+        if self.vertices[c].half_edge.is_none() { self.vertices[c].half_edge = Some(he_ca); }
+        if self.vertices[d].half_edge.is_none() { self.vertices[d].half_edge = Some(he_db); }
 
         Ok(())
     }
