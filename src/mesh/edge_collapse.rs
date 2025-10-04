@@ -520,11 +520,6 @@ impl_mesh! {
             let src = self.he_from(hid);
             let dst = he.vertex;
 
-            // Only process edges involving u and a neighbor
-            let involves_u_and_neighbor = (src == u && neighbor_flag.contains(&dst)) ||
-                                        (dst == u && neighbor_flag.contains(&src));
-            if !involves_u_and_neighbor { continue; }
-
             let (a, b) = (src.min(dst), src.max(dst));
             let entry = buckets.entry((a, b)).or_insert(PairDir { d0: Vec::new(), d1: Vec::new() });
 
@@ -532,16 +527,6 @@ impl_mesh! {
                 entry.d0.push(hid);
             } else {
                 entry.d1.push(hid);
-            }
-        }
-
-        // Clear any stale twins among candidates before setting new ones
-        for (_, pd) in buckets.iter() {
-            for &h in &pd.d0 {
-                self.half_edges[h].twin = usize::MAX;
-            }
-            for &h in &pd.d1 {
-                self.half_edges[h].twin = usize::MAX;
             }
         }
 
@@ -611,29 +596,26 @@ impl_mesh! {
             }
         }
 
-        if self.vertices[u].half_edge.map(|h| self.half_edges[h].removed || self.he_from(h) != u).unwrap_or(true) {
-            self.vertices[u].half_edge = None;
-            for (hid, he) in self.half_edges.iter().enumerate() {
-                if !he.removed && self.he_from(hid) == u {
-                    self.vertices[u].half_edge = Some(hid);
-                    break;
-                }
-            }
-        }
+        let mut fixed_vertices = AHashSet::new();
+        for &hid in &all_affected {
+            let he = &self.half_edges[hid];
+            if he.removed { continue; }
 
-        #[cfg(debug_assertions)]
-        {
-            for (i, he) in self.half_edges.iter().enumerate() {
-                if he.removed { continue; }
-                assert_ne!(he.vertex, v, "half-edge still targets removed vertex");
-                let n = he.next; let p = he.prev;
-                assert!(n < self.half_edges.len() && p < self.half_edges.len());
-                assert_eq!(self.half_edges[n].prev, i);
-                assert_eq!(self.half_edges[p].next, i);
-                if he.twin != usize::MAX {
-                    assert_eq!(self.half_edges[he.twin].twin, i);
-                }
+            let vid = self.he_from(hid);
+            if self.vertices[vid].removed || fixed_vertices.contains(&vid) {
+                continue;
             }
+
+            let needs_update = self.vertices[vid].half_edge
+                .map(|h| h >= self.half_edges.len() ||
+                        self.half_edges[h].removed ||
+                        self.he_from(h) != vid)
+                .unwrap_or(true);
+
+            if needs_update {
+                self.vertices[vid].half_edge = Some(hid);
+            }
+            fixed_vertices.insert(vid);
         }
 
         // ---------- 11. Fix ALL vertex half_edge pointers, not just u ----------
