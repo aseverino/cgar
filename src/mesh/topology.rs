@@ -22,7 +22,7 @@
 
 use std::{
     array::from_fn,
-    ops::{Add, Div, Mul, Neg, Sub},
+    ops::{Add, Div, Mul, Sub},
 };
 
 use ahash::AHashSet;
@@ -33,22 +33,17 @@ use crate::{
         Aabb, AabbTree,
         plane::Plane,
         point::{Point, PointOps},
-        segment::{Segment, SegmentOps},
+        segment::Segment,
         spatial_element::SpatialElement,
-        tri_tri_intersect::{TriTriIntersectionResult, tri_tri_intersection},
         util::*,
         vector::*,
     },
     impl_mesh,
     kernel::{self, predicates::TrianglePoint},
     mesh::basic_types::{
-        FaceInfo, IntersectionHit, IntersectionResult, Mesh, PairRing, PointInMeshResult,
-        VertexRing,
+        IntersectionHit, IntersectionResult, Mesh, PairRing, PointInMeshResult, VertexRing,
     },
-    numeric::{
-        cgar_f64::CgarF64,
-        scalar::{RefInto, Scalar},
-    },
+    numeric::scalar::Scalar,
     operations::Zero,
 };
 
@@ -441,7 +436,6 @@ impl_mesh! {
     pub fn face_vertices(&self, f: usize) -> [usize; 3] {
         let he0 = self.faces[f].half_edge;
         let he1 = self.half_edges[he0].next;
-        let he2 = self.half_edges[he1].next;
         // debug_assert_eq!(self.half_edges[he2].next, he0);
 
         let a = self.half_edges[self.half_edges[he0].prev].vertex; // TAIL of he0
@@ -1138,7 +1132,7 @@ impl_mesh! {
             x >= &mtol && x <= &tol
         };
 
-        let mut start_on_plane = Point::<T, N>::from_vals(from_fn(|i| from[i].clone()));
+        let start_on_plane: Point<T, N>;
         let mut dir_in_plane3  = direction.clone();
 
         if near_zero(&den) {
@@ -2567,16 +2561,6 @@ where
     Some((t, u))
 }
 
-#[derive(Debug)]
-enum RayTriCore<T> {
-    // Unique solution: the ray intersects the triangle's plane with well-defined (t,u,v)
-    Skew { t: T, u: T, v: T },
-    // Ray direction lies in the triangle plane; 'coplanar' reports if origin also lies in that plane
-    Parallel { coplanar: bool },
-    // Triangle is degenerate (edges don't span a 2D plane)
-    Degenerate,
-}
-
 /// Robust ray-triangle intersection using Möller-Trumbore algorithm
 fn ray_triangle_intersection<T: Scalar, const N: usize>(
     ray_origin: &Point<T, N>,
@@ -2759,53 +2743,4 @@ where
         return Some((t_hit, u));
     }
     None
-}
-
-fn coplanar_polygon_has_area<T: Scalar, const N: usize>(segs: &[Segment<T, N>], tol: &T) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: core::ops::Add<&'a T, Output = T>
-        + core::ops::Sub<&'a T, Output = T>
-        + core::ops::Mul<&'a T, Output = T>,
-{
-    // Collect unique endpoints (within tol)
-    let mut uniq: Vec<Point<T, N>> = Vec::new();
-    for s in segs {
-        for p in [&s.a, &s.b] {
-            let mut dup = false;
-            for q in &uniq {
-                if &(&(p - q).as_vector()).norm2() <= tol {
-                    dup = true;
-                    break;
-                }
-            }
-            if !dup {
-                uniq.push(p.clone());
-            }
-        }
-    }
-    if uniq.len() < 3 {
-        return false;
-    }
-
-    // Threshold on area^2 ~ (tol^2)^2 = tol^4, like your previous version
-    let tol2 = tol * tol;
-    let area_thresh2 = &tol2 * &tol2;
-
-    // If any triple of points is non-collinear by more than tol, we have area.
-    for i in 0..uniq.len() - 2 {
-        for j in i + 1..uniq.len() - 1 {
-            let v1 = (&uniq[j] - &uniq[i]).as_vector();
-            for k in j + 1..uniq.len() {
-                let v2 = (&uniq[k] - &uniq[i]).as_vector();
-                let cross = v1.cross(&v2);
-                let cross2 = cross.dot(&cross); // = 4 * (triangle_area)^2
-                if cross2 > area_thresh2 {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }

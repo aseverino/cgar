@@ -29,7 +29,6 @@ use crate::{
     numeric::{cgar_f64::CgarF64, cgar_rational::CgarRational, scalar::Scalar},
 };
 use std::{
-    cmp::Ordering,
     ops::{Add, Div, Mul, Sub},
     sync::Arc,
 };
@@ -127,46 +126,6 @@ where
         let node_aabb = left_child.aabb().union(right_child.aabb());
 
         let total_items = left_child.size() + right_child.size();
-        let (lmn, lmx) = left_child.approx_bounds();
-        let (rmn, rmx) = right_child.approx_bounds();
-        let (amin, amax) = approx_union(&lmn, &lmx, &rmn, &rmx);
-
-        AabbTree::Node {
-            aabb: node_aabb,
-            left: left_child,
-            right: right_child,
-            valid_count: total_items,
-            total_count: total_items,
-            amin,
-            amax,
-        }
-    }
-
-    fn build_binary_tree(mut items: Vec<(Aabb<T, N, P>, D)>) -> Self
-    where
-        T: Scalar + From<CgarRational>,
-    {
-        if items.len() == 1 {
-            let (aabb, data) = items.pop().unwrap();
-            let (amin, amax) = approx_from_exact(&aabb);
-            return AabbTree::Leaf {
-                aabb,
-                data: Arc::new(data),
-                valid: true,
-                amin,
-                amax,
-            };
-        }
-
-        let mid = items.len() / 2;
-        let right_items = items.split_off(mid);
-
-        let left_child = Box::new(Self::build_binary_tree(items));
-        let right_child = Box::new(Self::build_binary_tree(right_items));
-
-        let node_aabb = left_child.aabb().union(right_child.aabb());
-        let total_items = left_child.size() + right_child.size();
-
         let (lmn, lmx) = left_child.approx_bounds();
         let (rmn, rmx) = right_child.approx_bounds();
         let (amin, amax) = approx_union(&lmn, &lmx, &rmn, &rmx);

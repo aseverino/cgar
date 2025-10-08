@@ -28,7 +28,6 @@ use std::{
 
 use crate::{
     geometry::{
-        Point3,
         point::{Point, PointOps},
         spatial_element::SpatialElement,
         vector::{Vector, VectorOps},

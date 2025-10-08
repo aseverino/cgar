@@ -20,21 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{
-    geometry::{
-        Point3,
-        point::{Point, PointOps},
-        segment::Segment,
-        vector::{Vector, VectorOps},
-    },
-    kernel::{
-        kernel::{Kernel2, Kernel3},
-        orientation::orient,
-        predicates::{are_collinear, are_equal, is_point_on_segment},
-    },
-    numeric::cgar_rational::CgarRational,
-};
-
 // pub struct BigRationalKernel;
 
 // impl Kernel2 for BigRationalKernel {

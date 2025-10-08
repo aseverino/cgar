@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 
 use crate::{
     geometry::{
@@ -30,12 +30,10 @@ use crate::{
         util::EPS,
         vector::{Vector, VectorOps},
     },
-    kernel::predicates::orient2d,
     mesh::{basic_types::Mesh, intersection_segment::IntersectionSegment},
     mesh_processing::boolean::{ApproxPointKey, point_key},
     numeric::{
         cgar_f64::CgarF64,
-        lazy_exact::LazyExact,
         scalar::{RefInto, Scalar},
     },
     operations::triangulation::delaunay::Delaunay,
@@ -730,36 +728,6 @@ fn canonicalize_u_for_edge<TS: Scalar, const M: usize>(
 fn bucket_u(u: f64, eps: f64) -> i64 {
     // Quantize to tolerance-sized bins
     ((u / eps).round() as i64).clamp(i64::MIN / 4, i64::MAX / 4)
-}
-
-#[inline]
-fn on_segment_uv<T: Scalar + PartialOrd>(a: &Point2<T>, b: &Point2<T>, p: &Point2<T>) -> bool
-where
-    for<'x> &'x T: std::ops::Sub<&'x T, Output = T>
-        + std::ops::Mul<&'x T, Output = T>
-        + std::ops::Add<&'x T, Output = T>
-        + std::ops::Div<&'x T, Output = T>
-        + std::ops::Neg<Output = T>,
-{
-    // identical to Delaunay::on_segment
-    let o = orient2d(a, b, p);
-    if !o.is_zero() {
-        return false;
-    }
-    let (minx, maxx) = if (&a[0] - &b[0]).is_negative_or_zero() {
-        (&a[0], &b[0])
-    } else {
-        (&b[0], &a[0])
-    };
-    let (miny, maxy) = if (&a[1] - &b[1]).is_negative_or_zero() {
-        (&a[1], &b[1])
-    } else {
-        (&b[1], &a[1])
-    };
-    (&p[0] - &minx).is_positive_or_zero()
-        && (&p[0] - &maxx).is_negative_or_zero()
-        && (&p[1] - &miny).is_positive_or_zero()
-        && (&p[1] - &maxy).is_negative_or_zero()
 }
 
 #[inline]

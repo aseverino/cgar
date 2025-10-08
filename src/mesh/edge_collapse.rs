@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::ops::{Add, Div, Mul, Sub};
 
 use ahash::AHashSet;
 use smallvec::SmallVec;
@@ -28,7 +28,7 @@ use smallvec::SmallVec;
 use crate::{
     geometry::{point::*, vector::*},
     impl_mesh,
-    mesh::{basic_types::*, half_edge::HalfEdge},
+    mesh::basic_types::*,
     numeric::scalar::Scalar,
 };
 
@@ -344,22 +344,6 @@ impl_mesh! {
     #[inline]
     fn he_from(&self, he: usize) -> usize {
         self.half_edges[self.half_edges[he].prev].vertex
-    }
-
-    /// Utility: walk a face cycle once, applying `mutator` to each half-edge id.
-    fn for_each_he_in_face<F: FnMut(&mut HalfEdge)>(&mut self, f: usize, mut mutator: F) {
-        let start = self.faces[f].half_edge;
-        let mut h = start;
-        let mut first = true;
-        let guard = 0;
-        while first || h != start {
-            first = false;
-            mutator(&mut self.half_edges[h]);
-            h = self.half_edges[h].next;
-            if guard > 100 {
-                panic!("error on for_each_he_in_face: too many iterations");
-            }
-        }
     }
 
     #[inline]

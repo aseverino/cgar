@@ -27,7 +27,7 @@ use crate::geometry::Point2;
 use crate::geometry::point::Point;
 use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::util::EPS;
-use crate::kernel::predicates::{bbox, bbox_approx, incircle, orient2d};
+use crate::kernel::predicates::{bbox_approx, incircle, orient2d};
 use crate::mesh::basic_types::{Edge, Mesh, Triangle};
 use crate::mesh_processing::batching::FaceJobUV;
 use crate::numeric::scalar::Scalar;
@@ -879,7 +879,7 @@ where
         points[b][1].as_f64_fast(),
     ) {
         // Use fast f64 computation for edge selection
-        return exit_edge_fast_f64(points, adj, tris, ti, a, b, ax, ay, bx, by);
+        return exit_edge_fast_f64(points, adj, tris, ti, ax, ay, bx, by);
     }
 
     // Fallback to exact
@@ -891,15 +891,12 @@ fn exit_edge_fast_f64<T: Scalar>(
     adj: &Adj,
     tris: &[Triangle],
     ti: usize,
-    a: usize,
-    b: usize,
     ax: f64,
     ay: f64,
     bx: f64,
     by: f64,
 ) -> Option<(Edge, Option<usize>)> {
     let t = tris[ti];
-    let vs = [t.0, t.1, t.2];
 
     // Fast f64 orientation tests
     for (u, v) in [(t.0, t.1), (t.1, t.2), (t.2, t.0)] {

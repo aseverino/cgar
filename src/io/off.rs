@@ -28,7 +28,6 @@ use std::{
 
 use crate::{
     geometry::{
-        Point3,
         point::{Point, PointOps},
         spatial_element::SpatialElement,
         vector::{Vector, VectorOps},
@@ -114,7 +113,7 @@ where
     let reader = BufReader::new(file);
 
     // Helper: iterate non-empty, non-comment tokens across lines
-    fn tokenize<R: BufRead>(mut r: R) -> io::Result<Vec<String>> {
+    fn tokenize<R: BufRead>(r: R) -> io::Result<Vec<String>> {
         let mut toks = Vec::new();
         for line in r.lines() {
             let l = line?;

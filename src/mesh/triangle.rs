@@ -21,10 +21,6 @@
 // SOFTWARE.
 
 use crate::{
-    geometry::{
-        point::{Point, PointOps},
-        vector::{Vector, VectorOps},
-    },
     impl_mesh,
     mesh::{basic_types::Mesh, face::Face, half_edge::HalfEdge},
     numeric::scalar::Scalar,
@@ -55,9 +51,7 @@ fn explain_edge_block<TS: Scalar, const M: usize>(
             let f_str = format!("{} h={} twin={} face={}", kind, h, t, f);
             if let Some(f) = he.face {
                 if f < this.faces.len() && !this.faces[f].removed {
-                    let he0 = he;
                     let he1 = &this.half_edges[he.next];
-                    let he2 = &this.half_edges[he1.next];
                     let v0 = this.half_edges[he.twin].vertex;
                     let v1 = he.vertex;
                     let v2 = he1.vertex;
@@ -725,9 +719,9 @@ impl_mesh! {
         let face_idx = self.faces.len();
         self.faces.push(Face::new(0));
 
-        let (e0, t0, n0, p0n0) = ensure_dir::<T, N>(self, face_idx, edges[0].0, edges[0].1);
-        let (e1, t1, n1, p1n1) = ensure_dir::<T, N>(self, face_idx, edges[1].0, edges[1].1);
-        let (e2, t2, n2, p2n2) = ensure_dir::<T, N>(self, face_idx, edges[2].0, edges[2].1);
+        let (e0, _t0, n0, p0n0) = ensure_dir::<T, N>(self, face_idx, edges[0].0, edges[0].1);
+        let (e1, _t1, n1, p1n1) = ensure_dir::<T, N>(self, face_idx, edges[1].0, edges[1].1);
+        let (e2, _t2, n2, p2n2) = ensure_dir::<T, N>(self, face_idx, edges[2].0, edges[2].1);
 
         // Interior CCW ring (of chosen orientation)
         self.half_edges[e0].next = e1;

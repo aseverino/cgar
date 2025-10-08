@@ -59,12 +59,12 @@ impl<T: Scalar, const N: usize, P: SpatialElement<T, N>> Aabb<T, N, P> {
         let mut maxs = [0.0; N];
 
         for i in 0..N {
-            if let Some((lo, hi)) = self.min[i].double_interval() {
+            if let Some((lo, _hi)) = self.min[i].double_interval() {
                 mins[i] = lo;
             } else {
                 return None;
             }
-            if let Some((lo, hi)) = self.max[i].double_interval() {
+            if let Some((_lo, hi)) = self.max[i].double_interval() {
                 maxs[i] = hi;
             } else {
                 return None;

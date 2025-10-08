@@ -23,7 +23,6 @@
 use std::{
     cmp::Ordering,
     ops::{Add, Div, Mul, Sub},
-    time::Instant,
 };
 
 use smallvec::SmallVec;
@@ -34,7 +33,6 @@ use crate::{
         point::{Point, PointOps},
         segment::Segment,
         spatial_element::SpatialElement,
-        util::*,
         vector::{Vector, VectorOps},
     },
     numeric::scalar::Scalar,
@@ -157,46 +155,6 @@ where
         ));
     }
     None
-}
-
-/// Project a 3D triangle onto `axis`, returning (min,max).
-fn project_3d_triangle<T: Scalar, const N: usize>(
-    axis: &Vector<T, N>,
-    a: &Point<T, N>,
-    b: &Point<T, N>,
-    c: &Point<T, N>,
-) -> (T, T)
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    let p = |p: &Point<T, N>| {
-        let v: Vector<T, N> = p.as_vector();
-        v.dot(axis)
-    };
-    let p0 = p(a);
-    let p1 = p(b);
-    let p2 = p(c);
-
-    let mut min = p0.clone();
-    let mut max = p0;
-    if (&p1 - &min).is_negative() {
-        min = p1.clone();
-    }
-    if (&p1 - &max).is_positive() {
-        max = p1.clone();
-    }
-    if (&p2 - &min).is_negative() {
-        min = p2.clone();
-    }
-    if (&p2 - &max).is_positive() {
-        max = p2.clone();
-    }
-    (min, max)
 }
 
 fn coplanar_tri_tri_intersection<T: Scalar, const N: usize>(
@@ -431,7 +389,7 @@ where
     }
 
     // Precompute 2D test for triangle Q (edge functions; no divisions)
-    let (qi0, qi1, qdrop) = coplanar_axes(&n2);
+    let (qi0, qi1, _qdrop) = coplanar_axes(&n2);
     let q2d = [
         project_to_2d(q[0], qi0, qi1),
         project_to_2d(q[1], qi0, qi1),
@@ -643,86 +601,6 @@ where
             TriTriIntersectionResult::Proper(Segment::new(&uniq[best.0], &uniq[best.1]))
         }
     }
-}
-
-/// Intersect the segment [a,b] against plane (n·x + d = 0).
-/// Returns `Some(Point3)` if it crosses or touches, else `None`.
-fn intersect_edge_plane<T: Scalar, const N: usize>(
-    a: &Point<T, N>,
-    b: &Point<T, N>,
-    n: &Point<T, N>,
-    d: &T,
-) -> Option<Point<T, N>>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // signed distances:
-    let da = &n.as_vector().dot(&a.as_vector()) + &d;
-    let db = &n.as_vector().dot(&b.as_vector()) + &d;
-
-    // if both on same side (and nonzero), no cross
-    if (&da * &db).is_positive() {
-        return None;
-    }
-
-    // Check for division by zero
-    let denominator = &da - &db;
-    if denominator.is_zero() {
-        // Edge parallel to plane. If it's on the plane, no point should be returned.
-        return None;
-    }
-
-    // compute interpolation parameter t = da / (da - db)
-    let t = &da / &(&da - &db);
-
-    // point = a + t*(b - a)
-    let dir = (b - a).as_vector();
-    let offset = dir.scale(&t);
-    Some(a.add_vector(&offset))
-}
-
-/// Returns true if `p` lies inside triangle `(a,b,c)` on the plane with normal `n`.
-/// We use barycentric coordinates in 3D.
-fn point_in_tri<T: Scalar, const N: usize>(
-    p: &Point<T, N>,
-    a: &Point<T, N>,
-    b: &Point<T, N>,
-    c: &Point<T, N>,
-) -> bool
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
-    for<'a> &'a T: Sub<&'a T, Output = T>
-        + Mul<&'a T, Output = T>
-        + Add<&'a T, Output = T>
-        + Div<&'a T, Output = T>,
-{
-    // compute vectors
-    let v0 = (c - a).as_vector();
-    let v1 = (b - a).as_vector();
-    let v2 = (p - a).as_vector();
-
-    // dot products
-    let dot00 = v0.dot(&v0);
-    let dot01 = v0.dot(&v1);
-    let dot02 = v0.dot(&v2);
-    let dot11 = v1.dot(&v1);
-    let dot12 = v1.dot(&v2);
-
-    // barycentric coords
-    let inv_denom = &T::one() / &(&(&dot00 * &dot11) - &(&dot01 * &dot01));
-    let u = &(&(&dot11 * &dot02) - &(&dot01 * &dot12)) * &inv_denom;
-    let v = &(&(&dot00 * &dot12) - &(&dot01 * &dot02)) * &inv_denom;
-
-    // inside if u>=0, v>=0, u+v<=1
-    u.is_positive_or_zero()
-        && v.is_positive_or_zero()
-        && ((&u + &v) - T::one()).is_negative_or_zero()
 }
 
 /// Given a normal, return the indices of the two axes to keep (largest dropped).
@@ -1363,7 +1241,7 @@ fn merge_contact<T: Scalar>(a: &mut ContactOnTri<T>, b: ContactOnTri<T>) {
 fn push_uniq_info<T: Scalar, const N: usize>(
     uniq: &mut Vec<EndpointInfo<T, N>>,
     merge2: &T,
-    mut info: EndpointInfo<T, N>,
+    info: EndpointInfo<T, N>,
 ) where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Vector<T, N>: VectorOps<T, N>,

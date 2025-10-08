@@ -21,15 +21,7 @@
 // SOFTWARE.
 
 // ...existing code...
-use crate::{
-    geometry::{
-        point::Point,
-        segment::Segment,
-        vector::{Vector, VectorOps},
-    },
-    numeric::scalar::Scalar,
-    operations::Abs,
-};
+use crate::numeric::scalar::Scalar;
 
 pub trait Kernel2 {
     type FT: Scalar;

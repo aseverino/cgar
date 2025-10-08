@@ -20,12 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{
-    array::from_fn,
-    ops::{Add, Div, Mul, Neg, Sub},
-    process::Output,
-    time::Instant,
-};
+use std::{array::from_fn, ops::Sub};
 
 use ahash::{AHashMap, AHashSet};
 use smallvec::*;
@@ -35,18 +30,14 @@ use crate::{
         Aabb, AabbTree,
         point::{Point, PointOps},
         spatial_element::SpatialElement,
-        util::proj_along,
-        vector::{Vector, VectorOps},
+        vector::VectorOps,
     },
     impl_mesh, kernel,
     mesh::{
         basic_types::*, face::Face, half_edge::HalfEdge, intersection_segment::IntersectionSegment,
         topology::FindFaceResult, vertex::Vertex,
     },
-    numeric::{
-        cgar_f64::CgarF64,
-        scalar::{RefInto, Scalar},
-    },
+    numeric::scalar::Scalar,
 };
 
 impl_mesh! {
@@ -268,7 +259,6 @@ impl_mesh! {
             return 0;
         }
 
-        let tolerance = T::point_merge_threshold();
         let initial_count = self.vertices.len();
 
         // Build spatial hash for efficient duplicate detection
@@ -635,9 +625,7 @@ impl_mesh! {
         let b = self.half_edges[he_ab].vertex;
         let c = self.half_edges[he_bc].vertex;
         let a = self.half_edges[he_ca].vertex;
-        let a_chk = self.half_edges[he_ad].vertex; // should be d, but he_ad is a->d; dest is d
         let d = self.half_edges[he_ad].vertex;
-        let d2 = self.half_edges[he_db].vertex; // should be b
         debug_assert_eq!(a, self.half_edges[he_ba].vertex); // he_ba dest a
         debug_assert_eq!(b, self.half_edges[he_db].vertex);
 

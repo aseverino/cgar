@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use num_traits::ToPrimitive;
-use rug::{Rational, ops::Pow};
+use rug::Rational;
 
 use crate::{
     numeric::{

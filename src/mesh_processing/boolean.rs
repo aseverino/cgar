@@ -24,7 +24,7 @@ use std::{
     array::from_fn,
     collections::VecDeque,
     hash::Hash,
-    ops::{Add, Div, Mul, Neg, Sub},
+    ops::{Add, Div, Mul, Sub},
     time::Instant,
 };
 
@@ -43,7 +43,6 @@ use crate::{
         },
         vector::{Vector, VectorOps},
     },
-    io::obj::write_obj,
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
@@ -727,80 +726,6 @@ where
             }
         }
         panic!("No seed face found");
-    }
-
-    fn get_seed_face(
-        a: &Mesh<T, N>,
-        b: &Mesh<T, N>,
-        tree_b: &AabbTree<T, N, Point<T, N>, usize>,
-        intersection_segments: &Vec<IntersectionSegment<T, N>>,
-        boundary_faces: &AHashSet<usize>,
-        include_on_surface: bool,
-    ) -> (usize, usize) {
-        let mut selected_face = usize::MAX;
-        let seed_idx = (0..intersection_segments.len())
-            .filter(|&seg_idx| {
-                let seg = &intersection_segments[seg_idx];
-                let [v0, v1] = [
-                    seg.a.resulting_vertex.unwrap(),
-                    seg.b.resulting_vertex.unwrap(),
-                ];
-                let he = a
-                    .edge_map
-                    .get(&(v0, v1))
-                    .expect("Edge must exist in edge map");
-
-                let face_0 = a.half_edges[*he].face.expect("Half-edge must have a face");
-                if !a.faces[face_0].removed && boundary_faces.contains(&face_0) {
-                    return true;
-                }
-
-                let face_1 = a.half_edges[a.half_edges[*he].twin]
-                    .face
-                    .expect("Half-edge must have a face");
-                if !a.faces[face_1].removed && boundary_faces.contains(&face_1) {
-                    return true;
-                }
-
-                false
-            })
-            .find(|&seg_idx| {
-                let seg = &intersection_segments[seg_idx];
-                let [v0, v1] = [
-                    seg.a.resulting_vertex.unwrap(),
-                    seg.b.resulting_vertex.unwrap(),
-                ];
-                let he = a
-                    .edge_map
-                    .get(&(v0, v1))
-                    .expect("Edge must exist in edge map");
-
-                let mut faces = [usize::MAX, usize::MAX];
-                faces[0] = a.half_edges[*he].face.expect("Half-edge must have a face");
-                faces[1] = a.half_edges[a.half_edges[*he].twin]
-                    .face
-                    .expect("Half-edge must have a face");
-
-                for f in faces {
-                    if a.faces[f].removed {
-                        continue;
-                    }
-                    let c = a.face_centroid(f).0;
-
-                    let point_in_mesh = b.point_in_mesh(&tree_b, &c);
-                    if point_in_mesh == PointInMeshResult::Inside {
-                        selected_face = f;
-                        return true;
-                    } else if point_in_mesh == PointInMeshResult::OnSurface && include_on_surface {
-                        selected_face = f;
-                        return true;
-                    }
-                }
-                false
-            })
-            .expect("No seed face found inside B");
-
-        (seed_idx, selected_face)
     }
 }
 
