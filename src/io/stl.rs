@@ -79,7 +79,8 @@ where
         // Calculate face normal
         let edge1 = v1 - v0;
         let edge2 = v2 - v0;
-        let normal = edge1.as_vector().cross(&edge2.as_vector()).normalize();
+
+        let normal = edge1.as_vector().cross(&edge2.as_vector());
         let n_coords = normal.coords();
 
         writeln!(
