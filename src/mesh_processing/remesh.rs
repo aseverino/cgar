@@ -430,8 +430,6 @@ impl_mesh! {
         let mut v_last_op: Vec<i32> = vec![-1; self.vertices.len()];
 
         for iter in 0..options.max_iterations {
-            println!("iteration {}", iter+1);
-
             // Reallocate cooldown array if vertex count grew (start of iteration)
             if v_last_op.len() < self.vertices.len() {
                 v_last_op.resize(self.vertices.len(), -1);
@@ -449,19 +447,12 @@ impl_mesh! {
 
             let collapses = self.collapse_short_edges(&collapse_len, iter as i32, &mut v_last_op);
             let flips     = self.flip_edges();
-            let smoothed  = self.smooth_vertices(2, &split_len); // 2 sweeps; conservative
-
-            println!("  splits: {splits}");
-            println!("  collapses: {collapses}");
-            println!("  flips: {flips}");
-            println!("  smoothed: {smoothed}");
+            let _smoothed  = self.smooth_vertices(2, &split_len); // 2 sweeps; conservative
 
             // Convergence heuristic: no structural change and low activity
             if splits == 0 && collapses == 0 && flips < self.half_edges.len()/200 {
                 break;
             }
-
-            let _ = write_obj(&self, "/mnt/v/cgar_meshes/remesh.obj");
         }
         Ok(())
     }
