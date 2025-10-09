@@ -23,17 +23,14 @@
 use std::time::Instant;
 
 use ahash::AHashSet;
-use cgar::boolean::boolean::BooleanOp;
 use cgar::geometry::spatial_element::SpatialElement;
-use cgar::geometry::{Aabb, Point2, Point3, Vector3};
+use cgar::geometry::{Point2, Point3};
 use cgar::io::obj::{read_obj, write_obj};
-use cgar::io::off::{read_off, write_off};
 use cgar::mesh::basic_types::Mesh;
-use cgar::mesh::core;
+use cgar::mesh_processing::boolean::BooleanOp;
 use cgar::numeric::cgar_f64::CgarF64;
 use cgar::numeric::cgar_rational::CgarRational;
 use cgar::numeric::lazy_exact::LazyExact;
-use cgar::operations::Abs;
 
 #[test]
 fn test_add_vertices_and_triangle_2() {
