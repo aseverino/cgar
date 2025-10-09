@@ -22,3 +22,4 @@
 
 pub mod batching;
 pub mod boolean;
+pub mod remesh;

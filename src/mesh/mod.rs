@@ -26,7 +26,6 @@ pub mod edge_collapse;
 pub mod face;
 pub mod half_edge;
 pub mod intersection_segment;
-pub mod remesh;
 pub mod spatial_hash;
 pub mod topology;
 pub mod triangle;
