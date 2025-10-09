@@ -980,3 +980,41 @@ fn difference_large_torus_boolean() {
 
     let _ = write_obj(&result, "/mnt/v/cgar_meshes/large_torus_boolean.obj");
 }
+
+#[test]
+fn isotropic_remesh() {
+    use cgar::io::obj::{read_obj, write_obj};
+    use cgar::numeric::cgar_f64::CgarF64;
+
+    let mut mesh =
+        read_obj::<CgarF64, _>("tests/resources/human.obj").expect("Failed to read human.obj");
+
+    assert!(mesh.faces.len() > 0, "Mesh should have faces");
+
+    let before_avg = mesh.compute_average_edge_length();
+    assert!(
+        before_avg.is_finite() && before_avg > 0.0,
+        "Invalid initial edge length"
+    );
+
+    let mut opts = cgar::mesh_processing::remesh::RemeshOptions::new(CgarF64::from(before_avg));
+    opts.max_iterations = 3;
+
+    mesh.isotropic_remesh(&opts).expect("Remeshing failed");
+    mesh.validate_connectivity();
+
+    let after_avg = mesh.compute_average_edge_length();
+    assert!(
+        after_avg.is_finite() && after_avg > 0.0,
+        "Invalid final edge length"
+    );
+
+    // Keep average edge length roughly stable (very loose bounds for generality)
+    let ratio = after_avg / before_avg;
+    assert!(
+        ratio > 0.5 && ratio < 2.0,
+        "Average edge length changed too much: {ratio}"
+    );
+
+    let _ = write_obj(&mesh, "/mnt/v/cgar_meshes/remesh.obj");
+}
