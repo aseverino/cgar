@@ -33,6 +33,7 @@ geometry-heavy applications and welcomes early adopters and contributors.
   - Constrained Delaunay Triangulation (CDT)
   - Mesh corefinement
   - Boolean operations: difference, union, intersection
+  - Isotropic Remesh (no support for feature preservation yet)
   - Common predicates (e.g. point-in-mesh, point-on-border, plane side tests, etc)
   - AABB trees and spatial search structures
   - Topologically consistent mesh opperations (e.g.: edge/face splitting, edge collapse)
@@ -59,4 +60,4 @@ Add **CGAR** to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cgar = "0.1"
+cgar = "0.2"
