@@ -22,7 +22,8 @@
 
 use std::{
     array,
-    ops::{Add, AddAssign, Index, IndexMut, Mul, Sub, SubAssign},
+    hash::{Hash, Hasher},
+    ops::{Add, AddAssign, Div, Index, IndexMut, Mul, Neg, Sub, SubAssign},
 };
 
 use crate::{geometry::point::Point, numeric::scalar::Scalar, operations::Zero};
@@ -236,3 +237,267 @@ where
         <&Matrix<T, R, C> as Sub<&Matrix<T, R, C>>>::sub(&self, &rhs)
     }
 }
+
+impl<T: Scalar, const R: usize, const C: usize> Default for Matrix<T, R, C> {
+    #[inline]
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+// ---------- Equality / Ordering / Hash ----------
+impl<T: Scalar, const R: usize, const C: usize> PartialEq for Matrix<T, R, C> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        for i in 0..R {
+            for j in 0..C {
+                if self[i][j] != other[i][j] {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+impl<T: Scalar, const R: usize, const C: usize> Eq for Matrix<T, R, C> {}
+
+impl<T: Scalar, const R: usize, const C: usize> PartialOrd for Matrix<T, R, C> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        for i in 0..R {
+            for j in 0..C {
+                match self[i][j].partial_cmp(&other[i][j]) {
+                    Some(std::cmp::Ordering::Equal) => continue,
+                    non_eq => return non_eq,
+                }
+            }
+        }
+        Some(std::cmp::Ordering::Equal)
+    }
+}
+
+impl<T: Scalar, const R: usize, const C: usize> Hash for Matrix<T, R, C> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for i in 0..R {
+            for j in 0..C {
+                self[i][j].hash(state);
+            }
+        }
+    }
+}
+
+// ---------- Neg ----------
+impl<T: Scalar, const R: usize, const C: usize> Neg for Matrix<T, R, C>
+where
+    for<'a> &'a T: Mul<&'a T, Output = T>,
+{
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self::Output {
+        let minus_one = T::from_num_den(-1, 1);
+        self.scale(&minus_one)
+    }
+}
+
+// ---------- Matrix * Vector ----------
+impl<'a, 'b, T, const R: usize, const C: usize> Mul<&'b Vector<T, C>> for &'a Matrix<T, R, C>
+where
+    T: Scalar,
+    for<'x> &'x T: Add<&'x T, Output = T> + Mul<&'x T, Output = T>,
+{
+    type Output = Vector<T, R>;
+    #[inline]
+    fn mul(self, v: &'b Vector<T, C>) -> Self::Output {
+        let mut out = Point {
+            coords: array::from_fn(|_| T::zero()),
+        };
+        for i in 0..R {
+            // dot(row_i, v)
+            let mut acc = T::zero();
+            for j in 0..C {
+                let prod = &self[i][j] * &v[j];
+                acc = &acc + &prod;
+            }
+            out.coords[i] = acc;
+        }
+        Vector::from(out)
+    }
+}
+
+impl<T, const R: usize, const C: usize> Mul<Vector<T, C>> for Matrix<T, R, C>
+where
+    T: Scalar,
+    for<'a, 'b> &'a Matrix<T, R, C>: Mul<&'b Vector<T, C>, Output = Vector<T, R>>,
+{
+    type Output = Vector<T, R>;
+    #[inline]
+    fn mul(self, v: Vector<T, C>) -> Self::Output {
+        <&Matrix<T, R, C> as Mul<&Vector<T, C>>>::mul(&self, &v)
+    }
+}
+
+// ---------- Matrix * Matrix ----------
+impl<'a, 'b, T, const R: usize, const C: usize, const K: usize> Mul<&'b Matrix<T, C, K>>
+    for &'a Matrix<T, R, C>
+where
+    T: Scalar,
+    for<'x> &'x T: Add<&'x T, Output = T> + Mul<&'x T, Output = T>,
+{
+    type Output = Matrix<T, R, K>;
+    #[inline]
+    fn mul(self, rhs: &'b Matrix<T, C, K>) -> Self::Output {
+        let mut out = Matrix::<T, R, K>::zero();
+        for i in 0..R {
+            for k in 0..K {
+                let mut acc = T::zero();
+                for j in 0..C {
+                    let prod = &self[i][j] * &rhs[j][k];
+                    acc = &acc + &prod;
+                }
+                out[i][k] = acc;
+            }
+        }
+        out
+    }
+}
+
+impl<T, const R: usize, const C: usize, const K: usize> Mul<Matrix<T, C, K>> for Matrix<T, R, C>
+where
+    T: Scalar,
+    for<'a, 'b> &'a Matrix<T, R, C>: Mul<&'b Matrix<T, C, K>, Output = Matrix<T, R, K>>,
+{
+    type Output = Matrix<T, R, K>;
+    #[inline]
+    fn mul(self, rhs: Matrix<T, C, K>) -> Self::Output {
+        <&Matrix<T, R, C> as Mul<&Matrix<T, C, K>>>::mul(&self, &rhs)
+    }
+}
+
+// ---------- Square-only helpers ----------
+impl<T: Scalar, const N: usize> Matrix<T, N, N> {
+    /// Identity matrix.
+    #[inline]
+    pub fn identity() -> Self {
+        let mut m = Matrix::<T, N, N>::zero();
+        for i in 0..N {
+            m[i][i] = T::one();
+        }
+        m
+    }
+}
+
+// ---------- 2x2 determinant / inverse ----------
+impl<T> Matrix<T, 2, 2>
+where
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    #[inline]
+    pub fn det(&self) -> T {
+        // |a b|
+        // |c d|  => ad - bc
+        &self[0][0] * &self[1][1] - &self[0][1] * &self[1][0]
+    }
+
+    #[inline]
+    pub fn inverse(&self) -> Option<Matrix<T, 2, 2>> {
+        let d = self.det();
+        if d.is_zero() {
+            return None;
+        }
+        let inv_d = &T::one() / &d;
+        let a = self[0][0].clone();
+        let b = self[0][1].clone();
+        let c = self[1][0].clone();
+        let d_ = self[1][1].clone();
+
+        let mut m = Matrix::<T, 2, 2>::zero();
+        // 1/d * [ d -b; -c a ]
+        m[0][0] = &d_ * &inv_d;
+        m[0][1] = &T::from_num_den(-1, 1) * &b * inv_d;
+        m[1][0] = &T::from_num_den(-1, 1) * &c * inv_d;
+        m[1][1] = &a * &inv_d;
+        Some(m)
+    }
+}
+
+// ---------- 3x3 determinant / inverse ----------
+impl<T> Matrix<T, 3, 3>
+where
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    #[inline]
+    pub fn det(&self) -> T {
+        // Laplace expansion or rule of Sarrus
+        let a = &self[0][0];
+        let b = &self[0][1];
+        let c = &self[0][2];
+
+        let e = &self[1][1];
+        let f = &self[1][2];
+        let d = &self[1][0];
+
+        let h = &self[2][1];
+        let i = &self[2][2];
+        let g = &self[2][0];
+
+        a * &(e * i - f * h) - b * &(d * i - f * g) + c * &(d * h - e * g)
+    }
+
+    #[inline]
+    pub fn inverse(&self) -> Option<Matrix<T, 3, 3>> {
+        let det = self.det();
+        if det.is_zero() {
+            return None;
+        }
+        let inv_det = &T::one() / &det;
+
+        // Cofactor matrix (then transpose -> adjugate)
+        let m = &self.0;
+        let c00 = &m[1][1] * &m[2][2] - &m[1][2] * &m[2][1];
+        let c01 = -(&m[1][0] * &m[2][2] - &m[1][2] * &m[2][0]);
+        let c02 = &m[1][0] * &m[2][1] - &m[1][1] * &m[2][0];
+
+        let c10 = -(&m[0][1] * &m[2][2] - &m[0][2] * &m[2][1]);
+        let c11 = &m[0][0] * &m[2][2] - &m[0][2] * &m[2][0];
+        let c12 = -(&m[0][0] * &m[2][1] - &m[0][1] * &m[2][0]);
+
+        let c20 = &m[0][1] * &m[1][2] - &m[0][2] * &m[1][1];
+        let c21 = -(&m[0][0] * &m[1][2] - &m[0][2] * &m[1][0]);
+        let c22 = &m[0][0] * &m[1][1] - &m[0][1] * &m[1][0];
+
+        // adj(A) = cofactor(A)^T
+        let adj = Matrix::new([[c00, c10, c20], [c01, c11, c21], [c02, c12, c22]]);
+
+        Some(adj.scale(&inv_det))
+    }
+}
+
+// ---------- Conversions ----------
+impl<T: Scalar, const R: usize, const C: usize> From<[[T; C]; R]> for Matrix<T, R, C> {
+    #[inline]
+    fn from(data: [[T; C]; R]) -> Self {
+        Matrix::new(data)
+    }
+}
+impl<T: Scalar, const R: usize, const C: usize> Into<[[T; C]; R]> for Matrix<T, R, C> {
+    #[inline]
+    fn into(self) -> [[T; C]; R] {
+        self.0
+    }
+}
+
+// ---------- Type aliases ----------
+pub type Matrix2<T> = Matrix<T, 2, 2>;
+pub type Matrix3<T> = Matrix<T, 3, 3>;
+pub type Matrix4<T> = Matrix<T, 4, 4>;
+pub type Matrix3x4<T> = Matrix<T, 3, 4>;
+pub type Matrix4x3<T> = Matrix<T, 4, 3>;
