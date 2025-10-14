@@ -94,12 +94,6 @@ where
         &self.b
     }
 
-    #[inline]
-    fn length2(&self) -> T {
-        let ab = (&self.b - &self.a).as_vector();
-        ab.dot(&ab)
-    }
-
     fn midpoint(&self) -> Point<T, N> {
         // Calculate the midpoint by averaging the coordinates of points a and b
         let coords = (0..N)

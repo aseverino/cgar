@@ -342,7 +342,6 @@ impl<'a, 'b, T, const R: usize, const C: usize, const K: usize> Mul<&'b Matrix<T
     for &'a Matrix<T, R, C>
 where
     T: Scalar,
-    for<'x> &'x T: Add<&'x T, Output = T> + Mul<&'x T, Output = T>,
 {
     type Output = Matrix<T, R, K>;
     #[inline]
@@ -350,12 +349,9 @@ where
         let mut out = Matrix::<T, R, K>::zero();
         for i in 0..R {
             for k in 0..K {
-                let mut acc = T::zero();
                 for j in 0..C {
-                    let prod = &self[i][j] * &rhs[j][k];
-                    acc = &acc + &prod;
+                    out[i][k] += &(self[i][j].clone() * rhs[j][k].clone());
                 }
-                out[i][k] = acc;
             }
         }
         out
@@ -418,8 +414,8 @@ where
         let mut m = Matrix::<T, 2, 2>::zero();
         // 1/d * [ d -b; -c a ]
         m[0][0] = &d_ * &inv_d;
-        m[0][1] = &T::from_num_den(-1, 1) * &b * inv_d;
-        m[1][0] = &T::from_num_den(-1, 1) * &c * inv_d;
+        m[0][1] = &(&T::from_num_den(-1, 1) * &b) * &inv_d;
+        m[1][0] = &(&T::from_num_den(-1, 1) * &c) * &inv_d;
         m[1][1] = &a * &inv_d;
         Some(m)
     }
