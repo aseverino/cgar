@@ -27,7 +27,7 @@ use crate::geometry::Point2;
 use crate::geometry::point::Point;
 use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::util::EPS;
-use crate::kernel::predicates::{bbox_approx, incircle, orient2d};
+use crate::kernel::predicates::{bbox_approx2d, incircle, orient2d};
 use crate::mesh::basic_types::{Edge, Mesh, Triangle};
 use crate::mesh_processing::batching::FaceJobUV;
 use crate::numeric::scalar::Scalar;
@@ -135,13 +135,13 @@ where
                 continue;
             }
 
-            let (minx, miny, maxx, maxy) = bbox_approx(&job.points_uv);
-            let dx = maxx - minx;
-            let dy = maxy - miny;
+            let (min, max) = bbox_approx2d(&job.points_uv);
+            let dx = &max[0] - &min[0];
+            let dy = &max[1] - &min[1];
             let delta = dx.max(dy);
-            let cx = (minx + maxx) * 0.5;
-            let cy = (miny + maxy) * 0.5;
-            let r = 64.0 * delta + 1.0;
+            let cx = (&min[0] + &max[0]) * T::from_num_den(2, 1);
+            let cy = (&min[1] + &max[1]) * T::from_num_den(2, 1);
+            let r = &(&T::from_num_den(64, 1) * &delta) + &T::from_num_den(1, 1);
 
             super_triangles.push(Some((cx, cy, r)));
         }
@@ -152,20 +152,23 @@ where
                 continue;
             }
 
-            let Some((cx, cy, r)) = super_triangles[job_idx] else {
+            let Some((cx, cy, r)) = &super_triangles[job_idx] else {
                 continue;
             };
 
             let mut points = job.points_uv.clone();
-            let sqrt_3 = SQRT_3;
+            let sqrt_3 = T::from(SQRT_3);
             let s0 = points.len();
             let s1 = s0 + 1;
             let s2 = s0 + 2;
 
             points.extend([
-                Point2::<T>::from_vals([T::from(cx), T::from(cy + 2.0 * r)]),
-                Point2::<T>::from_vals([T::from(cx - sqrt_3 * r), T::from(cy - r)]),
-                Point2::<T>::from_vals([T::from(cx + sqrt_3 * r), T::from(cy - r)]),
+                Point2::<T>::from_vals([
+                    T::from(cx.clone()),
+                    T::from(&(cy + &T::from_num_den(2, 1)) * &r),
+                ]),
+                Point2::<T>::from_vals([T::from(cx - &(&sqrt_3 * &r)), T::from(cy - &r)]),
+                Point2::<T>::from_vals([T::from(cx + &(&sqrt_3 * &r)), T::from(cy - &r)]),
             ]);
 
             let mut triangles = vec![Triangle(s0, s1, s2)];
@@ -242,18 +245,21 @@ where
         }
 
         // Create super-triangle that contains all points
-        let (minx, miny, maxx, maxy) = bbox_approx(&points);
-        let dx = &maxx - &minx;
-        let dy = &maxy - &miny;
+        let (min, max) = bbox_approx2d(&points);
+        let dx = &max[0] - &min[0];
+        let dy = &max[1] - &min[1];
         let delta = dx.max(dy);
-        let cx = &(minx + maxx) * 0.5;
-        let cy = &(miny + maxy) * 0.5;
+        let cx = &(&min[0] + &max[0]) * &T::from_num_den(1, 2);
+        let cy = &(&min[1] + &max[1]) * &T::from_num_den(1, 2);
 
-        let r = 64.0 * delta + 1.0;
-        let sqrt_3 = SQRT_3;
-        let p_super0 = Point2::<T>::from_vals([T::from(cx.clone()), T::from((cy + 2.0) * r)]);
-        let p_super1 = Point2::<T>::from_vals([T::from(&cx - (sqrt_3 * r)), T::from(cy - r)]);
-        let p_super2 = Point2::<T>::from_vals([T::from(&cx + (sqrt_3 * r)), T::from(cy - r)]);
+        let r = &(&T::from_num_den(64, 1) * &delta) + &T::from_num_den(1, 1);
+        let sqrt_3 = T::from(SQRT_3);
+        let p_super0 = Point2::<T>::from_vals([
+            T::from(cx.clone()),
+            T::from(&(&cy + &T::from_num_den(2, 1)) * &r),
+        ]);
+        let p_super1 = Point2::<T>::from_vals([T::from(&cx - &(&sqrt_3 * &r)), T::from(&cy - &r)]);
+        let p_super2 = Point2::<T>::from_vals([T::from(&cx + &(&sqrt_3 * &r)), T::from(&cy - &r)]);
 
         let s0 = points.len();
         let s1 = s0 + 1;

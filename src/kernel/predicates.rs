@@ -20,12 +20,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::geometry::Point2;
 use crate::geometry::point::PointOps;
 use crate::geometry::segment::Segment;
 use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::util::EPS;
 use crate::geometry::vector::VectorOps;
+use crate::geometry::{Point2, Point3};
 use crate::geometry::{point::Point, vector::Vector};
 use crate::numeric::cgar_f64::CgarF64;
 use crate::numeric::scalar::{RefInto, Scalar};
@@ -538,7 +538,7 @@ where
 }
 
 #[inline]
-pub fn bbox<T: Scalar>(pts: &[Point2<T>]) -> (T, T, T, T)
+pub fn bbox2d<T: Scalar>(pts: &[Point2<T>]) -> (Point2<T>, Point2<T>)
 where
     for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
         + std::ops::Mul<&'a T, Output = T>
@@ -564,11 +564,14 @@ where
             maxy = &p[1];
         }
     }
-    (minx.clone(), miny.clone(), maxx.clone(), maxy.clone())
+    (
+        Point2::<T>::from_vals([minx.clone(), miny.clone()]),
+        Point2::<T>::from_vals([maxx.clone(), maxy.clone()]),
+    )
 }
 
 #[inline]
-pub fn bbox_approx<T: Scalar>(pts: &[Point2<T>]) -> (f64, f64, f64, f64) {
+pub fn bbox_approx2d<T: Scalar>(pts: &[Point2<T>]) -> (Point2<T>, Point2<T>) {
     let mut minx = pts[0][0].ball_center_f64();
     let mut miny = pts[0][1].ball_center_f64();
     let mut maxx = minx;
@@ -592,7 +595,90 @@ pub fn bbox_approx<T: Scalar>(pts: &[Point2<T>]) -> (f64, f64, f64, f64) {
         }
     }
 
-    (minx, miny, maxx, maxy)
+    (
+        Point2::<T>::from_vals([minx.clone(), miny.clone()]),
+        Point2::<T>::from_vals([maxx.clone(), maxy.clone()]),
+    )
+}
+
+#[inline]
+pub fn bbox3d<T: Scalar>(pts: &[Point3<T>]) -> (Point3<T>, Point3<T>)
+where
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    let mut minx = &pts[0][0];
+    let mut miny = &pts[0][1];
+    let mut minz = &pts[0][2];
+    let mut maxx = &pts[0][0];
+    let mut maxy = &pts[0][1];
+    let mut maxz = &pts[0][2];
+    for p in &pts[1..] {
+        if (&p[0] - &minx).is_negative() {
+            minx = &p[0];
+        }
+        if (&p[1] - &miny).is_negative() {
+            miny = &p[1];
+        }
+        if (&p[2] - &minz).is_negative() {
+            minz = &p[2];
+        }
+        if (&p[0] - &maxx).is_positive() {
+            maxx = &p[0];
+        }
+        if (&p[1] - maxy).is_positive() {
+            maxy = &p[1];
+        }
+        if (&p[2] - &maxz).is_positive() {
+            maxz = &p[2];
+        }
+    }
+    (
+        Point3::<T>::from_vals([minx.clone(), miny.clone(), minz.clone()]),
+        Point3::<T>::from_vals([maxx.clone(), maxy.clone(), maxz.clone()]),
+    )
+}
+
+#[inline]
+pub fn bbox_approx3d<T: Scalar>(pts: &[Point3<T>]) -> (Point3<T>, Point3<T>) {
+    let mut minx = pts[0][0].ball_center_f64();
+    let mut miny = pts[0][1].ball_center_f64();
+    let mut minz = pts[0][2].ball_center_f64();
+    let mut maxx = minx;
+    let mut maxy = miny;
+    let mut maxz = minz;
+
+    for p in &pts[1..] {
+        let px = p[0].ball_center_f64();
+        let py = p[1].ball_center_f64();
+        let pz = p[2].ball_center_f64();
+        if px < minx {
+            minx = px;
+        }
+        if py < miny {
+            miny = py;
+        }
+        if pz < minz {
+            minz = pz;
+        }
+        if px > maxx {
+            maxx = px;
+        }
+        if py > maxy {
+            maxy = py;
+        }
+        if pz > maxz {
+            maxz = pz;
+        }
+    }
+
+    (
+        Point3::<T>::from_vals([minx.clone(), miny.clone(), minz.clone()]),
+        Point3::<T>::from_vals([maxx.clone(), maxy.clone(), maxz.clone()]),
+    )
 }
 
 #[inline]
