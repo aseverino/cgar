@@ -26,7 +26,7 @@ use crate::{
     geometry::{
         point::{Point, PointOps},
         spatial_element::SpatialElement,
-        vector::{Vector, VectorOps},
+        vector::{Cross3, Vector, VectorOps},
     },
     numeric::scalar::Scalar,
 };
@@ -49,7 +49,7 @@ where
     pub fn from_points(p1: &Point<T, N>, p2: &Point<T, N>, p3: &Point<T, N>) -> Self
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
             + Add<&'a T, Output = T>
@@ -91,7 +91,7 @@ where
 
     pub fn basis(&self) -> (Vector<T, N>, Vector<T, N>)
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         let u = self.normal.any_perpendicular();
         let v = self.normal.cross(&u);

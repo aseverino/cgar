@@ -371,7 +371,14 @@ where
 }
 
 // ---------- Square-only helpers ----------
-impl<T: Scalar, const N: usize> Matrix<T, N, N> {
+impl<T: Scalar, const N: usize> Matrix<T, N, N>
+where
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
     /// Identity matrix.
     #[inline]
     pub fn identity() -> Self {
@@ -380,6 +387,91 @@ impl<T: Scalar, const N: usize> Matrix<T, N, N> {
             m[i][i] = T::one();
         }
         m
+    }
+
+    pub fn det(&self) -> T {
+        match N {
+            0 => T::one(),
+            1 => self[0][0].clone(),
+            2 => &self[0][0] * &self[1][1] - &self[0][1] * &self[1][0],
+            3 => {
+                let a = &self[0][0];
+                let b = &self[0][1];
+                let c = &self[0][2];
+                let d = &self[1][0];
+                let e = &self[1][1];
+                let f = &self[1][2];
+                let g = &self[2][0];
+                let h = &self[2][1];
+                let i = &self[2][2];
+                a * &(e * i - f * h) - b * &(d * i - f * g) + c * &(d * h - e * g)
+            }
+            _ => {
+                let mut det = T::zero();
+                for j in 0..N {
+                    let minor_data = self.minor_data(0, j);
+                    let minor_det = Self::det_from_data(&minor_data, N - 1);
+                    let cofactor = if j % 2 == 0 {
+                        T::one()
+                    } else {
+                        T::from_num_den(-1, 1)
+                    };
+                    det = &det + &(&(&self[0][j] * &cofactor) * &minor_det);
+                }
+                det
+            }
+        }
+    }
+
+    #[inline]
+    fn minor_data(&self, row: usize, col: usize) -> Vec<Vec<T>> {
+        let mut data = Vec::with_capacity(N - 1);
+        for i in 0..N {
+            if i == row {
+                continue;
+            }
+            let mut row_data = Vec::with_capacity(N - 1);
+            for j in 0..N {
+                if j == col {
+                    continue;
+                }
+                row_data.push(self[i][j].clone());
+            }
+            data.push(row_data);
+        }
+        data
+    }
+
+    fn det_from_data(data: &[Vec<T>], size: usize) -> T {
+        match size {
+            0 => T::one(),
+            1 => data[0][0].clone(),
+            2 => &data[0][0] * &data[1][1] - &data[0][1] * &data[1][0],
+            _ => {
+                let mut det = T::zero();
+                for j in 0..size {
+                    let mut minor_data = Vec::with_capacity(size - 1);
+                    for i in 1..size {
+                        let mut row_data = Vec::with_capacity(size - 1);
+                        for k in 0..size {
+                            if k == j {
+                                continue;
+                            }
+                            row_data.push(data[i][k].clone());
+                        }
+                        minor_data.push(row_data);
+                    }
+                    let minor_det = Self::det_from_data(&minor_data, size - 1);
+                    let cofactor = if j % 2 == 0 {
+                        T::one()
+                    } else {
+                        T::from_num_den(-1, 1)
+                    };
+                    det = &det + &(&(&data[0][j] * &cofactor) * &minor_det);
+                }
+                det
+            }
+        }
     }
 }
 
@@ -392,13 +484,6 @@ where
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    #[inline]
-    pub fn det(&self) -> T {
-        // |a b|
-        // |c d|  => ad - bc
-        &self[0][0] * &self[1][1] - &self[0][1] * &self[1][0]
-    }
-
     #[inline]
     pub fn inverse(&self) -> Option<Matrix<T, 2, 2>> {
         let d = self.det();
@@ -430,24 +515,6 @@ where
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    #[inline]
-    pub fn det(&self) -> T {
-        // Laplace expansion or rule of Sarrus
-        let a = &self[0][0];
-        let b = &self[0][1];
-        let c = &self[0][2];
-
-        let e = &self[1][1];
-        let f = &self[1][2];
-        let d = &self[1][0];
-
-        let h = &self[2][1];
-        let i = &self[2][2];
-        let g = &self[2][0];
-
-        a * &(e * i - f * h) - b * &(d * i - f * g) + c * &(d * h - e * g)
-    }
-
     #[inline]
     pub fn inverse(&self) -> Option<Matrix<T, 3, 3>> {
         let det = self.det();

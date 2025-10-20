@@ -209,7 +209,7 @@ impl_mesh! {
         opts: &CollapseOpts<T>,
     ) -> Result<Point<T, N>, CollapseReject>
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         let Some(pr) = self.ring_pair(v0, v1) else {
             return Err(CollapseReject::NotAdjacent);
@@ -272,7 +272,7 @@ impl_mesh! {
         p_star: &Point<T, N>,
     ) -> T
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         let [i, j, k] = self.face_vertices(f);
 
@@ -296,7 +296,7 @@ impl_mesh! {
         he_ab: usize,
         placement: &impl Placement<T, N>,
         opts: &CollapseOpts<T>,
-    ) -> Result<CollapsePlan<T, N>, CollapseReject> where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    ) -> Result<CollapsePlan<T, N>, CollapseReject> where Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         // --- sanity on the half-edge
         if he_ab >= self.half_edges.len() || self.half_edges[he_ab].removed {
@@ -325,7 +325,7 @@ impl_mesh! {
         v_gone: usize,
         placement: &impl Placement<T, N>,
         opts: &CollapseOpts<T>,
-    ) -> Result<CollapsePlan<T, N>, CollapseReject> where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    ) -> Result<CollapsePlan<T, N>, CollapseReject> where Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         // Quick adjacency guard (reuses ring_pair)
         if self.ring_pair(v_keep, v_gone).is_none() {
@@ -652,7 +652,7 @@ impl_mesh! {
         vertex_to_remove: usize,
     ) -> Result<(), CollapseReject>
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         let opts = CollapseOpts::default();
         let placement = Midpoint;

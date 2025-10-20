@@ -24,7 +24,7 @@ use crate::geometry::point::PointOps;
 use crate::geometry::segment::Segment;
 use crate::geometry::spatial_element::SpatialElement;
 use crate::geometry::util::EPS;
-use crate::geometry::vector::VectorOps;
+use crate::geometry::vector::{Cross3, VectorOps};
 use crate::geometry::{Point2, Point3};
 use crate::geometry::{point::Point, vector::Vector};
 use crate::numeric::cgar_f64::CgarF64;
@@ -349,7 +349,7 @@ pub fn point_in_or_on_triangle<T: Scalar + PartialOrd, const N: usize>(
 ) -> TrianglePoint
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>

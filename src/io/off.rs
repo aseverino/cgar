@@ -30,7 +30,7 @@ use crate::{
     geometry::{
         point::{Point, PointOps},
         spatial_element::SpatialElement,
-        vector::{Vector, VectorOps},
+        vector::{Cross3, Vector, VectorOps},
     },
     mesh::basic_types::Mesh,
     numeric::scalar::Scalar,
@@ -49,7 +49,7 @@ pub fn write_off<T: Scalar, const N: usize, P: AsRef<Path>>(
 ) -> io::Result<()>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
         + std::ops::Mul<&'a T, Output = T>
         + std::ops::Add<&'a T, Output = T>
@@ -102,7 +102,7 @@ where
 pub fn read_off<T: Scalar, P: AsRef<Path>>(path: P) -> io::Result<Mesh<T, 3>>
 where
     Point<T, 3>: PointOps<T, 3, Vector = Vector<T, 3>>,
-    Vector<T, 3>: VectorOps<T, 3, Cross = Vector<T, 3>>,
+    Vector<T, 3>: VectorOps<T, 3>,
     for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
         + std::ops::Mul<&'a T, Output = T>
         + std::ops::Add<&'a T, Output = T>

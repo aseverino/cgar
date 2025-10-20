@@ -36,10 +36,7 @@ pub trait VectorOps<T, const N: usize>: Sized
 where
     T: Scalar,
 {
-    type Cross;
-
     fn dot(&self, other: &Self) -> T;
-    fn cross(&self, other: &Self) -> Self::Cross;
     fn scale(&self, s: &T) -> Self;
     fn axpy(&mut self, a: &T, x: &Self);
     fn any_perpendicular(&self) -> Vector<T, N>;
@@ -173,14 +170,8 @@ where
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    type Cross = T; // <- a pseudo-scalar
-
     fn dot(&self, o: &Self) -> T {
         &self[0] * &o[0] + &self[1] * &o[1]
-    }
-
-    fn cross(&self, o: &Self) -> T {
-        &self[0] * &o[1] - &self[1] * &o[0]
     }
 
     fn scale(&self, s: &T) -> Self {
@@ -215,18 +206,8 @@ where
         + Mul<&'a T, Output = T>
         + Div<&'a T, Output = T>,
 {
-    type Cross = Vector<T, 3>;
-
     fn dot(&self, o: &Self) -> T {
         &self[0] * &o[0] + &self[1] * &o[1] + &self[2] * &o[2]
-    }
-
-    fn cross(&self, o: &Self) -> Self::Cross {
-        Vector::from(Point::<T, 3>::from_vals([
-            &(&self[1] * &o[2]) - &(&self[2] * &o[1]),
-            &(&self[2] * &o[0]) - &(&self[0] * &o[2]),
-            &(&self[0] * &o[1]) - &(&self[1] * &o[0]),
-        ]))
     }
 
     fn scale(&self, s: &T) -> Self {
@@ -266,6 +247,74 @@ where
         let w0 = &one - u;
         let w1 = u.clone();
         &self.scale(&w0) + &with.scale(&w1)
+    }
+}
+
+impl<T> VectorOps<T, 4> for Vector<T, 4>
+where
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn dot(&self, o: &Self) -> T {
+        &self[0] * &o[0] + &self[1] * &o[1] + &self[2] * &o[2] + &self[3] * &o[3]
+    }
+
+    fn scale(&self, s: &T) -> Self {
+        Self::from(Point::<T, 4>::from_vals([
+            &self[0] * &s,
+            &self[1] * &s,
+            &self[2] * &s,
+            &self[3] * &s,
+        ]))
+    }
+
+    fn axpy(&mut self, a: &T, x: &Self) {
+        for i in 0..4 {
+            let ax_i = &x[i] * a;
+            self[i] = &self[i] + &ax_i;
+        }
+    }
+
+    // Pick a basis ei least aligned with self, then remove the projection:
+    fn any_perpendicular(&self) -> Vector<T, 4> {
+        let one = T::one();
+        let zero = T::zero();
+        let candidates = [
+            Vector::new([one.clone(), zero.clone(), zero.clone(), zero.clone()]),
+            Vector::new([zero.clone(), one.clone(), zero.clone(), zero.clone()]),
+            Vector::new([zero.clone(), zero.clone(), one.clone(), zero.clone()]),
+            Vector::new([zero.clone(), zero.clone(), zero.clone(), one.clone()]),
+        ];
+        // choose ei with smallest |self·ei|
+        let mut best = &candidates[0];
+        let mut best_val = self.dot(best).abs();
+        for ei in &candidates[1..] {
+            let v = self.dot(ei).abs();
+            if v < best_val {
+                best = ei;
+                best_val = v;
+            }
+        }
+        // orthogonalize: e_i - proj_{self}(e_i)
+        let denom = self.dot(self);
+        if denom.is_zero() {
+            return candidates[0].clone(); // self == 0 => any vector
+        }
+        let alpha = self.dot(best) / denom;
+        best - &self.scale(&alpha)
+    }
+
+    fn norm2(&self) -> T {
+        &self[0] * &self[0] + &self[1] * &self[1] + &self[2] * &self[2] + &self[3] * &self[3]
+    }
+
+    fn lerp(&self, with: &Self, u: &T) -> Self {
+        let one = T::one();
+        let w0 = &one - u;
+        &self.scale(&w0) + &with.scale(u)
     }
 }
 
@@ -360,5 +409,44 @@ where
     }
 }
 
+pub trait Cross2<T>: Sized {
+    fn cross(&self, o: &Self) -> T;
+}
+
+pub trait Cross3<T>: Sized {
+    fn cross(&self, o: &Self) -> Self;
+}
+
+impl<T> Cross2<T> for Vector<T, 2>
+where
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn cross(&self, o: &Self) -> T {
+        &self[0] * &o[1] - &self[1] * &o[0]
+    }
+}
+
+impl<T> Cross3<T> for Vector<T, 3>
+where
+    T: Scalar,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>,
+{
+    fn cross(&self, o: &Self) -> Self {
+        Vector::from(Point::<T, 3>::from_vals([
+            &(&self[1] * &o[2]) - &(&self[2] * &o[1]),
+            &(&self[2] * &o[0]) - &(&self[0] * &o[2]),
+            &(&self[0] * &o[1]) - &(&self[1] * &o[0]),
+        ]))
+    }
+}
+
 pub type Vector2<T> = Vector<T, 2>;
 pub type Vector3<T> = Vector<T, 3>;
+pub type Vector4<T> = Vector<T, 4>;

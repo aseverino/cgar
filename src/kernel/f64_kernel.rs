@@ -25,7 +25,7 @@ use crate::{
         Point3,
         point::{Point, PointOps},
         segment::Segment,
-        vector::{Vector, VectorOps},
+        vector::{Cross3, Vector, VectorOps},
     },
     kernel::{
         kernel::{Kernel2, Kernel3},
@@ -76,6 +76,7 @@ impl Kernel2 for F64Kernel {
 impl Kernel3 for F64Kernel
 where
     Point3<CgarF64>: PointOps<CgarF64, 3>,
+    Vector<CgarF64, 3>: VectorOps<CgarF64, 3> + Cross3<CgarF64>,
 {
     type FT = CgarF64;
     type Point3 = Point<CgarF64, 3>;

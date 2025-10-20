@@ -41,7 +41,7 @@ use crate::{
             ContactOnTri, TriPrecomp, TriTriIntersectionDetailed,
             tri_tri_intersection_with_precomp_detailed,
         },
-        vector::{Vector, VectorOps},
+        vector::{Cross3, Vector, VectorOps},
     },
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
@@ -102,7 +102,7 @@ pub enum BooleanOp {
 impl<T: Scalar, const N: usize> Mesh<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
         + std::ops::Mul<&'a T, Output = T>
         + std::ops::Add<&'a T, Output = T>
@@ -840,7 +840,7 @@ fn extract_triangles_in_group<T: Scalar, const N: usize>(
 ) -> Vec<CoplanarTriangle>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>

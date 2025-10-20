@@ -89,7 +89,7 @@ pub enum VertexRayResult<T: Scalar> {
 }
 
 impl_mesh! {
-    pub fn face_normal(&self, face_idx: usize) -> Vector<T, N> where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>, {
+    pub fn face_normal(&self, face_idx: usize) -> Vector<T, N> where Vector<T, N>: VectorOps<T, N> + Cross3<T>, {
         let face_vertices = self
             .face_vertices(face_idx)
             .map(|v| &self.vertices[v].position);
@@ -121,7 +121,7 @@ impl_mesh! {
         usize::MAX
     }
 
-    pub fn plane_from_face(&self, face_idx: usize) -> Plane<T, N> where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,{
+    pub fn plane_from_face(&self, face_idx: usize) -> Plane<T, N> where Vector<T, N>: VectorOps<T, N>,{
         let verts = self.face_vertices(face_idx); // [usize; N]
         let v0 = &self.vertices[verts[0]].position;
         let v1 = &self.vertices[verts[1]].position;
@@ -162,7 +162,7 @@ impl_mesh! {
         p: &Point<T, N>,
     ) -> Vec<usize>
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
         for<'a> &'a T: Add<&'a T, Output = T>
             + Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>,
@@ -512,7 +512,7 @@ impl_mesh! {
         &self,
         tree: &AabbTree<T, N, Point<T, N>, usize>,
         p: &Point<T, N>,
-    ) -> PointInMeshResult where T: Into<T>, Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    ) -> PointInMeshResult where T: Into<T>, Vector<T, N>: VectorOps<T, N>,
     {
         let mut inside_count = 0;
         let mut total_rays = 0;
@@ -576,7 +576,7 @@ impl_mesh! {
         tolerance: &Option<T>,
     ) -> IntersectionResult<T>
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
         for<'a> &'a T: Add<&'a T, Output = T>
             + Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
@@ -747,7 +747,7 @@ impl_mesh! {
         direction: &Vector<T, N>,
     ) -> Option<VertexRayResult<T>>
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         let vs = self.face_vertices(face);
 
@@ -908,7 +908,7 @@ impl_mesh! {
         direction: &Vector<T, N>,
     ) -> Option<VertexRayResult<T>>
     where
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         let vs = self.face_vertices(face);
 
@@ -1086,7 +1086,7 @@ impl_mesh! {
         from: &Point<T, N>,
         direction: &Vector<T, N>,
     ) -> Option<(usize, T, T)>
-    where Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    where Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         // 0) Quick sanity: face must be valid and triangular
         if self.faces[face].removed {
@@ -1237,7 +1237,7 @@ impl_mesh! {
     pub fn point_is_on_some_half_edge(&self, face: usize, point: &Point<T, N>) -> Option<(usize, T)>
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+        Vector<T, N>: VectorOps<T, N>,
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
             + Add<&'a T, Output = T>
@@ -1332,7 +1332,7 @@ impl_mesh! {
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
         Vector<T, N>: VectorOps<T, N>,
-        Vector<T, 3>: VectorOps<T, 3, Cross = Vector<T, 3>>,
+        Vector<T, 3>: VectorOps<T, 3> + Cross3<T>,
         for<'a> &'a T:
             Sub<&'a T, Output = T> +
             Mul<&'a T, Output = T> +
@@ -1349,7 +1349,7 @@ impl_mesh! {
         where
             Point<TS, M>: PointOps<TS, M, Vector = Vector<TS, M>>,
             Vector<TS, M>: VectorOps<TS, M>,
-            Vector<TS, 3>: VectorOps<TS, 3, Cross = Vector<TS, 3>>,
+            Vector<TS, 3>: VectorOps<TS, 3> + Cross3<TS>,
             for<'a> &'a TS: Add<&'a TS, Output = TS>
                         + Sub<&'a TS, Output = TS>
                         + Mul<&'a TS, Output = TS>,
@@ -1512,7 +1512,7 @@ impl_mesh! {
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
         Vector<T, N>: VectorOps<T, N>,
-        Vector<T, 3>: VectorOps<T, 3, Cross = Vector<T, 3>>,
+        Vector<T, 3>: VectorOps<T, 3>,
         for<'a> &'a T:
             Sub<&'a T, Output = T> +
             Mul<&'a T, Output = T> +
@@ -1547,7 +1547,7 @@ impl_mesh! {
         where
             Point<TS, M>: PointOps<TS, M, Vector = Vector<TS, M>>,
             Vector<TS, M>: VectorOps<TS, M>,
-            Vector<TS, 3>: VectorOps<TS, 3, Cross = Vector<TS, 3>>,
+            Vector<TS, 3>: VectorOps<TS, 3> + Cross3<TS>,
             for<'a> &'a TS: Add<&'a TS, Output = TS> + Sub<&'a TS, Output = TS> + Mul<&'a TS, Output = TS>,
         {
             let [i0,i1,i2] = face_vertices(mesh, f);
@@ -1761,7 +1761,7 @@ impl_mesh! {
         where
             Point<TS, M>: PointOps<TS, M, Vector = Vector<TS, M>>,
             Vector<TS, M>: VectorOps<TS, M>,
-            Vector<TS, 3>: VectorOps<TS, 3, Cross = Vector<TS, 3>>,
+            Vector<TS, 3>: VectorOps<TS, 3> + Cross3<TS>,
             for<'a> &'a TS:
                 Add<&'a TS, Output = TS> + Sub<&'a TS, Output = TS> + Mul<&'a TS, Output = TS>,
         {
@@ -2081,7 +2081,7 @@ impl_mesh! {
     ) -> Option<(T, T, T)>
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N>,
+        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
             + Add<&'a T, Output = T>
@@ -2460,7 +2460,7 @@ impl_mesh! {
         mv: usize,
         p_star: &Point<T, N>,
     ) -> T
-    where     Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    where Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     {
         let [i, j, k] = self.face_vertices(f);
         let p = |idx: usize| -> &Point<T, N> {
@@ -2570,7 +2570,7 @@ fn ray_triangle_intersection<T: Scalar, const N: usize>(
 ) -> Option<(T, T, T)>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -2664,7 +2664,7 @@ fn ray_segment_intersection_2d_robust<T>(
 ) -> Option<(T, T)>
 where
     T: Scalar + PartialOrd + Clone,
-    Vector<T, 2>: VectorOps<T, 2, Cross = T>,
+    Vector<T, 2>: VectorOps<T, 2>,
     for<'a> &'a T: core::ops::Sub<&'a T, Output = T>
         + core::ops::Mul<&'a T, Output = T>
         + core::ops::Add<&'a T, Output = T>

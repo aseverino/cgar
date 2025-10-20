@@ -23,10 +23,9 @@
 use crate::{
     geometry::{
         point::{Point, PointOps},
-        vector::{Vector, VectorOps},
+        vector::{Cross3, Vector, VectorOps},
     },
     impl_mesh,
-    io::obj::write_obj,
     numeric::scalar::Scalar,
 };
 
@@ -200,7 +199,7 @@ impl_mesh! {
     /// and does not introduce degeneracy.
     fn should_flip_edge(&self, he_idx: usize) -> bool
     where
-        Vector<T,N>: VectorOps<T,N, Cross=Vector<T,N>>
+        Vector<T,N>: VectorOps<T, N> + Cross3<T>,
     {
         if he_idx >= self.half_edges.len() { return false; }
         let he = &self.half_edges[he_idx];
@@ -253,7 +252,7 @@ impl_mesh! {
     /// Flip edges using quality-based predicate plus lightweight valence improvement.
     fn flip_edges(&mut self) -> usize
     where
-        Vector<T,N>: VectorOps<T,N, Cross=Vector<T,N>>
+        Vector<T,N>: VectorOps<T, N> + Cross3<T>
     {
         let mut list = Vec::new();
         list.reserve(self.half_edges.len()/3);
@@ -365,7 +364,7 @@ impl_mesh! {
         v_last_op: &mut [i32],
     ) -> usize
     where
-        Vector<T,N>: VectorOps<T,N, Cross=Vector<T,N>>,
+        Vector<T,N>: VectorOps<T, N> + Cross3<T>,
         for<'a> &'a T: std::ops::Mul<&'a T, Output = T>
     {
         let thresh2 = collapse_len * collapse_len;
@@ -410,7 +409,7 @@ impl_mesh! {
     /// Improved isotropic remesh with hysteresis and quality-based flips.
     pub fn isotropic_remesh(&mut self, options: &RemeshOptions<T>) -> Result<(), RemeshError>
     where
-        Vector<T,N>: VectorOps<T,N, Cross=Vector<T,N>>,
+        Vector<T,N>: VectorOps<T, N> + Cross3<T>,
         for<'a> &'a T:
             std::ops::Mul<&'a T, Output = T> +
             std::ops::Div<&'a T, Output = T> +

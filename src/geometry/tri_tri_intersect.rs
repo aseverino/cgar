@@ -33,7 +33,7 @@ use crate::{
         point::{Point, PointOps},
         segment::Segment,
         spatial_element::SpatialElement,
-        vector::{Vector, VectorOps},
+        vector::{Cross2, Cross3, Vector, VectorOps},
     },
     numeric::scalar::Scalar,
     operations::Zero,
@@ -164,7 +164,7 @@ fn coplanar_tri_tri_intersection<T: Scalar, const N: usize>(
 ) -> TriTriIntersectionResult<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -339,7 +339,7 @@ pub fn tri_tri_intersection<T: Scalar, const N: usize>(
 ) -> TriTriIntersectionResult<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -655,7 +655,7 @@ fn clip_segment_to_triangle_in_plane<T: Scalar, const N: usize>(
 ) -> Option<(Point<T, N>, Point<T, N>)>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -785,7 +785,7 @@ pub struct TriPrecomp<T: Scalar, const N: usize> {
 impl<T: Scalar, const N: usize> TriPrecomp<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -888,7 +888,7 @@ pub fn tri_tri_intersection_with_precomp<T: Scalar, const N: usize>(
 ) -> TriTriIntersectionResult<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -1048,7 +1048,7 @@ pub fn tri_tri_intersection_with_precomp_p<T: Scalar, const N: usize>(
 ) -> TriTriIntersectionResult<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -1337,7 +1337,7 @@ pub fn tri_tri_intersection_with_precomp_detailed<T: Scalar, const N: usize>(
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     Vector<T, 2>: VectorOps<T, 2>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -1640,7 +1640,7 @@ pub fn tri_tri_intersection_detailed<T: Scalar, const N: usize>(
 ) -> TriTriIntersectionDetailed<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N, Cross = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
     Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
     Vector<T, 2>: VectorOps<T, 2>,
     for<'a> &'a T: Sub<&'a T, Output = T>
