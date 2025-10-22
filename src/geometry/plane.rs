@@ -39,7 +39,8 @@ pub struct Plane<T: Scalar, const N: usize> {
     pub d: T,
 }
 
-trait PlaneOps<T: Scalar, const N: usize> {
+pub trait PlaneOps<T: Scalar, const N: usize> {
+    fn basis(&self) -> (Vector<T, N>, Vector<T, N>);
     fn from_points(ps: [&Point<T, N>; N]) -> Self;
     fn origin(&self) -> Point<T, N>;
 }
@@ -121,6 +122,15 @@ where
     Point<T, 3>: PointOps<T, 3, Vector = Vector<T, 3>>,
     Vector<T, 3>: VectorOps<T, 3> + Cross3<T>,
 {
+    fn basis(&self) -> (Vector<T, 3>, Vector<T, 3>)
+    where
+        Vector<T, 3>: VectorOps<T, 3>,
+    {
+        let u = self.normal.any_perpendicular();
+        let v = self.normal.cross(&u);
+        (u, v)
+    }
+
     fn origin(&self) -> Point<T, 3> {
         let n = &self.normal;
         let zero = T::zero();
@@ -159,6 +169,13 @@ where
     Point<T, 2>: PointOps<T, 2, Vector = Vector<T, 2>>,
     Vector<T, 2>: VectorOps<T, 2>,
 {
+    fn basis(&self) -> (Vector<T, 2>, Vector<T, 2>) {
+        // For 2D line, basis is the tangent vector (perpendicular to normal)
+        let tangent = Vector::new([self.normal[1].clone(), -self.normal[0].clone()]);
+        // Second basis vector is just the normal itself for completeness
+        (tangent, self.normal.clone())
+    }
+
     fn origin(&self) -> Point<T, 2> {
         let n = &self.normal;
         let zero = T::zero();

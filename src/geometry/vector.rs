@@ -27,7 +27,10 @@ use std::{
 };
 
 use crate::{
-    geometry::{point::Point, spatial_element::SpatialElement},
+    geometry::{
+        point::{Point, PointOps},
+        spatial_element::SpatialElement,
+    },
     numeric::scalar::Scalar,
     operations::Zero,
 };
@@ -445,6 +448,29 @@ where
             &(&self[0] * &o[1]) - &(&self[1] * &o[0]),
         ]))
     }
+}
+
+pub fn vector_cross<T: Scalar, const N: usize>(a: &Vector<T, N>, b: &Vector<T, N>) -> Vector<T, N>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'c> &'c T: Add<&'c T, Output = T>
+        + Sub<&'c T, Output = T>
+        + Mul<&'c T, Output = T>
+        + Div<&'c T, Output = T>,
+{
+    return if N == 2 {
+        let perp = Vector::<T, 2>::from_vals([a[1].clone(), -a[0].clone()]);
+        Vector::<T, N>::from_vals(from_fn(|i| if i < 2 { perp[i].clone() } else { T::zero() }))
+    } else {
+        // For 3D: actual cross product
+        let cross3 = a.0.as_vector_3().cross(&b.0.as_vector_3());
+        Vector::<T, N>::from_vals(from_fn(
+            |i| {
+                if i < 3 { cross3[i].clone() } else { T::zero() }
+            },
+        ))
+    };
 }
 
 pub type Vector2<T> = Vector<T, 2>;
