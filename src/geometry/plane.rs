@@ -26,7 +26,7 @@ use crate::{
     geometry::{
         point::{Point, PointOps},
         spatial_element::SpatialElement,
-        vector::{Cross3, Vector, VectorOps},
+        vector::{Cross2, Cross3, Vector, VectorOps},
     },
     numeric::scalar::Scalar,
 };
@@ -38,103 +38,51 @@ pub struct Plane<T: Scalar, const N: usize> {
     pub normal: Vector<T, N>,
     pub d: T,
 }
-impl<T: Scalar, const N: usize> Plane<T, N>
+
+trait PlaneOps<T: Scalar, const N: usize> {
+    fn from_points(ps: [&Point<T, N>; N]) -> Self;
+    fn origin(&self) -> Point<T, N>;
+}
+
+impl<T, const N: usize> Plane<T, N>
 where
+    T: Scalar + PartialOrd + Neg<Output = T>,
     Vector<T, N>: VectorOps<T, N>,
 {
     pub fn new(normal: Vector<T, N>, d: T) -> Self {
         Plane { normal, d }
     }
 
-    pub fn from_points(p1: &Point<T, N>, p2: &Point<T, N>, p3: &Point<T, N>) -> Self
-    where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>,
-    {
-        let v1 = (p2 - p1).as_vector();
-        let v2 = (p3 - p1).as_vector();
-        let normal = v1.cross(&v2);
-        let d = -normal.dot(&p1.as_vector());
-        Plane::new(normal, d)
-    }
-
-    pub fn origin(&self) -> Point<T, 3>
-    where
-        Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        for<'a> &'a T: Sub<&'a T, Output = T>
-            + Mul<&'a T, Output = T>
-            + Add<&'a T, Output = T>
-            + Div<&'a T, Output = T>
-            + Neg<Output = T>,
-    {
-        let zero = T::zero();
-        let n = &self.normal;
-
-        if n[2].abs().is_positive() {
-            // solve for z: n·x = d → z = (d - n.x * 0 - n.y * 0) / n.z
-            let z = &(&-(&self.d) / (&n[2]));
-            Point::<T, 3>::from_vals([zero.clone(), zero.clone(), z.clone()])
-        } else if n[1].abs().is_positive() {
-            let y = &-&self.d / &n[1];
-            Point::<T, 3>::from_vals([zero.clone(), y, zero.clone()])
-        } else if n[0].abs().is_positive() {
-            let x = &-&self.d / &n[0];
-            Point::<T, 3>::from_vals([x, zero.clone(), zero.clone()])
-        } else {
-            panic!("Invalid plane: zero normal");
-        }
-    }
-
-    pub fn basis(&self) -> (Vector<T, N>, Vector<T, N>)
-    where
-        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
-    {
-        let u = self.normal.any_perpendicular();
-        let v = self.normal.cross(&u);
-        (u, v)
-    }
-
-    pub fn canonicalized(&self) -> Plane<T, N>
-    where
-        T: Scalar,
-    {
+    /// Canonical form: first non-zero of `normal` is +1, scaled accordingly.
+    /// (Signed zeros in `normal` are collapsed.)
+    pub fn canonicalized(&self) -> Plane<T, N> {
         let mut plane = Plane::new(self.normal.clone(), self.d.clone());
-        // Remove negative zeros
+
+        // Remove signed zeros in the normal
         for x in plane.normal.coords_mut() {
             if x.is_zero() {
                 *x = T::zero();
             }
         }
-        // Find first non-zero entry
-        let mut flip = false;
-        let mut scale = None;
-        for x in plane.normal.coords_mut() {
-            if !x.is_zero() {
-                if x < &mut T::zero() {
-                    flip = true;
+
+        // Find first non-zero coefficient
+        if let Some(c) = plane.normal.coords().iter().find(|x| !x.is_zero()).cloned() {
+            // scale by |c|
+            let s = c.abs();
+            if !s.is_zero() {
+                for x in plane.normal.coords_mut() {
+                    *x = x.clone() / s.clone();
                 }
-                scale = Some(x.abs());
-                break;
+                plane.d = plane.d / s;
+            }
+            // flip if original first non-zero was negative
+            if c < T::zero() {
+                for x in plane.normal.coords_mut() {
+                    *x = -x.clone();
+                }
+                plane.d = -plane.d;
             }
         }
-        if flip {
-            for x in plane.normal.coords_mut() {
-                *x = -x.clone();
-            }
-            plane.d = -plane.d;
-        }
-
-        if let Some(scale) = scale {
-            for x in plane.normal.coords_mut() {
-                *x = x.clone() / scale.clone();
-            }
-            plane.d = plane.d / scale;
-        }
-
         plane
     }
 }
@@ -159,6 +107,79 @@ impl<T: Scalar, const N: usize> PartialOrd for Plane<T, N> {
         } else {
             self.normal.partial_cmp(&other.normal)
         }
+    }
+}
+
+impl<T> PlaneOps<T, 3> for Plane<T, 3>
+where
+    T: Scalar + Neg<Output = T>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Neg<Output = T>,
+    Point<T, 3>: PointOps<T, 3, Vector = Vector<T, 3>>,
+    Vector<T, 3>: VectorOps<T, 3> + Cross3<T>,
+{
+    fn origin(&self) -> Point<T, 3> {
+        let n = &self.normal;
+        let zero = T::zero();
+
+        if !n[2].is_zero() {
+            let z = &-&self.d / &n[2];
+            Point::<T, 3>::from_vals([zero.clone(), zero.clone(), z])
+        } else if !n[1].is_zero() {
+            let y = &-&self.d / &n[1];
+            Point::<T, 3>::from_vals([zero.clone(), y, zero.clone()])
+        } else if !n[0].is_zero() {
+            let x = &-&self.d / &n[0];
+            Point::<T, 3>::from_vals([x, zero.clone(), zero])
+        } else {
+            panic!("Invalid plane: zero normal");
+        }
+    }
+
+    fn from_points(ps: [&Point<T, 3>; 3]) -> Self {
+        let v1 = (ps[1] - ps[0]).as_vector();
+        let v2 = (ps[2] - ps[0]).as_vector();
+        let n = v1.cross(&v2);
+        let d = -n.dot(&ps[0].as_vector());
+        Plane::new(n, d)
+    }
+}
+
+impl<T> PlaneOps<T, 2> for Plane<T, 2>
+where
+    T: Scalar + Neg<Output = T>,
+    for<'a> &'a T: Add<&'a T, Output = T>
+        + Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Neg<Output = T>,
+    Point<T, 2>: PointOps<T, 2, Vector = Vector<T, 2>>,
+    Vector<T, 2>: VectorOps<T, 2>,
+{
+    fn origin(&self) -> Point<T, 2> {
+        let n = &self.normal;
+        let zero = T::zero();
+
+        if !n[1].is_zero() {
+            let y = &-&self.d / &n[1];
+            Point::<T, 2>::from_vals([zero.clone(), y])
+        } else if !n[0].is_zero() {
+            let x = &-&self.d / &n[0];
+            Point::<T, 2>::from_vals([x, zero])
+        } else {
+            panic!("Invalid line: zero normal");
+        }
+    }
+
+    fn from_points(ps: [&Point<T, 2>; 2]) -> Self {
+        let e = (ps[1] - ps[0]).as_vector(); // (ex, ey)
+        // +90° rotation gives an in-plane normal for the line
+        let n = Vector::new([-e[1].clone(), e[0].clone()]);
+        let d = -n.dot(&ps[0].as_vector());
+        Plane::new(n, d)
     }
 }
 
