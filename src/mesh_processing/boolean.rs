@@ -24,7 +24,7 @@ use std::{
     array::from_fn,
     collections::VecDeque,
     hash::Hash,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Sub},
     time::Instant,
 };
 
@@ -33,7 +33,7 @@ use ahash::{AHashMap, AHashSet};
 use crate::{
     geometry::{
         Aabb, AabbTree,
-        plane::Plane,
+        plane::{Plane, PlaneOps},
         point::{Point, PointOps},
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
@@ -41,7 +41,7 @@ use crate::{
             ContactOnTri, TriPrecomp, TriTriIntersectionDetailed,
             tri_tri_intersection_with_precomp_detailed,
         },
-        vector::{Cross3, Vector, VectorOps},
+        vector::{Cross3, Vector, VectorOps, vector_cross},
     },
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
@@ -102,12 +102,13 @@ pub enum BooleanOp {
 impl<T: Scalar, const N: usize> Mesh<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
-    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
-        + std::ops::Mul<&'a T, Output = T>
-        + std::ops::Add<&'a T, Output = T>
-        + std::ops::Div<&'a T, Output = T>
-        + std::ops::Neg<Output = T>,
+    Vector<T, N>: VectorOps<T, N>,
+    Plane<T, N>: PlaneOps<T, N>,
+    for<'a> &'a T: Sub<&'a T, Output = T>
+        + Mul<&'a T, Output = T>
+        + Add<&'a T, Output = T>
+        + Div<&'a T, Output = T>
+        + Neg<Output = T>,
 {
     fn classify_faces_inside_intersection_loops(
         &mut self,
@@ -840,7 +841,7 @@ fn extract_triangles_in_group<T: Scalar, const N: usize>(
 ) -> Vec<CoplanarTriangle>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
         + Add<&'a T, Output = T>
@@ -893,7 +894,9 @@ where
                 // 3) reject collinear (degenerate) triangles
                 let ab = (get_p(b) - get_p(a)).as_vector();
                 let ac = (get_p(c) - get_p(a)).as_vector();
-                let cr = ab.cross(&ac); // 3D: normal vector
+
+                let cr = vector_cross(&ab, &ac);
+
                 let area2 = cr.dot(&cr); // squared area
                 if area2 == T::zero() {
                     // exact-zero ok for rationals

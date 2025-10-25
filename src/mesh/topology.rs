@@ -31,7 +31,7 @@ use smallvec::SmallVec;
 use crate::{
     geometry::{
         Aabb, AabbTree,
-        plane::Plane,
+        plane::{Plane, PlaneOps},
         point::{Point, PointOps},
         segment::Segment,
         spatial_element::SpatialElement,
@@ -89,12 +89,18 @@ pub enum VertexRayResult<T: Scalar> {
 }
 
 impl_mesh! {
-    pub fn face_normal(&self, face_idx: usize) -> Vector<T, N> where Vector<T, N>: VectorOps<T, N> + Cross3<T>, {
+    pub fn face_normal(&self, face_idx: usize) -> Vector<T, 3>
+    where
+        Vector<T, 3>: VectorOps<T, 3> + Cross3<T>
+    {
+        if N != 3 {
+            panic!("face_normal is only defined for 3D meshes");
+        }
         let face_vertices = self
             .face_vertices(face_idx)
             .map(|v| &self.vertices[v].position);
-        let edge1 = (face_vertices[1] - face_vertices[0]).as_vector();
-        let edge2 = (face_vertices[2] - face_vertices[0]).as_vector();
+        let edge1 = (face_vertices[1] - face_vertices[0]).as_vector_3();
+        let edge2 = (face_vertices[2] - face_vertices[0]).as_vector_3();
         edge1.cross(&edge2)
     }
 
@@ -121,13 +127,14 @@ impl_mesh! {
         usize::MAX
     }
 
-    pub fn plane_from_face(&self, face_idx: usize) -> Plane<T, N> where Vector<T, N>: VectorOps<T, N>,{
-        let verts = self.face_vertices(face_idx); // [usize; N]
-        let v0 = &self.vertices[verts[0]].position;
-        let v1 = &self.vertices[verts[1]].position;
-        let v2 = &self.vertices[verts[2]].position;
-
-        Plane::from_points(v0, v1, v2)
+    pub fn plane_from_face(&self, face_idx: usize) -> Plane<T, N>
+    where
+        Vector<T, N>: VectorOps<T, N>,
+        Plane<T, N>: PlaneOps<T, N>
+    {
+        let verts = self.face_vertices(face_idx);
+        let points = from_fn(|i| &self.vertices[verts[i.min(2)]].position);
+        Plane::from_points(points)
     }
 
     /// Find existing vertex near position using spatial hash
@@ -1080,149 +1087,6 @@ impl_mesh! {
         })
     }
 
-    pub fn get_first_half_edge_intersection_on_face(
-        &self,
-        face: usize,
-        from: &Point<T, N>,
-        direction: &Vector<T, N>,
-    ) -> Option<(usize, T, T)>
-    where Vector<T, N>: VectorOps<T, N> + Cross3<T>,
-    {
-        // 0) Quick sanity: face must be valid and triangular
-        if self.faces[face].removed {
-            return None;
-        }
-
-        let hes = self.face_half_edges(face);
-        if hes.len() != 3 {
-            // This routine is triangle-only.
-            return None;
-        }
-        if self.half_edges[hes[0]].removed
-            || self.half_edges[hes[1]].removed
-            || self.half_edges[hes[2]].removed
-        {
-            return None;
-        }
-
-        // 1) Plane data
-        let plane = self.plane_from_face(face);
-        let origin = plane.origin();            // a point on the plane
-        let origin = Point::<T, N>::from_vals(from_fn(|i| origin[i].clone()));
-        let (u3, v3) = plane.basis();           // two independent in-plane vectors
-        let n3 = u3.cross(&v3);                 // plane normal (not necessarily unit)
-
-        // Guard against degenerate plane (area ~ 0)
-        let tol = T::tolerance();
-        let tol2 = &tol * &tol;
-        let n2 = n3.dot(&n3);
-        if n2 <= tol2 {
-            // Degenerate face: skip
-            return None;
-        }
-
-        // 2) Intersect 3D ray with plane: from + t_plane * direction
-        let w = (from - &origin).as_vector();
-        let num  = -w.dot(&n3);
-        let den  = direction.dot(&n3);
-
-        // Helper: near-zero test
-        let near_zero = |x: &T| -> bool {
-            let mtol = -tol.clone();
-            x >= &mtol && x <= &tol
-        };
-
-        let start_on_plane: Point<T, N>;
-        let mut dir_in_plane3  = direction.clone();
-
-        if near_zero(&den) {
-            // Ray parallel to plane
-            if !near_zero(&num) {
-                // Off-plane and parallel => never meets the plane
-                return None;
-            }
-            // In-plane ray: remove any residual normal component (robust)
-            // dir_in_plane3 = direction - proj_n(direction)
-            let k = &direction.dot(&n3) / &n2; // this is ~0 but keeps consistency
-            dir_in_plane3 = &dir_in_plane3 - &n3.scale(&k);
-            start_on_plane = from.clone();
-        } else {
-            // Proper intersection: advance origin to the hit point on the plane
-            let t_plane = &num / &den;
-
-            // FIX 1: accept starts exactly on the plane (t≈0); only reject if strictly behind more than tol
-            if &t_plane < &(-tol.clone()) {
-                return None;
-            }
-            // Clamp tiny negative t to zero to stay numerically stable
-            let t_clamped = if t_plane > T::zero() { t_plane } else { T::zero() };
-
-            // start_on_plane = from + t_clamped * direction
-            start_on_plane = (&from.as_vector() + &direction.scale(&t_clamped)).0;
-
-            // Only the in-plane component should drive the boundary hit
-            let k = &direction.dot(&n3) / &n2;
-            dir_in_plane3 = &dir_in_plane3 - &n3.scale(&k);
-        }
-
-        // 3) Project to a 2D basis on the plane
-        let project2 = |p: &Point<T, N>| -> Point<T, 2> {
-            let d = (p - &origin).as_vector();
-            Point::<T, 2>::new([d.dot(&u3), d.dot(&v3)])
-        };
-        let projectv2 = |v: &Vector<T, N>| -> Vector<T, 2> {
-            Vector::<T, 2>::new([v.dot(&u3), v.dot(&v3)])
-        };
-
-        let from2 = project2(&start_on_plane);
-        let dir2  = projectv2(&dir_in_plane3);
-
-        // If projected direction is (near) zero, there is no forward in-plane march
-        if dir2.dot(&dir2) <= tol2 {
-            return None;
-        }
-
-        // 4) Build 2D endpoints for each half-edge using the half-edge's TAIL -> HEAD (prev.vertex -> he.vertex)
-        let mut best: Option<(usize, T, T)> = None; // (he_idx, t_in_plane, u_on_segment)
-
-        for &he_idx in &hes {
-            let he = &self.half_edges[he_idx];
-
-            // FIX 2: use geometric edge of he = (tail -> head) = (prev.vertex -> he.vertex)
-            let src = self.half_edges[he.prev].vertex; // tail of he
-            let dst = he.vertex;                       // head of he
-
-            let a3 = &self.vertices[src].position;
-            let b3 = &self.vertices[dst].position;
-
-            let a2 = project2(a3);
-            let b2 = project2(b3);
-
-            if let Some((t_hit, u_seg)) =
-                ray_segment_intersection_2d_robust(&from2, &dir2, &a2, &b2, &tol)
-            {
-                if t_hit >= tol {
-                    match &mut best {
-                        None => best = Some((he_idx, t_hit, u_seg)),
-                        Some((best_he, best_t, best_u)) => {
-                            if &t_hit < best_t {
-                                *best_he = he_idx;
-                                *best_t = t_hit;
-                                *best_u = u_seg;
-                            } else if near_zero(&(&t_hit - best_t)) && he_idx < *best_he {
-                                *best_he = he_idx;
-                                *best_t = t_hit;
-                                *best_u = u_seg;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        best
-    }
-
     pub fn half_edge_between(&self, vi0: usize, vi1: usize) -> Option<usize> {
         self.edge_map.get(&(vi0, vi1)).copied()
     }
@@ -1553,7 +1417,15 @@ impl_mesh! {
             let [i0,i1,i2] = face_vertices(mesh, f);
             let u = (&mesh.vertices[i1].position - &mesh.vertices[i0].position).as_vector_3();
             let v = (&mesh.vertices[i2].position - &mesh.vertices[i0].position).as_vector_3();
-            let n = u.cross(&v);
+            // let n = u.cross(&v);
+
+            let n = if M == 2 {
+                Vector::<TS, 3>::from_vals([u[1].clone(), -u[0].clone(), TS::zero()])
+            } else {
+                // For 3D: actual cross product
+                u.cross(&v)
+            };
+
             let n2 = n.dot(&n);
             n2.is_zero()
         }
@@ -1768,7 +1640,14 @@ impl_mesh! {
             let [i0,i1,i2] = face_vertices(mesh, f);
             let u = (&mesh.vertices[i1].position - &mesh.vertices[i0].position).as_vector_3();
             let v = (&mesh.vertices[i2].position - &mesh.vertices[i0].position).as_vector_3();
-            let cross_product = u.cross(&v);
+
+            let cross_product = if M == 2 {
+                Vector::<TS, 3>::from_vals([u[1].clone(), -u[0].clone(), TS::zero()])
+            } else {
+                // For 3D: actual cross product
+                u.cross(&v)
+            };
+
             let n2 = cross_product.dot(&cross_product);
             n2.is_zero()
         }
@@ -2081,7 +1960,7 @@ impl_mesh! {
     ) -> Option<(T, T, T)>
     where
         Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-        Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+        Vector<T, N>: VectorOps<T, N>,
         for<'a> &'a T: Sub<&'a T, Output = T>
             + Mul<&'a T, Output = T>
             + Add<&'a T, Output = T>

@@ -55,7 +55,7 @@ pub fn rewrite_faces_from_cdt_batch<T: Scalar, const N: usize>(
     cdts: &[Delaunay<T>],
 ) where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
         + std::ops::Mul<&'a T, Output = T>
         + std::ops::Add<&'a T, Output = T>
@@ -89,7 +89,7 @@ pub fn allocate_vertices_for_splits_no_topology<T: Scalar, const N: usize>(
 ) -> AHashMap<ApproxPointKey, usize>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
         + std::ops::Mul<&'a T, Output = T>
         + std::ops::Add<&'a T, Output = T>
@@ -445,7 +445,7 @@ pub fn build_face_pslgs<T: Scalar + Clone + PartialOrd, const N: usize>(
 ) -> Vec<FaceJobUV<T>>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
         + std::ops::Mul<&'a T, Output = T>
         + std::ops::Add<&'a T, Output = T>
@@ -895,7 +895,7 @@ fn choose_vertex_on_face<T: Scalar, const N: usize>(
 ) -> Option<usize>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
         + std::ops::Mul<&'a T, Output = T>
         + std::ops::Add<&'a T, Output = T>

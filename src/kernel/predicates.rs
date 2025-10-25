@@ -349,7 +349,7 @@ pub fn point_in_or_on_triangle<T: Scalar + PartialOrd, const N: usize>(
 ) -> TrianglePoint
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+    Vector<T, N>: VectorOps<T, N>,
     for<'a> &'a T: Add<&'a T, Output = T>
         + Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>

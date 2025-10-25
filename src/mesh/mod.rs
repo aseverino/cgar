@@ -37,7 +37,7 @@ macro_rules! impl_mesh {
         impl<T: crate::numeric::scalar::Scalar, const N: usize> crate::mesh::basic_types::Mesh<T, N>
         where
             crate::geometry::point::Point<T, N>: crate::geometry::point::PointOps<T, N, Vector = crate::geometry::vector::Vector<T, N>>,
-            crate::geometry::vector::Vector<T, N>: crate::geometry::vector::VectorOps<T, N> +  crate::geometry::vector::Cross3<T>,
+            crate::geometry::vector::Vector<T, N>: crate::geometry::vector::VectorOps<T, N>,
             for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
                 + std::ops::Mul<&'a T, Output = T>
                 + std::ops::Add<&'a T, Output = T>

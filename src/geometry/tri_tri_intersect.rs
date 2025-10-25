@@ -33,7 +33,7 @@ use crate::{
         point::{Point, PointOps},
         segment::Segment,
         spatial_element::SpatialElement,
-        vector::{Cross2, Cross3, Vector, VectorOps},
+        vector::{Cross2, Cross3, Vector, VectorOps, vector_cross},
     },
     numeric::scalar::Scalar,
     operations::Zero,
@@ -785,7 +785,7 @@ pub struct TriPrecomp<T: Scalar, const N: usize> {
 impl<T: Scalar, const N: usize> TriPrecomp<T, N>
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+    Vector<T, N>: VectorOps<T, N>,
     Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
@@ -797,7 +797,9 @@ where
         // Plane
         let e01 = (p[0] - p[2]).as_vector();
         let e02 = (p[1] - p[2]).as_vector();
-        let n = e01.cross(&e02);
+
+        let n = vector_cross(&e01, &e02);
+
         if n.is_zero() {
             return Self {
                 n,
@@ -812,7 +814,11 @@ where
                 degenerate: true,
             };
         }
-        let d = -n.dot(&p[2].as_vector());
+        let d = if N == 2 {
+            -n.0.as_vector_2().dot(&p[2].as_vector_2())
+        } else {
+            -n.0.as_vector_3().dot(&p[2].as_vector_3())
+        };
 
         // Axes and 2D triangle
         let (i0, i1, drop) = coplanar_axes(&n);
@@ -1337,7 +1343,7 @@ pub fn tri_tri_intersection_with_precomp_detailed<T: Scalar, const N: usize>(
 where
     Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
     Point2<T>: PointOps<T, 2, Vector = Vector<T, 2>>,
-    Vector<T, N>: VectorOps<T, N> + Cross3<T>,
+    Vector<T, N>: VectorOps<T, N>,
     Vector<T, 2>: VectorOps<T, 2>,
     for<'a> &'a T: Sub<&'a T, Output = T>
         + Mul<&'a T, Output = T>
