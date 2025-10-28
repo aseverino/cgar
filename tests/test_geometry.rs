@@ -26,7 +26,7 @@ use cgar::{
         point::PointOps,
         segment::{Segment3, SegmentOps},
         spatial_element::SpatialElement,
-        vector::VectorOps,
+        vector::{Cross2, Cross3, VectorOps},
     },
     numeric::cgar_f64::CgarF64,
 };
@@ -42,7 +42,7 @@ use cgar::{
 fn test_vector_cross_2() {
     let v1 = Vector2::<CgarF64>::from_vals([1.0, 0.0]);
     let v2 = Vector2::from_vals([0.0, 1.0]);
-    assert_eq!(v1.cross(&v2), 1.0.into());
+    assert_eq!(v1.0.as_vector_2().cross(&v2.0.as_vector_2()), 1.0.into());
 }
 
 // #[test]
@@ -63,11 +63,17 @@ fn test_vector_cross_2() {
 // }
 
 #[test]
-fn test_vector_cross_3() {
+fn test_vector_cross_3()
+where
+    Vector3<CgarF64>: Cross3<CgarF64>,
+{
     let v1 = Vector3::<CgarF64>::from_vals([1.0, 0.0, 0.0]);
     let v2 = Vector3::<CgarF64>::from_vals([0.0, 1.0, 0.0]);
     // i × j = k
-    assert_eq!(v1.cross(&v2), Vector3::from_vals([0.0, 0.0, 1.0]));
+    assert_eq!(
+        v1.0.as_vector_3().cross(&v2.0.as_vector_3()),
+        Vector3::from_vals([0.0, 0.0, 1.0])
+    );
 }
 
 // #[test]
