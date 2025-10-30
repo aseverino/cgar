@@ -737,7 +737,7 @@ impl_mesh! {
         update_tree: bool,
     ) -> Result<SplitResult, &'static str>
     {
-        let he_ca = self.find_valid_half_edge(he, pos);
+        let he_ca = he;
         let he_ab = self.half_edges[he_ca].next;
         let he_bc = self.half_edges[he_ab].next;
         let he_ac = self.half_edges[he_ca].twin;
@@ -882,10 +882,6 @@ impl_mesh! {
             self.vertices[b].half_edge.get_or_insert(he_bc);
             self.vertices[c].half_edge.get_or_insert(he_cw);
 
-            // Record half-edge split lineage
-            self.half_edge_split_map.insert(he_ca, (he_cw, he_wa));
-            self.half_edge_split_map.insert(he_ac, (bhe_aw, bhe_wc));
-
             if update_tree {
                 // AABB tree updates (invalidate old real face; null face not in tree originally)
                 aabb_tree.invalidate(&original_face_1);
@@ -934,15 +930,6 @@ impl_mesh! {
         let base_face_idx = self.faces.len();
 
         let base_half_edge_idx = self.half_edges.len();
-
-        // let he_wb = base_half_edge_idx;
-        let he_cw = base_half_edge_idx + 1;
-        let he_wa = base_half_edge_idx + 2;
-        // let he_bw = base_half_edge_idx + 3;
-        let he_wc = base_half_edge_idx + 4;
-        // let he_dw = base_half_edge_idx + 5;
-        // let he_wd = base_half_edge_idx + 6;
-        let he_aw = base_half_edge_idx + 7;
 
         let mut i = 0;
         for (from, to) in evs {
@@ -1004,23 +991,6 @@ impl_mesh! {
         self.half_edges[ex_he_ad].twin = he_da; // external a->d | d->a
         self.half_edges[he_da].twin = ex_he_ad;
 
-        let triangle_wbc = FaceInfo {
-            face_idx: base_face_idx,
-            vertices: Triangle(w, b, c),
-        };
-        let triangle_wab = FaceInfo {
-            face_idx: base_face_idx + 1,
-            vertices: Triangle(w, a, b),
-        };
-        let triangle_wcd = FaceInfo {
-            face_idx: base_face_idx + 2,
-            vertices: Triangle(w, c, d),
-        };
-        let triangle_wda = FaceInfo {
-            face_idx: base_face_idx + 3,
-            vertices: Triangle(w, d, a),
-        };
-
         // Mark old faces as removed
         self.faces[original_face_1].removed = true;
         self.faces[original_face_2].removed = true;
@@ -1039,21 +1009,6 @@ impl_mesh! {
         self.half_edges[he_ab].vertex = b; // a -> b
         self.half_edges[he_cd].vertex = d; // c -> d
         self.half_edges[he_da].vertex = a; // d -> a
-
-        self.half_edge_split_map.insert(he_ca, (he_cw, he_wa));
-        self.half_edge_split_map.insert(he_ac, (he_aw, he_wc));
-
-        let face_split = FaceSplitMap {
-            face: original_face_1,
-            new_faces: smallvec![triangle_wbc, triangle_wab],
-        };
-        self.face_split_map.insert(original_face_1, face_split);
-
-        let face_split = FaceSplitMap {
-            face: original_face_2,
-            new_faces: smallvec![triangle_wcd, triangle_wda],
-        };
-        self.face_split_map.insert(original_face_2, face_split);
 
         let split_result = SplitResult {
             kind: SplitResultKind::SplitEdge,
@@ -1255,25 +1210,6 @@ impl_mesh! {
         self.edge_map.insert((b, w), base_he_idx_3);
         self.edge_map.insert((w, a), base_he_idx_3 + 1);
 
-        let triangle_awc = FaceInfo {
-            face_idx: subface_1_idx,
-            vertices: Triangle(a, w, c),
-        };
-        let triangle_cwb = FaceInfo {
-            face_idx: subface_2_idx,
-            vertices: Triangle(c, w, b),
-        };
-        let triangle_bwa = FaceInfo {
-            face_idx: subface_3_idx,
-            vertices: Triangle(b, w, a),
-        };
-
-        let face_split = FaceSplitMap {
-            face: face,
-            new_faces: smallvec![triangle_awc, triangle_cwb, triangle_bwa],
-        };
-        self.face_split_map.insert(face, face_split);
-
         let split_result = SplitResult {
             kind: SplitResultKind::SplitFace,
             vertex: w,
@@ -1288,7 +1224,6 @@ impl_mesh! {
 
             aabb_tree.invalidate(&face);
         }
-
 
         Ok(split_result)
     }
