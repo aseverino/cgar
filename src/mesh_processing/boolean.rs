@@ -33,9 +33,10 @@ use ahash::{AHashMap, AHashSet};
 use crate::{
     geometry::{
         Aabb, AabbTree,
+        edge_edge_intersect::edge_edge_intersection_2,
         plane::{Plane, PlaneOps},
         point::{Point, PointOps},
-        segment::{Segment, SegmentOps},
+        segment::{self, Segment, SegmentOps},
         spatial_element::SpatialElement,
         tri_tri_intersect::{
             ContactOnTri, TriPrecomp, TriTriIntersectionDetailed,
@@ -259,43 +260,39 @@ where
         inside
     }
 
-    pub fn corefine_and_boolean(&mut self, other: &mut Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
-        let mut a = self;
-        let mut b = other;
-
-        // 1. Collect ALL intersection segments
+    pub fn get_mesh_intersections_3(
+        &self,
+        other: &Mesh<T, N>,
+    ) -> (
+        Vec<IntersectionSegment<T, N>>,
+        Vec<IntersectionSegment<T, N>>,
+    ) {
+        let tree_b = other.build_face_tree();
         let mut intersection_segments_a = Vec::new();
         let mut intersection_segments_b = Vec::new();
         let intersection_segments = [&mut intersection_segments_a, &mut intersection_segments_b];
+        let meshes = [&self, &other];
 
-        let start = Instant::now();
-        // let (tree_a, aabb_lookup_a) = a.build_face_tree_with_lookup();
-        let tree_b = b.build_face_tree();
-        println!("Total AABB computation: {:.2?}", start.elapsed());
-
-        let meshes = [&a, &b];
-
-        let start = Instant::now();
         let mut candidates = Vec::with_capacity(64);
         let mut ends_vec = Vec::with_capacity(64);
 
-        for fa in 0..a.faces.len() {
+        for fa in 0..self.faces.len() {
             candidates.clear();
-            tree_b.query(&a.face_aabb(fa), &mut candidates);
+            tree_b.query(&self.face_aabb(fa), &mut candidates);
 
             if candidates.is_empty() {
                 continue;
             }
 
-            let pa_idx = a.face_vertices(fa);
-            let pa: [&Point<T, N>; 3] = from_fn(|i| &a.vertices[pa_idx[i]].position);
+            let pa_idx = self.face_vertices(fa);
+            let pa: [&Point<T, N>; 3] = from_fn(|i| &self.vertices[pa_idx[i]].position);
             let pre_a = TriPrecomp::new(&pa);
 
             for &fb in &candidates {
                 ends_vec.clear();
 
-                let pb_idx = b.face_vertices(*fb);
-                let pb: [&Point<T, N>; 3] = from_fn(|i| &b.vertices[pb_idx[i]].position);
+                let pb_idx = other.face_vertices(*fb);
+                let pb: [&Point<T, N>; 3] = from_fn(|i| &other.vertices[pb_idx[i]].position);
                 let pre_b = TriPrecomp::new(&pb);
 
                 let vertices_indices = [&pa_idx, &pb_idx];
@@ -377,6 +374,100 @@ where
                 }
             }
         }
+        (intersection_segments_a, intersection_segments_b)
+    }
+
+    pub fn get_mesh_intersections_2(
+        &self,
+        other: &Mesh<T, N>,
+    ) -> (
+        Vec<IntersectionSegment<T, N>>,
+        Vec<IntersectionSegment<T, N>>,
+    ) {
+        let tree_b = other.build_face_tree();
+        let mut intersection_segments_a = Vec::new();
+        let mut intersection_segments_b = Vec::new();
+        let intersection_segments = [&mut intersection_segments_a, &mut intersection_segments_b];
+        let meshes = [&self, &other];
+
+        let mut candidates = Vec::with_capacity(64);
+
+        for fa in 0..self.faces.len() {
+            candidates.clear();
+            tree_b.query(&self.face_aabb(fa), &mut candidates);
+
+            if candidates.is_empty() {
+                continue;
+            }
+
+            let ea_idx = self.face_vertices(fa); // [usize; 2] for 2D edges
+            let ea: [&Point<T, N>; 2] = from_fn(|i| &self.vertices[ea_idx[i]].position);
+
+            for &fb in &candidates {
+                let eb_idx = other.face_vertices(*fb);
+                let eb: [&Point<T, N>; 2] = from_fn(|i| &other.vertices[eb_idx[i]].position);
+
+                let vertices_indices = [&ea_idx, &eb_idx];
+                let faces = [fa, *fb];
+
+                // 2D edge-edge intersection
+                if let Some(intersection_point) =
+                    edge_edge_intersection_2(&ea[0], &ea[1], &eb[0], &eb[1])
+                {
+                    for mesh_x in 0..2 {
+                        let edge = if mesh_x == 0 { &ea } else { &eb };
+                        let edge_idx = vertices_indices[mesh_x];
+
+                        let mut intersection_endpoint_0 =
+                            IntersectionEndPoint::<T, N>::new_default();
+                        let mut intersection_endpoint_1 =
+                            IntersectionEndPoint::<T, N>::new_default();
+
+                        // Set intersection point as both endpoints (degenerate segment)
+                        intersection_endpoint_0.vertex_hint = Some([edge_idx[0], edge_idx[1]]);
+                        intersection_endpoint_1.vertex_hint = Some([edge_idx[0], edge_idx[1]]);
+
+                        let he = meshes[mesh_x].edge_map[&(edge_idx[0], edge_idx[1])];
+                        intersection_endpoint_0.half_edge_hint = Some(he);
+                        intersection_endpoint_1.half_edge_hint = Some(he);
+
+                        let segment = Segment::new(&edge[0], &edge[1]);
+                        // Calculate parameter along edge
+                        let t = segment.parameter_of_point(&intersection_point);
+                        intersection_endpoint_0.half_edge_u_hint = Some(t.clone());
+                        intersection_endpoint_1.half_edge_u_hint = Some(t);
+
+                        intersection_segments[mesh_x].push(IntersectionSegment::new(
+                            intersection_endpoint_0,
+                            intersection_endpoint_1,
+                            &Segment::new(&intersection_point, &intersection_point),
+                            faces[mesh_x],
+                            false, // 2D intersections are typically not coplanar
+                        ));
+                    }
+                }
+            }
+        }
+        (intersection_segments_a, intersection_segments_b)
+    }
+
+    pub fn corefine_and_boolean(&mut self, other: &mut Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
+        let mut a = self;
+        let mut b = other;
+
+        // 1. Collect ALL intersection segments
+
+        let start = Instant::now();
+        println!("Total AABB computation: {:.2?}", start.elapsed());
+
+        let start = Instant::now();
+        let (mut intersection_segments_a, mut intersection_segments_b) = {
+            if N == 3 {
+                a.get_mesh_intersections_3(&b)
+            } else {
+                a.get_mesh_intersections_2(&b)
+            }
+        };
 
         println!("Intersections created in {:.2?}", start.elapsed());
 
@@ -391,9 +482,7 @@ where
         let _created_a =
             allocate_vertices_for_splits_no_topology(&mut a, &mut intersection_segments_a);
 
-        //
-
-        ENABLE_PANIC_ON_EXACT.store(true, std::sync::atomic::Ordering::Relaxed);
+        // ENABLE_PANIC_ON_EXACT.store(true, std::sync::atomic::Ordering::Relaxed);
 
         println!("Allocated vertices on A in {:.2?}", start.elapsed());
         let start = Instant::now();

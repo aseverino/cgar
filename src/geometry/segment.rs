@@ -46,6 +46,7 @@ where
     }
 
     fn midpoint(&self) -> Point<T, N>;
+    fn parameter_of_point(&self, point: &Point<T, N>) -> T;
     fn is_point_on(&self, p: &Point<T, N>) -> bool;
 
     fn inverse(&self) -> Self;
@@ -111,6 +112,18 @@ where
         //     &(&self.a[0] + &self.b[0]) / &T::from(2),
         //     &(&self.a[1] + &self.b[1]) / &T::from(2),
         // ])
+    }
+
+    fn parameter_of_point(&self, point: &Point<T, N>) -> T {
+        let edge_vec = &self.b - &self.a;
+        let point_vec = point - &self.a;
+
+        let edge_len2 = edge_vec.as_vector().dot(&edge_vec.as_vector());
+        if edge_len2.is_zero() {
+            return T::zero();
+        }
+
+        point_vec.as_vector().dot(&edge_vec.as_vector()) / edge_len2
     }
 
     fn is_point_on(&self, p: &Point<T, N>) -> bool {
