@@ -267,7 +267,9 @@ where
         Vec<IntersectionSegment<T, N>>,
         Vec<IntersectionSegment<T, N>>,
     ) {
+        let start = Instant::now();
         let tree_b = other.build_face_tree();
+        println!("Total AABB computation: {:.2?}", start.elapsed());
         let mut intersection_segments_a = Vec::new();
         let mut intersection_segments_b = Vec::new();
         let intersection_segments = [&mut intersection_segments_a, &mut intersection_segments_b];
@@ -451,14 +453,12 @@ where
         (intersection_segments_a, intersection_segments_b)
     }
 
-    pub fn corefine_and_boolean(&mut self, other: &mut Mesh<T, N>, op: BooleanOp) -> Mesh<T, N> {
+    pub fn corefine_and_boolean(&mut self, other: &mut Mesh<T, N>, op: BooleanOp) -> Mesh<T, N>
+    where
+        Vector<T, N>: Cross3<T>,
+    {
         let mut a = self;
         let mut b = other;
-
-        // 1. Collect ALL intersection segments
-
-        let start = Instant::now();
-        println!("Total AABB computation: {:.2?}", start.elapsed());
 
         let start = Instant::now();
         let (mut intersection_segments_a, mut intersection_segments_b) = {
