@@ -521,54 +521,38 @@ impl_mesh! {
         p: &Point<T, N>,
     ) -> PointInMeshResult where T: Into<T>, Vector<T, N>: VectorOps<T, N>,
     {
-        let mut inside_count = 0;
-        let mut total_rays = 0;
+        let rays = [
+            Vector::<T, N>::from_vals(from_fn(|i| [T::one(), T::zero(), T::zero()][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| [T::zero(), T::one(), T::zero()][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| [T::zero(), T::zero(), T::one()][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| [T::from(-1.0), T::zero(), T::zero()][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| [T::zero(), T::from(-1.0), T::zero()][i].clone())),
+            Vector::<T, N>::from_vals(from_fn(|i| [T::zero(), T::zero(), T::from(-1.0)][i].clone())),
+        ];
+
+        let total_rays = rays.len();
+        let mut inside_count = 0usize;
         let mut on_surface = false;
 
-        let arr_rays = [
-            [T::one(), T::zero(), T::zero()],
-            [T::zero(), T::one(), T::zero()],
-            [T::zero(), T::zero(), T::one()],
-            [T::from(-1.0), T::zero(), T::zero()],
-            [T::zero(), T::from(-1.0), T::zero()],
-            [T::zero(), T::zero(), T::from(-1.0)],
-        ];
-
-        let rays = vec![
-            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[0][i].clone())),
-            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[1][i].clone())),
-            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[2][i].clone())),
-            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[3][i].clone())),
-            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[4][i].clone())),
-            Vector::<T, N>::from_vals(from_fn(|i| arr_rays[5][i].clone())),
-        ];
-
         for r in rays {
-            if let IntersectionResult::Hit(hit, t) = self.cast_ray(p, &r, tree, &None) {
-                match hit {
-                    IntersectionHit::Face(..) => {
-                        if t.is_zero() { on_surface = true; }
+            match self.cast_ray(p, &r, tree, &None) {
+                IntersectionResult::Hit(_hit, t) => {
+                    if t.is_zero() {
+                        on_surface = true; // optionally: return PointInMeshResult::OnSurface immediately
+                    } else {
+                        // odd parity for this direction
                         inside_count += 1;
-                        total_rays += 1;
                     }
-                    IntersectionHit::Edge(..) => {
-                        if t.is_zero() { on_surface = true; }
-                        inside_count += 1;
-                        total_rays += 1;
                     }
-                    IntersectionHit::Vertex(_) => {
-                        if t.is_zero() { on_surface = true; }
-                        inside_count += 1;
-                        total_rays += 1;
-                    }
+                IntersectionResult::Miss => {
+                    // even parity for this direction (0), do nothing
                 }
             }
-
         }
 
         if on_surface {
             PointInMeshResult::OnSurface
-        } else if total_rays > 0 && inside_count > total_rays / 2 {
+        } else if inside_count > total_rays / 2 {
             PointInMeshResult::Inside
         } else {
             PointInMeshResult::Outside
