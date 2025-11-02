@@ -48,7 +48,7 @@ use crate::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
     },
-    mesh_processing::batching::{build_face_pslgs, rewrite_faces_from_cdt_batch},
+    mesh_processing::batching::{FaceJobUV, build_face_pslgs},
     numeric::{
         cgar_f64::CgarF64,
         lazy_exact::ENABLE_PANIC_ON_EXACT,
@@ -1249,4 +1249,34 @@ where
     }
 
     canonical_map
+}
+
+pub fn rewrite_faces_from_cdt_batch<T: Scalar, const N: usize>(
+    mesh: &mut Mesh<T, N>,
+    jobs: &[FaceJobUV<T>],
+    cdts: &[Delaunay<T>],
+) where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    let total_triangles: usize = cdts.iter().map(|dt| dt.triangles.len()).sum();
+    let mut face_ids = Vec::with_capacity(jobs.len());
+    let mut triangles = Vec::with_capacity(total_triangles);
+
+    for ((job, dt), _) in jobs.iter().zip(cdts.iter()).zip(0..) {
+        face_ids.push(job.face_id);
+        let verts_global = &job.verts_global;
+
+        for t in &dt.triangles {
+            triangles.push((verts_global[t.0], verts_global[t.1], verts_global[t.2]));
+        }
+    }
+
+    mesh.remove_triangles_deferred(&face_ids);
+    mesh.add_triangles_deferred(&triangles);
 }

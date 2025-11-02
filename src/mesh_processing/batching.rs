@@ -32,7 +32,6 @@ use crate::{
     },
     mesh::{basic_types::Mesh, intersection_segment::IntersectionSegment},
     numeric::scalar::Scalar,
-    operations::triangulation::delaunay::Delaunay,
 };
 
 /// PSLG job per face, with UV points in f64.
@@ -43,36 +42,6 @@ pub struct FaceJobUV<T: Scalar> {
     pub verts_global: Vec<usize>,  // global vertex ids (orig + new)
     pub points_uv: Vec<Point2<T>>, // projected to face plane
     pub segments: Vec<[usize; 2]>, // local indices into verts_global / points_uv
-}
-
-pub fn rewrite_faces_from_cdt_batch<T: Scalar, const N: usize>(
-    mesh: &mut Mesh<T, N>,
-    jobs: &[FaceJobUV<T>],
-    cdts: &[Delaunay<T>],
-) where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
-        + std::ops::Mul<&'a T, Output = T>
-        + std::ops::Add<&'a T, Output = T>
-        + std::ops::Div<&'a T, Output = T>
-        + std::ops::Neg<Output = T>,
-{
-    let total_triangles: usize = cdts.iter().map(|dt| dt.triangles.len()).sum();
-    let mut face_ids = Vec::with_capacity(jobs.len());
-    let mut triangles = Vec::with_capacity(total_triangles);
-
-    for ((job, dt), _) in jobs.iter().zip(cdts.iter()).zip(0..) {
-        face_ids.push(job.face_id);
-        let verts_global = &job.verts_global;
-
-        for t in &dt.triangles {
-            triangles.push((verts_global[t.0], verts_global[t.1], verts_global[t.2]));
-        }
-    }
-
-    mesh.remove_triangles_deferred(&face_ids);
-    mesh.add_triangles_deferred(&triangles);
 }
 
 /// Metric-preserving, sqrt-free UV frame.
@@ -144,7 +113,7 @@ where
     }
     let p = &mesh.vertices[vid].position;
     let li = points_uv.len();
-    let (u, v, w) = barycentric_coords(p, pa, pb, pc).unwrap();
+    let (u, v, _) = barycentric_coords(p, pa, pb, pc).unwrap();
     points_uv.push(Point2::new([u, v]));
     verts_global.push(vid);
     g2l.insert(vid, li);
@@ -272,7 +241,7 @@ where
             let mut b_res = usize::MAX;
             // project both candidates in the SAME basis you use for points_uv
             if va != usize::MAX {
-                let (u, v, w) =
+                let (u, v, _) =
                     barycentric_coords(&mesh.vertices[va].position, pa, pb, pc).unwrap();
                 let pa_uv = Point2::new([u, v]);
                 a_res = choose_vertex_on_face(mesh, face_id, &[va, vb], &pa_uv, pa, pb, pc)
@@ -292,7 +261,7 @@ where
             }
 
             if vb != usize::MAX {
-                let (u, v, w) =
+                let (u, v, _) =
                     barycentric_coords(&mesh.vertices[vb].position, pa, pb, pc).unwrap();
                 let pb_uv = Point2::new([u, v]);
                 b_res = choose_vertex_on_face(mesh, face_id, &[vb, va], &pb_uv, pa, pb, pc)
