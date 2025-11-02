@@ -33,7 +33,7 @@ use crate::{
         point::{Point, PointOps},
         segment::Segment,
         spatial_element::SpatialElement,
-        vector::{Cross2, Cross3, Vector, VectorOps, vector_cross},
+        vector::{Cross3, Vector, VectorOps, vector_cross},
     },
     numeric::scalar::Scalar,
     operations::Zero,

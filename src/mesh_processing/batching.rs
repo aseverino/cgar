@@ -558,7 +558,7 @@ where
             continue;
         }
         let p = &mesh.vertices[g].position;
-        let (u, v, w) = barycentric_coords(p, pa, pb, pc).unwrap();
+        let (u, v, _) = barycentric_coords(p, pa, pb, pc).unwrap();
         let du = &u - &projected_uv[0];
         let dv = &v - &projected_uv[1];
         let d2 = &du * &du + &dv * &dv;

@@ -23,7 +23,6 @@
 use std::{array::from_fn, ops::Sub};
 
 use ahash::{AHashMap, AHashSet};
-use smallvec::*;
 
 use crate::{
     geometry::{

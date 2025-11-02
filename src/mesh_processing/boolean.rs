@@ -51,7 +51,7 @@ use crate::{
     mesh_processing::batching::{FaceJobUV, build_face_pslgs},
     numeric::{
         cgar_f64::CgarF64,
-        lazy_exact::ENABLE_PANIC_ON_EXACT,
+        // lazy_exact::ENABLE_PANIC_ON_EXACT,
         scalar::{RefInto, Scalar},
     },
     operations::triangulation::delaunay::Delaunay,

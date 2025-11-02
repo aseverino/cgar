@@ -26,7 +26,7 @@ use crate::{
     geometry::{
         point::{Point, PointOps},
         spatial_element::SpatialElement,
-        vector::{Cross2, Cross3, Vector, VectorOps},
+        vector::{Cross3, Vector, VectorOps},
     },
     numeric::scalar::Scalar,
 };
