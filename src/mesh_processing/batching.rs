@@ -121,7 +121,9 @@ where
             // Extract edge context
             let he_opt = ep.half_edge_hint;
             let edge_key: (usize, usize) = match he_opt {
-                Some(h) => undirected_edge_key(mesh, h).unwrap_or((usize::MAX, usize::MAX)),
+                Some(h) => mesh
+                    .canonical_edge_indices(h)
+                    .unwrap_or((usize::MAX, usize::MAX)),
                 None => (usize::MAX, usize::MAX),
             };
 
@@ -187,8 +189,8 @@ where
             // 1d) Interior-of-edge (he present, not near endpoints): one vertex per (undirected edge, canonical u bucket)
             if let (Some(he), Some(u_raw)) = (he_opt, u_opt_f64) {
                 if endpoint_flag == 0 {
-                    if let Some(ek) = undirected_edge_key(mesh, he) {
-                        let u_can = canonicalize_u_for_edge(mesh, he, ek, u_raw);
+                    if let Some(ek) = mesh.canonical_edge_indices(he) {
+                        let u_can = mesh.canonicalize_u_for_edge(he, ek, u_raw);
                         let ub = bucket_u(u_can, tol_f64);
                         let k = (ek, ub);
 
@@ -252,7 +254,9 @@ where
 
             let he_opt = ep.half_edge_hint;
             let edge_key: (usize, usize) = match he_opt {
-                Some(h) => undirected_edge_key(mesh, h).unwrap_or((usize::MAX, usize::MAX)),
+                Some(h) => mesh
+                    .canonical_edge_indices(h)
+                    .unwrap_or((usize::MAX, usize::MAX)),
                 None => (usize::MAX, usize::MAX),
             };
             let faces_opt = ep.faces_hint;
@@ -683,45 +687,6 @@ where
     }
 
     jobs
-}
-
-#[inline(always)]
-fn undirected_edge_key<TS: Scalar, const M: usize>(
-    mesh: &Mesh<TS, M>,
-    he: usize,
-) -> Option<(usize, usize)> {
-    if he >= mesh.half_edges.len() {
-        return None;
-    }
-    let h = &mesh.half_edges[he];
-    let t = h.twin;
-    if t >= mesh.half_edges.len() {
-        return None;
-    }
-    let head = h.vertex; // v
-    let tail = mesh.half_edges[t].vertex; // u (origin)
-    Some(if tail <= head {
-        (tail, head)
-    } else {
-        (head, tail)
-    })
-}
-
-#[inline(always)]
-fn canonicalize_u_for_edge<TS: Scalar, const M: usize>(
-    mesh: &Mesh<TS, M>,
-    he: usize,
-    edge_key: (usize, usize),
-    u_raw: f64,
-) -> f64 {
-    // half-edge origin
-    let tail = mesh.half_edges[mesh.half_edges[he].twin].vertex;
-    // If this directed half-edge runs edge_key.0 -> edge_key.1, keep u; else flip.
-    if tail == edge_key.0 {
-        u_raw
-    } else {
-        1.0 - u_raw
-    }
 }
 
 #[inline(always)]

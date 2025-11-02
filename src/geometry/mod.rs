@@ -22,6 +22,7 @@
 
 pub mod aabb;
 pub mod aabb_tree;
+pub mod canonical_edge;
 pub mod edge_edge_intersect;
 pub mod intersection;
 pub mod matrix;

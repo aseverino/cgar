@@ -89,6 +89,41 @@ pub enum VertexRayResult<T: Scalar> {
 }
 
 impl_mesh! {
+    pub fn canonical_edge_indices(&self, he: usize) -> Option<(usize, usize)> {
+        if he >= self.half_edges.len() {
+            return None;
+        }
+
+        let t = self.half_edges[he].twin;
+        if t >= self.half_edges.len() {
+            return None;
+        }
+        let target = self.half_edges[he].vertex; // v
+        let origin = self.half_edges[t].vertex; // u (origin)
+        Some(if origin <= target {
+            (origin, target)
+        } else {
+            (target, origin)
+        })
+    }
+
+    #[inline(always)]
+    pub fn canonicalize_u_for_edge(
+        &self,
+        he: usize,
+        edge_key: (usize, usize),
+        u_raw: f64,
+    ) -> f64 {
+        // half-edge origin
+        let tail = self.half_edges[self.half_edges[he].twin].vertex;
+        // If this directed half-edge runs edge_key.0 -> edge_key.1, keep u; else flip.
+        if tail == edge_key.0 {
+            u_raw
+        } else {
+            1.0 - u_raw
+        }
+    }
+
     pub fn face_normal(&self, face_idx: usize) -> Vector<T, 3>
     where
         Vector<T, 3>: VectorOps<T, 3> + Cross3<T>
@@ -543,7 +578,7 @@ impl_mesh! {
                         // odd parity for this direction
                         inside_count += 1;
                     }
-                    }
+                }
                 IntersectionResult::Miss => {
                     // even parity for this direction (0), do nothing
                 }
