@@ -27,15 +27,11 @@ use crate::{
         Point2,
         point::{Point, PointOps},
         spatial_element::SpatialElement,
-        util::EPS,
+        util::{EPS, barycentric_coords},
         vector::{Cross3, Vector, VectorOps},
     },
     mesh::{basic_types::Mesh, intersection_segment::IntersectionSegment},
-    mesh_processing::boolean::{ApproxPointKey, point_key},
-    numeric::{
-        cgar_f64::CgarF64,
-        scalar::{RefInto, Scalar},
-    },
+    numeric::scalar::Scalar,
     operations::triangulation::delaunay::Delaunay,
 };
 
@@ -77,239 +73,6 @@ pub fn rewrite_faces_from_cdt_batch<T: Scalar, const N: usize>(
 
     mesh.remove_triangles_deferred(&face_ids);
     mesh.add_triangles_deferred(&triangles);
-}
-
-/// 1) Allocate global vertices for all splits (edge OR face) without touching topology.
-///    - Reuses your `ApproxPointKey` to dedup.
-///    - Updates intersection endpoint vertex_hints in-place.
-///    - Returns a map ApproxPointKey -> new global vertex id (for convenience).
-pub fn allocate_vertices_for_splits_no_topology<T: Scalar, const N: usize>(
-    mesh: &mut Mesh<T, N>,
-    intersection_segments: &mut Vec<IntersectionSegment<T, N>>,
-) -> AHashMap<ApproxPointKey, usize>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
-        + std::ops::Mul<&'a T, Output = T>
-        + std::ops::Add<&'a T, Output = T>
-        + std::ops::Div<&'a T, Output = T>
-        + std::ops::Neg<Output = T>,
-{
-    // Map keyed by (canonical_point_key, half_edge_hint_or_MAX, face_hint_or_MAX, endpoint_flag) -> allocated global vid.
-    // endpoint_flag = 1 when the split is essentially at an edge endpoint (u ≈ 0 or u ≈ 1),
-    //               = 0 for interior-of-edge, face-interior, or no-edge cases.
-    let mut keyed_map: AHashMap<(ApproxPointKey, (usize, usize), [usize; 2], u8), usize> =
-        AHashMap::default();
-
-    // Returned convenience map: canonical_point_key -> one representative vid for *no-edge* bucket only
-    let mut canonical_map: AHashMap<ApproxPointKey, usize> = AHashMap::default();
-    let mut edge_param_map: AHashMap<((usize, usize), i64), usize> = AHashMap::default();
-
-    // threshold for treating half_edge_u_hint as an endpoint
-    let tol_t: T = T::point_merge_threshold();
-    let tol_f64: f64 = RefInto::<CgarF64>::ref_into(&tol_t).0;
-
-    for seg in intersection_segments.iter_mut() {
-        if seg.invalidated {
-            continue;
-        }
-        for (i, ep) in [&mut seg.a, &mut seg.b].iter().enumerate() {
-            let ep_pos = &seg.segment[i];
-            let canonical = point_key(&ep_pos);
-
-            // Extract edge context
-            let he_opt = ep.half_edge_hint;
-            let edge_key: (usize, usize) = match he_opt {
-                Some(h) => mesh
-                    .canonical_edge_indices(h)
-                    .unwrap_or((usize::MAX, usize::MAX)),
-                None => (usize::MAX, usize::MAX),
-            };
-
-            // Extract face context
-            let faces_opt = ep.faces_hint;
-            let faces_key = faces_opt.unwrap_or([usize::MAX, usize::MAX]);
-
-            // Determine u along the edge if available
-            let u_opt_f64: Option<f64> = ep
-                .half_edge_u_hint
-                .as_ref()
-                .map(|u_t| RefInto::<CgarF64>::ref_into(u_t).0);
-
-            // endpoint_flag = 1 if u is near 0 or near 1 (use tol), else 0
-            let endpoint_flag: u8 = match u_opt_f64 {
-                Some(u) if (u <= tol_f64) || (u >= 1.0 - tol_f64) => 1,
-                _ => 0,
-            };
-            let map_key = (canonical, edge_key, faces_key, endpoint_flag);
-
-            // only accept an existing vertex_hint as authoritative when
-            // it is no-edge (he_key == MAX) OR the endpoint is effectively at the edge endpoint (endpoint_flag == 1).
-            if let Some(hint) = ep.vertex_hint {
-                if hint[0] != usize::MAX
-                    && (edge_key == (usize::MAX, usize::MAX) || endpoint_flag == 1)
-                {
-                    keyed_map.entry(map_key).or_insert(hint[0]);
-                    // don't populate canonical_map here unless it's the no-edge case
-                    if edge_key == (usize::MAX, usize::MAX) && faces_key == [usize::MAX, usize::MAX]
-                    {
-                        canonical_map.entry(canonical).or_insert(hint[0]);
-                    }
-                    continue;
-                }
-            }
-
-            // 1b) If this map_key already decided, reuse
-            if let Some(&_vid) = keyed_map.get(&map_key) {
-                continue;
-            }
-
-            // 1c) If endpoint_flag==1 and we have half-edge hint, reuse the proper endpoint vertex:
-            if endpoint_flag == 1 && he_opt.is_some() {
-                let he = he_opt.unwrap();
-                if he < mesh.half_edges.len() {
-                    // decide whether this is source (u≈0) or dest (u≈1)
-                    if let Some(u) = u_opt_f64 {
-                        let chosen_vid = if u <= tol_f64 {
-                            // source vertex = previous half-edge's vertex
-                            let src_he = mesh.half_edges[he].prev;
-                            mesh.half_edges[src_he].vertex
-                        } else {
-                            // dest vertex
-                            mesh.half_edges[he].vertex
-                        };
-                        keyed_map.insert(map_key, chosen_vid);
-                        // don't set canonical_map for edge-derived allocations
-                        continue;
-                    }
-                }
-            }
-
-            // 1d) Interior-of-edge (he present, not near endpoints): one vertex per (undirected edge, canonical u bucket)
-            if let (Some(he), Some(u_raw)) = (he_opt, u_opt_f64) {
-                if endpoint_flag == 0 {
-                    if let Some(ek) = mesh.canonical_edge_indices(he) {
-                        let u_can = mesh.canonicalize_u_for_edge(he, ek, u_raw);
-                        let ub = bucket_u(u_can, tol_f64);
-                        let k = (ek, ub);
-
-                        // Reuse if we’ve already allocated on this edge/param
-                        let vid = *edge_param_map.entry(k).or_insert_with(|| {
-                            let (vid, _existed) = mesh.get_or_insert_vertex(&ep_pos);
-                            vid
-                        });
-
-                        // Record under your original keyed_map so write-back can find it with this endpoint’s map_key
-                        keyed_map.insert(map_key, vid);
-                        // no canonical_map update for edge-derived allocations
-                        continue;
-                    }
-                }
-            }
-
-            // 1e) If face-interior (face_hint + barycentric_hint), allocate one vertex per (canonical,MAX,face_key,0)
-            if faces_opt.is_some() && ep.barycentric_hint.is_some() {
-                let map_key_face = (canonical, (usize::MAX, usize::MAX), faces_key, 0u8);
-                if let Some(&_vid) = keyed_map.get(&map_key_face) {
-                    // already allocated for this canonical/face combination
-                    continue;
-                }
-                let new_vid = mesh.get_or_insert_vertex(&ep_pos);
-                keyed_map.insert(map_key_face, new_vid.0);
-                // do not set canonical_map here (avoid cross-face fallback)
-                continue;
-            }
-
-            // 1f) No half-edge or face context -> bucket by canonical key (allocate if needed)
-            let map_key_nocontext = (
-                canonical,
-                (usize::MAX, usize::MAX),
-                [usize::MAX, usize::MAX],
-                0u8,
-            );
-            if let Some(&vid) = keyed_map.get(&map_key_nocontext) {
-                // already allocated for canonical/no-context
-                canonical_map.entry(canonical).or_insert(vid);
-                continue;
-            }
-            let new_vid = mesh.get_or_insert_vertex(&ep_pos);
-            keyed_map.insert(map_key_nocontext, new_vid.0);
-            canonical_map.entry(canonical).or_insert(new_vid.0);
-        }
-    }
-
-    // 2) Write back vertex_hint for every endpoint referenced by splits.
-    //    We set vertex_hint = [vid, usize::MAX] and clear half_edge_hint / u / face / barycentric.
-    //    IMPORTANT: do not fallback to canonical_map for arbitrary (canonical,he,face) keys to avoid merging
-    //    interior-of-different-half-edge or interior-of-different-face points into a single canonical representative.
-    for seg in intersection_segments.iter_mut() {
-        if seg.invalidated {
-            continue;
-        }
-
-        for (i, ep) in [&mut seg.a, &mut seg.b].iter_mut().enumerate() {
-            let ep_pos = &seg.segment[i];
-            let canonical = point_key(&ep_pos);
-
-            let he_opt = ep.half_edge_hint;
-            let edge_key: (usize, usize) = match he_opt {
-                Some(h) => mesh
-                    .canonical_edge_indices(h)
-                    .unwrap_or((usize::MAX, usize::MAX)),
-                None => (usize::MAX, usize::MAX),
-            };
-            let faces_opt = ep.faces_hint;
-            let faces_key = faces_opt.unwrap_or([usize::MAX, usize::MAX]);
-
-            let u_opt_f64: Option<f64> = ep
-                .half_edge_u_hint
-                .as_ref()
-                .map(|u_t| RefInto::<CgarF64>::ref_into(u_t).0);
-            let endpoint_flag: u8 = match u_opt_f64 {
-                Some(u) if (u <= tol_f64) || (u >= 1.0 - tol_f64) => 1,
-                _ => 0,
-            };
-
-            let faces_key_for_map = if edge_key != (usize::MAX, usize::MAX) {
-                [usize::MAX, usize::MAX]
-            } else {
-                faces_key
-            };
-            // prefer the exact (canonical,he,face,endpoint_flag) bucket; fall back to canonical/nocontext only
-            let map_key = (canonical, edge_key, faces_key_for_map, endpoint_flag);
-            let map_key_nocontext = (canonical, (usize::MAX, usize::MAX), [usize::MAX; 2], 0u8);
-
-            let vid = keyed_map
-                .get(&map_key)
-                .copied()
-                .or_else(|| keyed_map.get(&map_key_nocontext).copied())
-                // do NOT use canonical_map as general fallback here
-                .unwrap_or_else(|| {
-                    // If still missing, allocate a fresh vertex for this exact endpoint to avoid accidental merges.
-                    mesh.get_or_insert_vertex(&ep_pos).0
-                });
-
-            // Set vertex_hint to vid (slot 0) and clear other geometric hints
-            ep.vertex_hint = Some([vid, usize::MAX]);
-            if ep.half_edge_hint.is_none() && ep.faces_hint.is_none() {
-                ep.faces_hint = Some([seg.initial_face_reference, usize::MAX]);
-            }
-            ep.half_edge_hint = None;
-            ep.half_edge_u_hint = None;
-            ep.barycentric_hint = None;
-        }
-    }
-
-    // 3) Update each segment's resulting_vertices_pair from endpoint vertex_hint
-    for seg in intersection_segments.iter_mut() {
-        let a_vid = seg.a.vertex_hint.map(|h| h[0]).unwrap_or(usize::MAX);
-        let b_vid = seg.b.vertex_hint.map(|h| h[0]).unwrap_or(usize::MAX);
-        seg.a.resulting_vertex = Some(a_vid);
-        seg.b.resulting_vertex = Some(b_vid);
-    }
-
-    canonical_map
 }
 
 /// Metric-preserving, sqrt-free UV frame.
@@ -357,59 +120,6 @@ where
     (u, v)
 }
 
-fn barycentric_uv<T: Scalar, const N: usize>(
-    p: &Point<T, N>,
-    a: &Point<T, N>,
-    b: &Point<T, N>,
-    c: &Point<T, N>,
-) -> Point2<T>
-where
-    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
-    Vector<T, N>: VectorOps<T, N>,
-{
-    // Extract ball centers for all coordinates
-    let mut p_coords = [0.0; N];
-    let mut a_coords = [0.0; N];
-    let mut b_coords = [0.0; N];
-    let mut c_coords = [0.0; N];
-
-    for i in 0..N {
-        p_coords[i] = p[i].ball_center_f64();
-        a_coords[i] = a[i].ball_center_f64();
-        b_coords[i] = b[i].ball_center_f64();
-        c_coords[i] = c[i].ball_center_f64();
-    }
-
-    // Compute vectors using f64 arithmetic
-    let mut v0 = [0.0; N]; // b - a
-    let mut v1 = [0.0; N]; // c - a  
-    let mut v2 = [0.0; N]; // p - a
-
-    for i in 0..N {
-        v0[i] = b_coords[i] - a_coords[i];
-        v1[i] = c_coords[i] - a_coords[i];
-        v2[i] = p_coords[i] - a_coords[i];
-    }
-
-    // Dot products
-    let d00: f64 = v0.iter().zip(&v0).map(|(x, y)| x * y).sum();
-    let d01: f64 = v0.iter().zip(&v1).map(|(x, y)| x * y).sum();
-    let d11: f64 = v1.iter().zip(&v1).map(|(x, y)| x * y).sum();
-    let d20: f64 = v2.iter().zip(&v0).map(|(x, y)| x * y).sum();
-    let d21: f64 = v2.iter().zip(&v1).map(|(x, y)| x * y).sum();
-
-    let den = d00 * d11 - d01 * d01;
-
-    if den.abs() < 1e-15 {
-        return Point2::<T>::from_vals([T::zero(), T::zero()]);
-    }
-
-    let alpha = (d20 * d11 - d21 * d01) / den;
-    let beta = (d21 * d00 - d20 * d01) / den;
-
-    Point2::<T>::from_vals([T::from(alpha), T::from(beta)])
-}
-
 #[inline]
 fn push_vertex_uv<T: Scalar, const N: usize>(
     mesh: &Mesh<T, N>,
@@ -434,7 +144,8 @@ where
     }
     let p = &mesh.vertices[vid].position;
     let li = points_uv.len();
-    points_uv.push(barycentric_uv(p, pa, pb, pc));
+    let (u, v, w) = barycentric_coords(p, pa, pb, pc).unwrap();
+    points_uv.push(Point2::new([u, v]));
     verts_global.push(vid);
     g2l.insert(vid, li);
     li
@@ -561,7 +272,9 @@ where
             let mut b_res = usize::MAX;
             // project both candidates in the SAME basis you use for points_uv
             if va != usize::MAX {
-                let pa_uv = barycentric_uv(&mesh.vertices[va].position, pa, pb, pc);
+                let (u, v, w) =
+                    barycentric_coords(&mesh.vertices[va].position, pa, pb, pc).unwrap();
+                let pa_uv = Point2::new([u, v]);
                 a_res = choose_vertex_on_face(mesh, face_id, &[va, vb], &pa_uv, pa, pb, pc)
                     .unwrap_or(va);
                 if !boundary_verts.contains(&a_res) {
@@ -579,7 +292,9 @@ where
             }
 
             if vb != usize::MAX {
-                let pb_uv = barycentric_uv(&mesh.vertices[vb].position, pa, pb, pc);
+                let (u, v, w) =
+                    barycentric_coords(&mesh.vertices[vb].position, pa, pb, pc).unwrap();
+                let pb_uv = Point2::new([u, v]);
                 b_res = choose_vertex_on_face(mesh, face_id, &[vb, va], &pb_uv, pa, pb, pc)
                     .unwrap_or(vb);
                 if !boundary_verts.contains(&b_res) {
@@ -687,12 +402,6 @@ where
     }
 
     jobs
-}
-
-#[inline(always)]
-fn bucket_u(u: f64, eps: f64) -> i64 {
-    // Quantize to tolerance-sized bins
-    ((u / eps).round() as i64).clamp(i64::MIN / 4, i64::MAX / 4)
 }
 
 #[inline]
@@ -880,9 +589,9 @@ where
             continue;
         }
         let p = &mesh.vertices[g].position;
-        let uv = barycentric_uv(p, pa, pb, pc);
-        let du = &uv[0] - &projected_uv[0];
-        let dv = &uv[1] - &projected_uv[1];
+        let (u, v, w) = barycentric_coords(p, pa, pb, pc).unwrap();
+        let du = &u - &projected_uv[0];
+        let dv = &v - &projected_uv[1];
         let d2 = &du * &du + &dv * &dv;
         if best.as_ref().map_or(true, |(_, bd2)| d2 < *bd2) {
             best = Some((g, d2));
