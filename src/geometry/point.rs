@@ -46,6 +46,8 @@ pub trait PointOps<T: Scalar, const N: usize>: Sized {
     // fn distance_to(&self, other: &Self) -> T;
     // fn distance_squared_to(&self, other: &Self) -> T;
     fn sub(&self, other: &Self) -> Self;
+    fn as_point_2(&self) -> Point<T, 2>;
+    fn as_point_3(&self) -> Point<T, 3>;
     fn as_vector(&self) -> Self::Vector;
     fn as_vector_2(&self) -> Vector<T, 2>;
     fn as_vector_3(&self) -> Vector<T, 3>;
@@ -216,6 +218,14 @@ where
         Self { coords: [x, y] }
     }
 
+    fn as_point_2(&self) -> Self {
+        self.clone()
+    }
+
+    fn as_point_3(&self) -> Point<T, 3> {
+        panic!("as_vector_3 is not implemented for 2D points");
+    }
+
     fn as_vector(&self) -> Self::Vector {
         Vector(Point::<T, 2>::from_vals([self[0].clone(), self[1].clone()]))
     }
@@ -291,6 +301,14 @@ where
             self[1].clone(),
             self[2].clone(),
         ]))
+    }
+
+    fn as_point_2(&self) -> Point<T, 2> {
+        panic!("as_point_2 is not implemented for 3D points");
+    }
+
+    fn as_point_3(&self) -> Self {
+        self.clone()
     }
 
     fn as_vector_2(&self) -> Vector<T, 2> {
