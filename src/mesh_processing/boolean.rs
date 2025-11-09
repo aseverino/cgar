@@ -262,6 +262,95 @@ where
         inside
     }
 
+    fn classify_faces_2(
+        &self,
+        other: &Mesh<T, N>,
+        intersection_segments: &Vec<IntersectionSegment<T, N>>,
+    ) -> Vec<bool> {
+        let mut inside = vec![false; self.faces.len()];
+
+        if intersection_segments.is_empty() {
+            for (face_idx, face) in self.faces.iter().enumerate() {
+                if face.removed {
+                    continue;
+                }
+                let centroid = self.face_centroid_fast(face_idx);
+                inside[face_idx] = other.point_in_mesh_2(&centroid.as_point_2());
+            }
+            return inside;
+        }
+
+        let mut boundary_faces = AHashSet::new();
+        for seg in intersection_segments {
+            let v0 = seg.a.resulting_vertex.unwrap();
+            let v1 = seg.b.resulting_vertex.unwrap();
+
+            if let Some(&he) = self.edge_map.get(&(v0, v1)) {
+                if let Some(f0) = self.half_edges[he].face {
+                    boundary_faces.insert(f0);
+                }
+                if let Some(f1) = self.half_edges[self.half_edges[he].twin].face {
+                    boundary_faces.insert(f1);
+                }
+            }
+        }
+
+        // Find seed face
+        let seed_face = boundary_faces
+            .iter()
+            .find(|&&f| {
+                let centroid = self.face_centroid_fast(f);
+                other.point_in_mesh_2(&centroid.as_point_2())
+            })
+            .copied()
+            .expect("No seed face found");
+
+        // Build face connectivity avoiding intersection boundaries
+        let mut face_pairs: AHashMap<usize, Vec<usize>> = AHashMap::new();
+        for seg in intersection_segments {
+            let v0 = seg.a.resulting_vertex.unwrap();
+            let v1 = seg.b.resulting_vertex.unwrap();
+
+            if let Some(&he) = self.edge_map.get(&(v0, v1)) {
+                if let (Some(f0), Some(f1)) = (
+                    self.half_edges[he].face,
+                    self.half_edges[self.half_edges[he].twin].face,
+                ) {
+                    face_pairs.entry(f0).or_default().push(f1);
+                    face_pairs.entry(f1).or_default().push(f0);
+                }
+            }
+        }
+
+        // Flood fill
+        let mut visited = vec![false; self.faces.len()];
+        let mut queue = VecDeque::new();
+
+        visited[seed_face] = true;
+        inside[seed_face] = true;
+        queue.push_back(seed_face);
+
+        while let Some(curr) = queue.pop_front() {
+            for nbr in self.adjacent_faces(curr) {
+                if visited[nbr] {
+                    continue;
+                }
+
+                if let Some(pairs) = face_pairs.get(&curr) {
+                    if pairs.contains(&nbr) {
+                        continue;
+                    }
+                }
+
+                visited[nbr] = true;
+                inside[nbr] = true;
+                queue.push_back(nbr);
+            }
+        }
+
+        inside
+    }
+
     pub fn get_mesh_intersections_3(
         &self,
         other: &Mesh<T, N>,
