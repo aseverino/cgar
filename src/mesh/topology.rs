@@ -594,7 +594,19 @@ impl_mesh! {
         }
     }
 
-    pub fn cast_ray(
+
+    pub fn point_in_mesh_2(&self, point: &Point<T, 2>) -> bool {
+        let mut inside = false;
+        let half_edges = self.get_boundary_half_edges();
+
+        for he in half_edges {
+            if self.cast_ray_2(point, he) {
+                inside = !inside;
+            }
+        }
+        inside
+    }
+
         &self,
         p: &Point<T, N>,
         dir: &Vector<T, N>,
