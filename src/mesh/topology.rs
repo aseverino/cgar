@@ -713,6 +713,53 @@ impl_mesh! {
         best_result
     }
 
+    pub fn cast_ray_2(
+        &self,
+        point: &Point<T, 2>,
+        he: usize
+    ) -> bool
+    where
+        for<'a> &'a T: Add<&'a T, Output = T>
+            + Sub<&'a T, Output = T>
+            + Mul<&'a T, Output = T>
+            + Div<&'a T, Output = T>
+    {
+        let v1 = self.half_edges[he].vertex;
+        let v2 = self.half_edges[self.half_edges[he].next].vertex;
+
+        let p1 = &self.vertices[v1].position;
+        let p2 = &self.vertices[v2].position;
+
+        // Ray casting from point horizontally to the right
+        // Check if edge crosses the horizontal ray
+
+        // Both points above or below the ray
+        if ((&p1[1] - &point[1]).is_positive() && (&p2[1] - &point[1]).is_positive()) ||
+        ((&p1[1] - &point[1]).is_negative() && (&p2[1] - &point[1]).is_negative()) {
+            return false;
+        }
+
+        // Edge is horizontal and at same y-level as point
+        if (&p1[1] - &p2[1]).is_zero() && (&p1[1] - &point[1]).is_zero() {
+            // Check if point is between edge endpoints
+            let min_x = if (&p1[0] - &p2[0]).is_negative() { &p1[0] } else { &p2[0] };
+            let max_x = if (&p1[0] - &p2[0]).is_positive() { &p1[0] } else { &p2[0] };
+            return !(&point[0] - min_x).is_negative() && !(&point[0] - max_x).is_positive();
+        }
+
+        // Calculate intersection x-coordinate
+        let dy = &p2[1] - &p1[1];
+        if dy.is_zero() {
+            return false;
+        }
+
+        let t = &(&point[1] - &p1[1]) / &dy;
+        let x_intersect = &p1[0] + &(&t * &(&p2[0] - &p1[0]));
+
+        // Ray goes to the right, so intersection must be at or to the right of point
+        !(&x_intersect - &point[0]).is_negative()
+    }
+
     pub fn faces_around_face(&self, face: usize) -> [usize; 3] {
         let mut result = [usize::MAX; 3];
         let mut current_he_idx = self.faces[face].half_edge;
