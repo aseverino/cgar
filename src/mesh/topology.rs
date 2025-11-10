@@ -550,7 +550,7 @@ impl_mesh! {
         false
     }
 
-    pub fn point_in_mesh(
+    pub fn point_in_mesh_3(
         &self,
         tree: &AabbTree<T, N, Point<T, N>, usize>,
         p: &Point<T, N>,
@@ -570,7 +570,7 @@ impl_mesh! {
         let mut on_surface = false;
 
         for r in rays {
-            match self.cast_ray(p, &r, tree, &None) {
+            match self.cast_ray_3(p, &r, tree, &None) {
                 IntersectionResult::Hit(_hit, t) => {
                     if t.is_zero() {
                         on_surface = true; // optionally: return PointInMeshResult::OnSurface immediately
@@ -594,6 +594,24 @@ impl_mesh! {
         }
     }
 
+    fn get_boundary_half_edges(&self) -> Vec<usize> {
+        let mut boundary_edges = Vec::new();
+
+        for (v0, v1) in self.edge_map.keys() {
+            let he = self.edge_map[&(*v0, *v1)];
+            let twin_he = self.half_edges[he].twin;
+
+            // Boundary edge if twin has no face or is removed
+            if twin_he == usize::MAX ||
+               self.half_edges[twin_he].face.is_none() ||
+               (self.half_edges[twin_he].face.is_some() &&
+                self.faces[self.half_edges[twin_he].face.unwrap()].removed) {
+                boundary_edges.push(he);
+            }
+        }
+
+        boundary_edges
+    }
 
     pub fn point_in_mesh_2(&self, point: &Point<T, 2>) -> bool {
         let mut inside = false;
@@ -607,6 +625,7 @@ impl_mesh! {
         inside
     }
 
+    pub fn cast_ray_3(
         &self,
         p: &Point<T, N>,
         dir: &Vector<T, N>,
