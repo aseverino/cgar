@@ -782,6 +782,46 @@ where
             return Vec::new();
         }
 
+        if N == 2 {
+            let mut vertex_to_segments: AHashMap<usize, Vec<usize>> = AHashMap::new();
+
+            for (seg_idx, seg) in intersection_segments.iter().enumerate() {
+                let [v0, v1] = [
+                    seg.a.resulting_vertex.unwrap(),
+                    seg.b.resulting_vertex.unwrap(),
+                ];
+                vertex_to_segments.entry(v0).or_default().push(seg_idx);
+                vertex_to_segments.entry(v1).or_default().push(seg_idx);
+            }
+
+            for (seg_idx, seg) in intersection_segments.iter_mut().enumerate() {
+                let [v0, v1] = [
+                    seg.a.resulting_vertex.unwrap(),
+                    seg.b.resulting_vertex.unwrap(),
+                ];
+                let mut connected_segments = AHashSet::new();
+
+                if let Some(segments) = vertex_to_segments.get(&v0) {
+                    for &other_idx in segments {
+                        if other_idx != seg_idx {
+                            connected_segments.insert(other_idx);
+                        }
+                    }
+                }
+                if let Some(segments) = vertex_to_segments.get(&v1) {
+                    for &other_idx in segments {
+                        if other_idx != seg_idx {
+                            connected_segments.insert(other_idx);
+                        }
+                    }
+                }
+
+                seg.links.extend(connected_segments);
+            }
+
+            return Vec::new();
+        }
+
         // First let's drain the coplanar segments into a separate structure
         let mut coplanar_groups: AHashMap<Plane<T, N>, Vec<IntersectionSegment<T, N>>> =
             AHashMap::new();
