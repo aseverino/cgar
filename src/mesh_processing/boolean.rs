@@ -113,7 +113,7 @@ where
         + Div<&'a T, Output = T>
         + Neg<Output = T>,
 {
-    fn classify_faces_inside_intersection_loops(
+    fn classify_faces_3(
         &mut self,
         other: &Mesh<T, N>,
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
@@ -147,7 +147,7 @@ where
                     continue;
                 }
                 let c = self.face_centroid_fast(f);
-                match other.point_in_mesh(&tree_b, &c) {
+                match other.point_in_mesh_3(&tree_b, &c) {
                     PointInMeshResult::Inside => inside[f] = true,
                     PointInMeshResult::OnSurface if include_on_surface => inside[f] = true,
                     _ => {}
@@ -628,12 +628,14 @@ where
 
         // Classify faces using topological method
         let start = Instant::now();
-        let a_classification = a.classify_faces_inside_intersection_loops(
-            &b,
-            &mut intersection_segments_a,
-            &mut a_coplanars,
-            true,
-        );
+        let a_classification = {
+            if N == 3 {
+                a.classify_faces_3(&b, &mut intersection_segments_a, &mut a_coplanars, true)
+            } else {
+                a.classify_faces_2(&b, &intersection_segments_a)
+            }
+        };
+
         println!(
             "A faces classified inside intersection loops in {:.2?}",
             start.elapsed()
@@ -674,12 +676,17 @@ where
                     vid_map.insert((VertexSource::B, i), ni);
                 }
 
-                let b_classification = b.classify_faces_inside_intersection_loops(
-                    &a,
-                    &mut intersection_segments_b,
-                    &mut b_coplanars,
-                    include_on_surface,
-                );
+                let b_classification = if N == 3 {
+                    b.classify_faces_3(
+                        &a,
+                        &mut intersection_segments_b,
+                        &mut b_coplanars,
+                        include_on_surface,
+                    )
+                } else {
+                    b.classify_faces_2(&a, &intersection_segments_b)
+                };
+
                 for (fb, inside) in b_classification.iter().enumerate() {
                     if b.faces[fb].removed {
                         continue;
@@ -701,7 +708,7 @@ where
                     vid_map.insert((VertexSource::B, i), ni);
                 }
 
-                let b_classification = b.classify_faces_inside_intersection_loops(
+                let b_classification = b.classify_faces_3(
                     &a,
                     &mut intersection_segments_b,
                     &mut b_coplanars,
@@ -729,7 +736,7 @@ where
                 }
 
                 let start = Instant::now();
-                let b_classification = b.classify_faces_inside_intersection_loops(
+                let b_classification = b.classify_faces_3(
                     &a,
                     &mut intersection_segments_b,
                     &mut b_coplanars,
@@ -934,7 +941,7 @@ where
                     if let Some(f) = face_id {
                         if boundary_faces.contains(&f) {
                             let centroid = a.face_centroid_fast(f);
-                            match b.point_in_mesh(tree_b, &centroid) {
+                            match b.point_in_mesh_3(tree_b, &centroid) {
                                 PointInMeshResult::Inside => return (seg_idx, f),
                                 PointInMeshResult::OnSurface if include_on_surface => {
                                     return (seg_idx, f);
