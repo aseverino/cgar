@@ -171,14 +171,18 @@ where
             }
 
             // 3) pick a seed face that lies inside B
-            let (_seed_intersection_idx, selected_face) = Self::get_seed_face_fast(
-                &self,
-                &other,
-                &tree_b,
-                intersection_segments,
-                &boundary_faces,
-                include_on_surface,
-            );
+            let (_seed_intersection_idx, selected_face) = if N == 3 {
+                Self::get_seed_face_3(
+                    &self,
+                    &other,
+                    &tree_b,
+                    intersection_segments,
+                    &boundary_faces,
+                    include_on_surface,
+                )
+            } else {
+                Self::get_seed_face_2(&self, &other, intersection_segments, &boundary_faces)
+            };
 
             let mut face_pairs: AHashMap<usize, Vec<usize>> = AHashMap::new();
             for seg_idx in 0..intersection_segments.len() {
@@ -920,7 +924,7 @@ where
         triangles_per_group
     }
 
-    fn get_seed_face_fast(
+    fn get_seed_face_3(
         a: &Mesh<T, N>,
         b: &Mesh<T, N>,
         tree_b: &AabbTree<T, N, Point<T, N>, usize>,
@@ -947,6 +951,35 @@ where
                                     return (seg_idx, f);
                                 }
                                 _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        panic!("No seed face found");
+    }
+
+    fn get_seed_face_2(
+        a: &Mesh<T, N>,
+        b: &Mesh<T, N>,
+        intersection_segments: &Vec<IntersectionSegment<T, N>>,
+        boundary_faces: &AHashSet<usize>,
+    ) -> (usize, usize) {
+        for (seg_idx, seg) in intersection_segments.iter().enumerate() {
+            let v0 = seg.a.resulting_vertex.unwrap();
+            let v1 = seg.b.resulting_vertex.unwrap();
+
+            if let Some(&he) = a.edge_map.get(&(v0, v1)) {
+                for &face_id in &[
+                    a.half_edges[he].face,
+                    a.half_edges[a.half_edges[he].twin].face,
+                ] {
+                    if let Some(f) = face_id {
+                        if boundary_faces.contains(&f) {
+                            let centroid = a.face_centroid_fast(f);
+                            if b.point_in_mesh_2(&centroid.as_point_2()) {
+                                return (seg_idx, f);
                             }
                         }
                     }
