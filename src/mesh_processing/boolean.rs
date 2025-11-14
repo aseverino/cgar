@@ -732,12 +732,16 @@ where
                     vid_map.insert((VertexSource::B, i), ni);
                 }
 
-                let b_classification = b.classify_faces_3(
-                    &a,
-                    &mut intersection_segments_b,
-                    &mut b_coplanars,
-                    include_on_surface,
-                );
+                let b_classification = if N == 3 {
+                    b.classify_faces_3(
+                        &a,
+                        &mut intersection_segments_b,
+                        &mut b_coplanars,
+                        include_on_surface,
+                    )
+                } else {
+                    b.classify_faces_2(&a, &intersection_segments_b)
+                };
                 for (fb, inside) in b_classification.iter().enumerate() {
                     if b.faces[fb].removed {
                         continue;
@@ -760,12 +764,16 @@ where
                 }
 
                 let start = Instant::now();
-                let b_classification = b.classify_faces_3(
-                    &a,
-                    &mut intersection_segments_b,
-                    &mut b_coplanars,
-                    include_on_surface,
-                );
+                let b_classification = if N == 3 {
+                    b.classify_faces_3(
+                        &a,
+                        &mut intersection_segments_b,
+                        &mut b_coplanars,
+                        include_on_surface,
+                    )
+                } else {
+                    b.classify_faces_2(&a, &intersection_segments_b)
+                };
 
                 println!("B CLASSIFICATION:");
                 for (fb, inside) in b_classification.iter().enumerate() {
