@@ -171,18 +171,31 @@ where
             }
 
             // 3) pick a seed face that lies inside B
-            let (_seed_intersection_idx, selected_face) = if N == 3 {
-                Self::get_seed_face_3(
-                    &self,
-                    &other,
-                    &tree_b,
-                    intersection_segments,
-                    &boundary_faces,
-                    include_on_surface,
-                )
-            } else {
-                Self::get_seed_face_2(&self, &other, intersection_segments, &boundary_faces)
-            };
+            let seed_result = Self::get_seed_face_3(
+                &self,
+                &other,
+                &tree_b,
+                intersection_segments,
+                &boundary_faces,
+                include_on_surface,
+            );
+
+            if seed_result.is_none() {
+                for (f, face) in self.faces.iter().enumerate() {
+                    if face.removed {
+                        continue;
+                    }
+                    let c = self.face_centroid_fast(f);
+                    match other.point_in_mesh_3(&tree_b, &c) {
+                        PointInMeshResult::Inside => inside[f] = true,
+                        PointInMeshResult::OnSurface if include_on_surface => inside[f] = true,
+                        _ => {}
+                    }
+                }
+                return inside;
+            }
+
+            let (_seed_intersection_idx, selected_face) = seed_result.unwrap();
 
             let mut face_pairs: AHashMap<usize, Vec<usize>> = AHashMap::new();
             for seg_idx in 0..intersection_segments.len() {
@@ -300,14 +313,21 @@ where
         }
 
         // Find seed face
-        let seed_face = boundary_faces
-            .iter()
-            .find(|&&f| {
-                let centroid = self.face_centroid_fast(f);
-                other.point_in_mesh_2(&centroid.as_point_2())
-            })
-            .copied()
-            .expect("No seed face found");
+        let seed_result =
+            Self::get_seed_face_2(self, other, intersection_segments, &boundary_faces);
+
+        if seed_result.is_none() {
+            for (face_idx, face) in self.faces.iter().enumerate() {
+                if face.removed {
+                    continue;
+                }
+                let centroid = self.face_centroid_fast(face_idx);
+                inside[face_idx] = other.point_in_mesh_2(&centroid.as_point_2());
+            }
+            return inside;
+        }
+
+        let (_seed_intersection_idx, seed_face) = seed_result.unwrap();
 
         // Build face connectivity avoiding intersection boundaries
         let mut face_pairs: AHashMap<usize, Vec<usize>> = AHashMap::new();
@@ -931,8 +951,7 @@ where
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
         boundary_faces: &AHashSet<usize>,
         include_on_surface: bool,
-    ) -> (usize, usize) {
-        // Use ball approximation for seed selection
+    ) -> Option<(usize, usize)> {
         for (seg_idx, seg) in intersection_segments.iter().enumerate() {
             let v0 = seg.a.resulting_vertex.unwrap();
             let v1 = seg.b.resulting_vertex.unwrap();
@@ -946,9 +965,9 @@ where
                         if boundary_faces.contains(&f) {
                             let centroid = a.face_centroid_fast(f);
                             match b.point_in_mesh_3(tree_b, &centroid) {
-                                PointInMeshResult::Inside => return (seg_idx, f),
+                                PointInMeshResult::Inside => return Some((seg_idx, f)),
                                 PointInMeshResult::OnSurface if include_on_surface => {
-                                    return (seg_idx, f);
+                                    return Some((seg_idx, f));
                                 }
                                 _ => {}
                             }
@@ -957,7 +976,7 @@ where
                 }
             }
         }
-        panic!("No seed face found");
+        None
     }
 
     fn get_seed_face_2(
@@ -965,7 +984,7 @@ where
         b: &Mesh<T, N>,
         intersection_segments: &Vec<IntersectionSegment<T, N>>,
         boundary_faces: &AHashSet<usize>,
-    ) -> (usize, usize) {
+    ) -> Option<(usize, usize)> {
         for (seg_idx, seg) in intersection_segments.iter().enumerate() {
             let v0 = seg.a.resulting_vertex.unwrap();
             let v1 = seg.b.resulting_vertex.unwrap();
@@ -979,14 +998,14 @@ where
                         if boundary_faces.contains(&f) {
                             let centroid = a.face_centroid_fast(f);
                             if b.point_in_mesh_2(&centroid.as_point_2()) {
-                                return (seg_idx, f);
+                                return Some((seg_idx, f));
                             }
                         }
                     }
                 }
             }
         }
-        panic!("No seed face found");
+        None
     }
 }
 
