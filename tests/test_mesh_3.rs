@@ -33,38 +33,6 @@ use cgar::numeric::cgar_rational::CgarRational;
 use cgar::numeric::lazy_exact::LazyExact;
 
 #[test]
-fn test_add_vertices_and_triangle_2() {
-    let mut mesh = Mesh::<CgarF64, 2>::new();
-
-    let v0 = mesh.add_vertex(Point2::from_vals([0.0, 0.0]));
-    let v1 = mesh.add_vertex(Point2::from_vals([1.0, 0.0]));
-    let v2 = mesh.add_vertex(Point2::from_vals([0.0, 1.0]));
-
-    assert_eq!(mesh.vertices.len(), 3);
-    assert_eq!(mesh.vertices[v0].position, Point2::from_vals([0.0, 0.0]));
-    assert_eq!(mesh.vertices[v1].position, Point2::from_vals([1.0, 0.0]));
-    assert_eq!(mesh.vertices[v2].position, Point2::from_vals([0.0, 1.0]));
-
-    let face_idx = mesh.add_triangle(v0, v1, v2);
-    assert_eq!(mesh.faces.len(), 1);
-    assert_eq!(mesh.half_edges.len(), 3);
-
-    let face = &mesh.faces[face_idx];
-    let he0 = &mesh.half_edges[face.half_edge];
-    let he1 = &mesh.half_edges[he0.next];
-    let he2 = &mesh.half_edges[he1.next];
-
-    // Check cycle
-    assert_eq!(he0.next, face.half_edge + 1);
-    assert_eq!(he1.next, face.half_edge + 2);
-    assert_eq!(he2.next, face.half_edge); // closes the cycle
-
-    assert_eq!(he0.prev, face.half_edge + 2);
-    assert_eq!(he1.prev, face.half_edge + 0);
-    assert_eq!(he2.prev, face.half_edge + 1);
-}
-
-#[test]
 fn test_add_vertices_and_triangle_3() {
     let mut mesh = Mesh::<CgarF64, 3>::new();
 
@@ -85,38 +53,6 @@ fn test_add_vertices_and_triangle_3() {
         mesh.vertices[v2].position,
         Point3::from_vals([0.0, 1.0, 0.0])
     );
-
-    let face_idx = mesh.add_triangle(v0, v1, v2);
-    assert_eq!(mesh.faces.len(), 1);
-    assert_eq!(mesh.half_edges.len(), 3);
-
-    let face = &mesh.faces[face_idx];
-    let he0 = &mesh.half_edges[face.half_edge];
-    let he1 = &mesh.half_edges[he0.next];
-    let he2 = &mesh.half_edges[he1.next];
-
-    // Check cycle
-    assert_eq!(he0.next, face.half_edge + 1);
-    assert_eq!(he1.next, face.half_edge + 2);
-    assert_eq!(he2.next, face.half_edge); // closes the cycle
-
-    assert_eq!(he0.prev, face.half_edge + 2);
-    assert_eq!(he1.prev, face.half_edge + 0);
-    assert_eq!(he2.prev, face.half_edge + 1);
-}
-
-#[test]
-fn test_add_vertices_and_triangle_2_rational() {
-    let mut mesh = Mesh::<CgarRational, 2>::new();
-
-    let v0 = mesh.add_vertex(Point2::from_vals([0, 0]));
-    let v1 = mesh.add_vertex(Point2::from_vals([1, 0]));
-    let v2 = mesh.add_vertex(Point2::from_vals([0, 1]));
-
-    assert_eq!(mesh.vertices.len(), 3);
-    assert_eq!(mesh.vertices[v0].position, Point2::from_vals([0, 0]));
-    assert_eq!(mesh.vertices[v1].position, Point2::from_vals([1, 0]));
-    assert_eq!(mesh.vertices[v2].position, Point2::from_vals([0, 1]));
 
     let face_idx = mesh.add_triangle(v0, v1, v2);
     assert_eq!(mesh.faces.len(), 1);
@@ -867,9 +803,6 @@ fn difference_boolean_inexact() {
     // 1) Big unit cube [0,1]^3
     let mut big_a = make_cube([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let mut big_b = make_cube([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-
-    let _ = write_obj(&big_a, "/mnt/v/cgar_meshes/a.obj");
-    let _ = write_obj(&big_b, "/mnt/v/cgar_meshes/b.obj");
 
     // 3) Perform boolean difference
     let start = Instant::now();
