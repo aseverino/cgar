@@ -39,10 +39,10 @@ use crate::{
         segment::{Segment, SegmentOps},
         spatial_element::SpatialElement,
         tri_tri_intersect::{
-            ContactOnTri, TriPrecomp, TriTriIntersectionDetailed,
+            ContactOnTri, TriPrecomp, TriTriIntersectionDetailed, segment_intersect_2d,
             tri_tri_intersection_with_precomp_detailed,
         },
-        vector::{Cross3, Vector, VectorOps, vector_cross},
+        vector::{Cross2, Cross3, Vector, VectorOps, vector_cross},
     },
     mesh::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
@@ -504,10 +504,16 @@ where
         let tree_b = other.build_face_tree();
         let mut intersection_segments_a = Vec::new();
         let mut intersection_segments_b = Vec::new();
-        let intersection_segments = [&mut intersection_segments_a, &mut intersection_segments_b];
-        let meshes = [&self, &other];
 
         let mut candidates = Vec::with_capacity(64);
+
+        // Track coplanar segment endpoints per half-edge to filter redundant point intersections
+        let mut coplanar_endpoints_a = AHashSet::<(usize, i64)>::new();
+        let mut coplanar_endpoints_b = AHashSet::<(usize, i64)>::new();
+
+        let tol = T::point_merge_threshold();
+        let tol_f64 = RefInto::<CgarF64>::ref_into(&tol).0.max(1e-12);
+        let one = T::one();
 
         for fa in 0..self.faces.len() {
             candidates.clear();
@@ -517,50 +523,187 @@ where
                 continue;
             }
 
-            let ea_idx = self.face_vertices(fa); // [usize; 2] for 2D edges
-            let ea: [&Point<T, N>; 2] = from_fn(|i| &self.vertices[ea_idx[i]].position);
+            let ea_idx = self.face_vertices(fa);
+            let na = ea_idx.len();
 
             for &fb in &candidates {
                 let eb_idx = other.face_vertices(*fb);
-                let eb: [&Point<T, N>; 2] = from_fn(|i| &other.vertices[eb_idx[i]].position);
+                let nb = eb_idx.len();
 
-                let vertices_indices = [&ea_idx, &eb_idx];
-                let faces = [fa, *fb];
+                for i in 0..na {
+                    let va0 = ea_idx[i];
+                    let va1 = ea_idx[(i + 1) % na];
+                    let edge_a = ordered(va0, va1);
 
-                // 2D edge-edge intersection
-                if let Some(intersection_point) =
-                    edge_edge_intersection_2(&ea[0], &ea[1], &eb[0], &eb[1])
-                {
-                    for mesh_x in 0..2 {
-                        let edge = if mesh_x == 0 { &ea } else { &eb };
-                        let edge_idx = vertices_indices[mesh_x];
+                    let pa0 = &self.vertices[va0].position;
+                    let pa1 = &self.vertices[va1].position;
 
-                        let mut intersection_endpoint_0 =
-                            IntersectionEndPoint::<T, N>::new_default();
-                        let mut intersection_endpoint_1 =
-                            IntersectionEndPoint::<T, N>::new_default();
+                    let p2_a0 = Point::<T, 2>::from_vals(from_fn(|k| pa0[k].clone()));
+                    let p2_a1 = Point::<T, 2>::from_vals(from_fn(|k| pa1[k].clone()));
 
-                        // Set intersection point as both endpoints (degenerate segment)
-                        intersection_endpoint_0.vertex_hint = Some([edge_idx[0], edge_idx[1]]);
-                        intersection_endpoint_1.vertex_hint = Some([edge_idx[0], edge_idx[1]]);
+                    for j in 0..nb {
+                        let vb0 = eb_idx[j];
+                        let vb1 = eb_idx[(j + 1) % nb];
+                        let edge_b = ordered(vb0, vb1);
 
-                        let he = meshes[mesh_x].edge_map[&(edge_idx[0], edge_idx[1])];
-                        intersection_endpoint_0.half_edge_hint = Some(he);
-                        intersection_endpoint_1.half_edge_hint = Some(he);
+                        let pb0 = &other.vertices[vb0].position;
+                        let pb1 = &other.vertices[vb1].position;
 
-                        let segment = Segment::new(&edge[0], &edge[1]);
-                        // Calculate parameter along edge
-                        let t = segment.parameter_of_point(&intersection_point);
-                        intersection_endpoint_0.half_edge_u_hint = Some(t.clone());
-                        intersection_endpoint_1.half_edge_u_hint = Some(t);
+                        let p2_b0 = Point::<T, 2>::from_vals(from_fn(|k| pb0[k].clone()));
+                        let p2_b1 = Point::<T, 2>::from_vals(from_fn(|k| pb1[k].clone()));
 
-                        intersection_segments[mesh_x].push(IntersectionSegment::new(
-                            intersection_endpoint_0,
-                            intersection_endpoint_1,
-                            &Segment::new(&intersection_point, &intersection_point),
-                            faces[mesh_x],
-                            false, // 2D intersections are typically not coplanar
-                        ));
+                        if let Some(seg_2d) = segment_intersect_2d(&p2_a0, &p2_a1, &p2_b0, &p2_b1) {
+                            let p_start = Point::<T, N>::from_vals(from_fn(|k| {
+                                if k < 2 {
+                                    seg_2d.a[k].clone()
+                                } else {
+                                    T::zero()
+                                }
+                            }));
+                            let p_end = Point::<T, N>::from_vals(from_fn(|k| {
+                                if k < 2 {
+                                    seg_2d.b[k].clone()
+                                } else {
+                                    T::zero()
+                                }
+                            }));
+
+                            let is_point = p_start == p_end;
+                            let coplanar = !is_point;
+
+                            let edge_a_geom = Segment::new(pa0, pa1);
+                            let edge_b_geom = Segment::new(pb0, pb1);
+
+                            let u_a_start = edge_a_geom.parameter_of_point(&p_start);
+                            let u_a_end = edge_a_geom.parameter_of_point(&p_end);
+                            let u_b_start = edge_b_geom.parameter_of_point(&p_start);
+                            let u_b_end = edge_b_geom.parameter_of_point(&p_end);
+
+                            let is_endpoint_a_start =
+                                &u_a_start <= &tol || &u_a_start >= &(&one - &tol);
+                            let is_endpoint_a_end = &u_a_end <= &tol || &u_a_end >= &(&one - &tol);
+                            let is_endpoint_b_start =
+                                &u_b_start <= &tol || &u_b_start >= &(&one - &tol);
+                            let is_endpoint_b_end = &u_b_end <= &tol || &u_b_end >= &(&one - &tol);
+
+                            // For mesh A
+                            let dominated_by_coplanar_a = if is_point {
+                                if let Some(&he) = self.edge_map.get(&(va0, va1)) {
+                                    let bucket = bucket_u(
+                                        RefInto::<CgarF64>::ref_into(&u_a_start).0,
+                                        tol_f64,
+                                    );
+                                    coplanar_endpoints_a.contains(&(he, bucket))
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
+                            if !dominated_by_coplanar_a {
+                                let a_start_interior = !is_endpoint_a_start;
+                                let a_end_interior = !is_endpoint_a_end;
+
+                                if a_start_interior || a_end_interior || coplanar {
+                                    if !(is_point && is_endpoint_a_start) {
+                                        let mut ep0 = IntersectionEndPoint::<T, N>::new_default();
+                                        let mut ep1 = IntersectionEndPoint::<T, N>::new_default();
+
+                                        ep0.vertex_hint = Some([va0, va1]);
+                                        ep1.vertex_hint = Some([va0, va1]);
+
+                                        if let Some(&he) = self.edge_map.get(&(va0, va1)) {
+                                            ep0.half_edge_hint = Some(he);
+                                            ep1.half_edge_hint = Some(he);
+
+                                            if coplanar {
+                                                let bucket_start = bucket_u(
+                                                    RefInto::<CgarF64>::ref_into(&u_a_start).0,
+                                                    tol_f64,
+                                                );
+                                                let bucket_end = bucket_u(
+                                                    RefInto::<CgarF64>::ref_into(&u_a_end).0,
+                                                    tol_f64,
+                                                );
+                                                coplanar_endpoints_a.insert((he, bucket_start));
+                                                coplanar_endpoints_a.insert((he, bucket_end));
+                                            }
+                                        }
+
+                                        ep0.half_edge_u_hint = Some(u_a_start.clone());
+                                        ep1.half_edge_u_hint = Some(u_a_end.clone());
+
+                                        intersection_segments_a.push(IntersectionSegment::new(
+                                            ep0,
+                                            ep1,
+                                            &Segment::new(&p_start, &p_end),
+                                            fa,
+                                            coplanar,
+                                        ));
+                                    }
+                                }
+                            }
+
+                            // For mesh B
+                            let dominated_by_coplanar_b = if is_point {
+                                if let Some(&he) = other.edge_map.get(&(vb0, vb1)) {
+                                    let bucket = bucket_u(
+                                        RefInto::<CgarF64>::ref_into(&u_b_start).0,
+                                        tol_f64,
+                                    );
+                                    coplanar_endpoints_b.contains(&(he, bucket))
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
+                            if !dominated_by_coplanar_b {
+                                let b_start_interior = !is_endpoint_b_start;
+                                let b_end_interior = !is_endpoint_b_end;
+
+                                if b_start_interior || b_end_interior || coplanar {
+                                    if !(is_point && is_endpoint_b_start) {
+                                        let mut ep0 = IntersectionEndPoint::<T, N>::new_default();
+                                        let mut ep1 = IntersectionEndPoint::<T, N>::new_default();
+
+                                        ep0.vertex_hint = Some([vb0, vb1]);
+                                        ep1.vertex_hint = Some([vb0, vb1]);
+
+                                        if let Some(&he) = other.edge_map.get(&(vb0, vb1)) {
+                                            ep0.half_edge_hint = Some(he);
+                                            ep1.half_edge_hint = Some(he);
+
+                                            if coplanar {
+                                                let bucket_start = bucket_u(
+                                                    RefInto::<CgarF64>::ref_into(&u_b_start).0,
+                                                    tol_f64,
+                                                );
+                                                let bucket_end = bucket_u(
+                                                    RefInto::<CgarF64>::ref_into(&u_b_end).0,
+                                                    tol_f64,
+                                                );
+                                                coplanar_endpoints_b.insert((he, bucket_start));
+                                                coplanar_endpoints_b.insert((he, bucket_end));
+                                            }
+                                        }
+
+                                        ep0.half_edge_u_hint = Some(u_b_start.clone());
+                                        ep1.half_edge_u_hint = Some(u_b_end.clone());
+
+                                        intersection_segments_b.push(IntersectionSegment::new(
+                                            ep0,
+                                            ep1,
+                                            &Segment::new(&p_start, &p_end),
+                                            *fb,
+                                            coplanar,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -570,7 +713,8 @@ where
 
     pub fn corefine_and_boolean(&mut self, other: &mut Mesh<T, N>, op: BooleanOp) -> Mesh<T, N>
     where
-        Vector<T, N>: Cross3<T>,
+        Vector<T, 2>: Cross2<T>,
+        Vector<T, 3>: Cross3<T>,
     {
         let mut a = self;
         let mut b = other;
@@ -593,6 +737,7 @@ where
         println!("Removed duplicates in {:.2?}", start.elapsed());
 
         println!("Splits on A: {}", intersection_segments_a.len());
+        println!("{:?}", intersection_segments_a);
         let start = Instant::now();
         let _created_a =
             allocate_vertices_for_splits_no_topology(&mut a, &mut intersection_segments_a);
@@ -1058,12 +1203,6 @@ pub fn remove_duplicate_and_invalid_segments<T: Scalar + Eq + Hash, const N: usi
     let mut invalidate = vec![false; segments.len()];
 
     for (i, seg) in segments.iter().enumerate() {
-        // Zero-length → invalid
-        if seg.segment.length2().is_zero() {
-            invalidate[i] = true;
-            continue;
-        }
-
         let a_ref = &seg.segment.a;
         let b_ref = &seg.segment.b;
         let key = make_key(a_ref, b_ref);
