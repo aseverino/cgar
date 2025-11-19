@@ -90,7 +90,26 @@ where
 }
 
 #[inline]
-fn push_vertex_uv<T: Scalar, const N: usize>(
+fn push_vertex_uv_2<T: Scalar, const N: usize>(
+    mesh: &Mesh<T, N>,
+    g2l: &mut AHashMap<usize, usize>,
+    verts_global: &mut Vec<usize>,
+    points_uv: &mut Vec<Point2<T>>,
+    vid: usize,
+) -> usize {
+    if let Some(&li) = g2l.get(&vid) {
+        return li;
+    }
+    let p = &mesh.vertices[vid].position;
+    let li = points_uv.len();
+    points_uv.push(Point2::new([p[0].clone(), p[1].clone()]));
+    verts_global.push(vid);
+    g2l.insert(vid, li);
+    li
+}
+
+#[inline]
+fn push_vertex_uv_3<T: Scalar, const N: usize>(
     mesh: &Mesh<T, N>,
     g2l: &mut AHashMap<usize, usize>,
     verts_global: &mut Vec<usize>,
@@ -120,10 +139,195 @@ where
     li
 }
 
+pub fn build_face_pslgs_2<T: Scalar + Clone + PartialOrd, const N: usize>(
+    mesh: &Mesh<T, N>,
+    intersection_segments: &[IntersectionSegment<T, N>],
+) -> Vec<FaceJobUV<T>>
+where
+    Point<T, N>: PointOps<T, N, Vector = Vector<T, N>>,
+    Vector<T, N>: VectorOps<T, N>,
+    for<'a> &'a T: std::ops::Sub<&'a T, Output = T>
+        + std::ops::Mul<&'a T, Output = T>
+        + std::ops::Add<&'a T, Output = T>
+        + std::ops::Div<&'a T, Output = T>
+        + std::ops::Neg<Output = T>,
+{
+    use ahash::{AHashMap, AHashSet as FastSet};
+
+    let mut by_face: AHashMap<usize, Vec<[usize; 2]>> = AHashMap::default();
+    for seg in intersection_segments {
+        if seg.invalidated {
+            continue;
+        }
+        let a = seg.a.resulting_vertex.unwrap();
+        let b = seg.b.resulting_vertex.unwrap();
+        if a == usize::MAX || b == usize::MAX || a == b {
+            continue;
+        }
+
+        by_face
+            .entry(seg.initial_face_reference)
+            .or_default()
+            .push([a, b]);
+
+        for (ep_idx, &vertex_id) in [a, b].iter().enumerate() {
+            let ep = if ep_idx == 0 { &seg.a } else { &seg.b };
+            if let Some(faces) = ep.faces_hint {
+                for &face_id in &faces {
+                    if face_id != usize::MAX && face_id != seg.initial_face_reference {
+                        by_face
+                            .entry(face_id)
+                            .or_default()
+                            .push([vertex_id, usize::MAX]);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut jobs: Vec<FaceJobUV<T>> = Vec::with_capacity(by_face.len());
+
+    for (face_id, vertex_pairs) in by_face {
+        if mesh.faces[face_id].removed {
+            continue;
+        }
+
+        let fv = mesh.face_vertices(face_id);
+        let [ia, ib, ic] = [fv[0], fv[1], fv[2]];
+
+        let mut g2l: AHashMap<usize, usize> = AHashMap::default();
+        let mut verts_global: Vec<usize> = Vec::new();
+        let mut points_uv: Vec<Point2<T>> = Vec::new();
+
+        let boundary_verts = [ia, ib, ic];
+        for &bv in &boundary_verts {
+            push_vertex_uv_2(mesh, &mut g2l, &mut verts_global, &mut points_uv, bv);
+        }
+
+        let mut resolved_pairs: Vec<(usize, usize)> = Vec::with_capacity(vertex_pairs.len());
+        for &[va, vb] in &vertex_pairs {
+            let a_res = if va != usize::MAX {
+                if !boundary_verts.contains(&va) {
+                    push_vertex_uv_2(mesh, &mut g2l, &mut verts_global, &mut points_uv, va);
+                }
+                va
+            } else {
+                usize::MAX
+            };
+
+            let b_res = if vb != usize::MAX {
+                if !boundary_verts.contains(&vb) {
+                    push_vertex_uv_2(mesh, &mut g2l, &mut verts_global, &mut points_uv, vb);
+                }
+                vb
+            } else {
+                usize::MAX
+            };
+
+            resolved_pairs.push((a_res, b_res));
+        }
+
+        let mut segments: Vec<[usize; 2]> = Vec::new();
+        let mut forced: FastSet<(usize, usize)> = FastSet::default();
+
+        add_split_or_chain_uv(0, 1, &mut segments, &points_uv);
+        add_split_or_chain_uv(1, 2, &mut segments, &points_uv);
+        add_split_or_chain_uv(2, 0, &mut segments, &points_uv);
+
+        let mark_chain_as_forced =
+            |i0: usize, i1: usize, forced: &mut FastSet<(usize, usize)>, pts: &[Point2<T>]| {
+                let chain = chain_on_edge(i0, i1, pts);
+                for w in chain.windows(2) {
+                    let key = if w[0] < w[1] {
+                        (w[0], w[1])
+                    } else {
+                        (w[1], w[0])
+                    };
+                    forced.insert(key);
+                }
+            };
+        mark_chain_as_forced(0, 1, &mut forced, &points_uv);
+        mark_chain_as_forced(1, 2, &mut forced, &points_uv);
+        mark_chain_as_forced(2, 0, &mut forced, &points_uv);
+
+        for &(va, vb) in &resolved_pairs {
+            if va != usize::MAX && vb != usize::MAX {
+                if let (Some(&la), Some(&lb)) = (g2l.get(&va), g2l.get(&vb)) {
+                    if la != lb {
+                        add_split_or_chain_uv(la, lb, &mut segments, &points_uv);
+                    }
+                }
+            }
+        }
+
+        {
+            let mut seen: FastSet<(usize, usize)> = FastSet::default();
+            let mut uniq: Vec<[usize; 2]> = Vec::with_capacity(segments.len());
+            for [a, b] in segments.drain(..) {
+                if a == b {
+                    continue;
+                }
+                let key = if a < b { (a, b) } else { (b, a) };
+                if seen.insert(key) {
+                    uniq.push([a, b]);
+                }
+            }
+            segments = uniq;
+        }
+
+        segments.retain(|[a, b]| {
+            if a == b {
+                return false;
+            }
+            let key = if *a < *b { (*a, *b) } else { (*b, *a) };
+            if forced.contains(&key) {
+                return true;
+            }
+            let a_is_boundary = *a < 3;
+            let b_is_boundary = *b < 3;
+            if a_is_boundary && b_is_boundary {
+                return seg_on_any_outer_edge(*a, *b, &points_uv);
+            }
+            if a_is_boundary ^ b_is_boundary {
+                return seg_on_any_outer_edge(*a, *b, &points_uv);
+            }
+            true
+        });
+
+        jobs.push(FaceJobUV {
+            face_id,
+            verts_global,
+            points_uv,
+            segments,
+        });
+    }
+
+    jobs
+}
+
+fn chain_on_edge<TS: Scalar>(i: usize, j: usize, pts: &[Point2<TS>]) -> Vec<usize>
+where
+    for<'x> &'x TS: std::ops::Sub<&'x TS, Output = TS>
+        + std::ops::Mul<&'x TS, Output = TS>
+        + std::ops::Add<&'x TS, Output = TS>,
+{
+    let a = &pts[i];
+    let b = &pts[j];
+    let mut out: Vec<(f64, usize)> = Vec::new();
+    for (k, p) in pts.iter().enumerate() {
+        let (on, t) = on_edge_with_t(a, b, p);
+        if on {
+            out.push((t, k));
+        }
+    }
+    out.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+    out.into_iter().map(|(_, k)| k).collect()
+}
+
 /// 2) Build a PSLG per face: boundary chains + interior points + intersection segments.
 ///    Requires that `allocate_vertices_for_splits_no_topology` has already run,
 ///    so every relevant endpoint has a `vertex_hint`.
-pub fn build_face_pslgs<T: Scalar + Clone + PartialOrd, const N: usize>(
+pub fn build_face_pslgs_3<T: Scalar + Clone + PartialOrd, const N: usize>(
     mesh: &Mesh<T, N>,
     intersection_segments: &[IntersectionSegment<T, N>],
 ) -> Vec<FaceJobUV<T>>
@@ -221,7 +425,7 @@ where
         // boundary verts first: local 0,1,2 map to (ia,ib,ic)
         let boundary_verts = [ia, ib, ic];
         for &bv in &boundary_verts {
-            push_vertex_uv(
+            push_vertex_uv_3(
                 mesh,
                 &mut g2l,
                 &mut verts_global,
@@ -247,7 +451,7 @@ where
                 a_res = choose_vertex_on_face(mesh, face_id, &[va, vb], &pa_uv, pa, pb, pc)
                     .unwrap_or(va);
                 if !boundary_verts.contains(&a_res) {
-                    push_vertex_uv(
+                    push_vertex_uv_3(
                         mesh,
                         &mut g2l,
                         &mut verts_global,
@@ -267,7 +471,7 @@ where
                 b_res = choose_vertex_on_face(mesh, face_id, &[vb, va], &pb_uv, pa, pb, pc)
                     .unwrap_or(vb);
                 if !boundary_verts.contains(&b_res) {
-                    push_vertex_uv(
+                    push_vertex_uv_3(
                         mesh,
                         &mut g2l,
                         &mut verts_global,

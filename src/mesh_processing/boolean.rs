@@ -33,7 +33,6 @@ use ahash::{AHashMap, AHashSet};
 use crate::{
     geometry::{
         Aabb, AabbTree,
-        edge_edge_intersect::edge_edge_intersection_2,
         plane::{Plane, PlaneOps},
         point::{Point, PointOps},
         segment::{Segment, SegmentOps},
@@ -48,7 +47,7 @@ use crate::{
         basic_types::{Mesh, PointInMeshResult, VertexSource},
         intersection_segment::{IntersectionEndPoint, IntersectionSegment},
     },
-    mesh_processing::batching::{FaceJobUV, build_face_pslgs},
+    mesh_processing::batching::{FaceJobUV, build_face_pslgs_2, build_face_pslgs_3},
     numeric::{
         cgar_f64::CgarF64,
         // lazy_exact::ENABLE_PANIC_ON_EXACT,
@@ -746,7 +745,11 @@ where
 
         println!("Allocated vertices on A in {:.2?}", start.elapsed());
         let start = Instant::now();
-        let jobs_a = build_face_pslgs(a, &intersection_segments_a);
+        let jobs_a = if N == 3 {
+            build_face_pslgs_3(a, &intersection_segments_a)
+        } else {
+            build_face_pslgs_2(a, &intersection_segments_a)
+        };
         println!("Built faces PSLGS on A in {:.2?}", start.elapsed());
 
         // Build CDT per compacted job (example)
@@ -765,7 +768,11 @@ where
             allocate_vertices_for_splits_no_topology(&mut b, &mut intersection_segments_b);
         println!("Allocated vertices on B in {:.2?}", start.elapsed());
         let start = Instant::now();
-        let jobs_b = build_face_pslgs(b, &intersection_segments_b);
+        let jobs_b = if N == 3 {
+            build_face_pslgs_3(b, &intersection_segments_b)
+        } else {
+            build_face_pslgs_2(b, &intersection_segments_b)
+        };
         println!("Built faces PSLGS on B in {:.2?}", start.elapsed());
 
         // Build CDT per compacted job (example)
@@ -1371,7 +1378,7 @@ where
         + std::ops::Neg<Output = T>,
 {
     // Map keyed by (canonical_point_key, half_edge_hint_or_MAX, face_hint_or_MAX, endpoint_flag) -> allocated global vid.
-    // endpoint_flag = 1 when the split is essentially at an edge endpoint (u ≈ 0 or u ≈ 1),
+    // endpoint_flag = 1 when the split is essentially at an edge endpoint (u ~= 0 or u ~= 1),
     //               = 0 for interior-of-edge, face-interior, or no-edge cases.
     let mut keyed_map: AHashMap<(ApproxPointKey, (usize, usize), [usize; 2], u8), usize> =
         AHashMap::default();
