@@ -616,6 +616,13 @@ where
                                             ep0.half_edge_hint = Some(he);
                                             ep1.half_edge_hint = Some(he);
 
+                                            let f0 = self.half_edges[he].face.unwrap_or(usize::MAX);
+                                            let twin = self.half_edges[he].twin;
+                                            let f1 =
+                                                self.half_edges[twin].face.unwrap_or(usize::MAX);
+                                            ep0.faces_hint = Some([f0, f1]);
+                                            ep1.faces_hint = Some([f0, f1]);
+
                                             if coplanar {
                                                 let bucket_start = bucket_u(
                                                     RefInto::<CgarF64>::ref_into(&u_a_start).0,
@@ -674,6 +681,14 @@ where
                                         if let Some(&he) = other.edge_map.get(&(vb0, vb1)) {
                                             ep0.half_edge_hint = Some(he);
                                             ep1.half_edge_hint = Some(he);
+
+                                            let f0 =
+                                                other.half_edges[he].face.unwrap_or(usize::MAX);
+                                            let twin = other.half_edges[he].twin;
+                                            let f1 =
+                                                other.half_edges[twin].face.unwrap_or(usize::MAX);
+                                            ep0.faces_hint = Some([f0, f1]);
+                                            ep1.faces_hint = Some([f0, f1]);
 
                                             if coplanar {
                                                 let bucket_start = bucket_u(

@@ -161,16 +161,23 @@ where
         }
         let a = seg.a.resulting_vertex.unwrap();
         let b = seg.b.resulting_vertex.unwrap();
-        if a == usize::MAX || b == usize::MAX || a == b {
+
+        // Skip if both endpoints are invalid
+        if a == usize::MAX && b == usize::MAX {
             continue;
         }
 
+        // Add segment or single vertex to initial face
         by_face
             .entry(seg.initial_face_reference)
             .or_default()
             .push([a, b]);
 
+        // Propagate vertices to adjacent faces via faces_hint
         for (ep_idx, &vertex_id) in [a, b].iter().enumerate() {
+            if vertex_id == usize::MAX {
+                continue;
+            }
             let ep = if ep_idx == 0 { &seg.a } else { &seg.b };
             if let Some(faces) = ep.faces_hint {
                 for &face_id in &faces {
@@ -206,25 +213,24 @@ where
 
         let mut resolved_pairs: Vec<(usize, usize)> = Vec::with_capacity(vertex_pairs.len());
         for &[va, vb] in &vertex_pairs {
-            let a_res = if va != usize::MAX {
-                if !boundary_verts.contains(&va) {
-                    push_vertex_uv_2(mesh, &mut g2l, &mut verts_global, &mut points_uv, va);
-                }
+            let a_res = if va != usize::MAX && !boundary_verts.contains(&va) {
+                push_vertex_uv_2(mesh, &mut g2l, &mut verts_global, &mut points_uv, va);
                 va
             } else {
-                usize::MAX
+                va
             };
 
-            let b_res = if vb != usize::MAX {
-                if !boundary_verts.contains(&vb) {
-                    push_vertex_uv_2(mesh, &mut g2l, &mut verts_global, &mut points_uv, vb);
-                }
+            let b_res = if vb != usize::MAX && !boundary_verts.contains(&vb) {
+                push_vertex_uv_2(mesh, &mut g2l, &mut verts_global, &mut points_uv, vb);
                 vb
             } else {
-                usize::MAX
+                vb
             };
 
-            resolved_pairs.push((a_res, b_res));
+            // Only add to resolved_pairs if it's a real segment (both valid and different)
+            if a_res != usize::MAX && b_res != usize::MAX && a_res != b_res {
+                resolved_pairs.push((a_res, b_res));
+            }
         }
 
         let mut segments: Vec<[usize; 2]> = Vec::new();
@@ -302,6 +308,7 @@ where
         });
     }
 
+    println!("{:?}", jobs);
     jobs
 }
 
